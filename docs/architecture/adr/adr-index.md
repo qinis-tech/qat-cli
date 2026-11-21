@@ -16,17 +16,17 @@ so the reasoning behind a change stays visible.
 
 Newest first.
 
-| #                                                 | Title                         | Status   | Date       |
-| ------------------------------------------------- | ----------------------------- | -------- | ---------- |
+| # | Title | Status | Date |
+| --- | --- | --- | --- |
 | [ADR-0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted | 2026-11-21 |
 
 ## Status legend
 
-| Status         | Meaning                                                  |
-| -------------- | -------------------------------------------------------- |
-| **Proposed**   | Written, not yet agreed                                  |
-| **Accepted**   | In force                                                 |
-| **Deprecated** | No longer relevant; nothing replaced it                  |
+| Status | Meaning |
+| --- | --- |
+| **Proposed** | Written, not yet agreed |
+| **Accepted** | In force |
+| **Deprecated** | No longer relevant; nothing replaced it |
 | **Superseded** | Replaced; the replacement is linked from the status cell |
 
 ## Creating a record

@@ -15,3 +15,7 @@ package-lock.json
 # Third-party projects: deliberately written to their own conventions
 tests/fixtures/
 examples/
+
+# Generated architecture decision record index.
+# Owned by scripts/adr.mjs; validated by npm run adr:check.
+docs/architecture/adr/adr-index.md
