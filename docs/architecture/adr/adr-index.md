@@ -16,8 +16,9 @@ so the reasoning behind a change stays visible.
 
 Newest first.
 
-| #   | Title | Status | Date |
-| --- | ----- | ------ | ---- |
+| #                                                 | Title                         | Status   | Date       |
+| ------------------------------------------------- | ----------------------------- | -------- | ---------- |
+| [ADR-0001](0001-record-architecture-decisions.md) | Record architecture decisions | Accepted | 2026-11-21 |
 
 ## Status legend
 
