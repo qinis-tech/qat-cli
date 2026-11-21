@@ -85,6 +85,12 @@ export const ErrorCode = {
   filesystemFailure: "QAT5001",
   /** A child process could not be started, or exited in an unexpected way. */
   processFailure: "QAT5002",
+  /** A path is malformed, or resolves outside the directory it was supposed to stay within. */
+  filesystemPathInvalid: "QAT5003",
+  /** A file was expected to contain JSON and does not. */
+  filesystemInvalidJson: "QAT5004",
+  /** A file could not be accessed because another process holds it. */
+  filesystemLocked: "QAT5005",
 
   // ── 6xxx — execution ───────────────────────────────────────────────────────
   /**
@@ -189,7 +195,11 @@ export type EnvironmentCode =
   typeof ErrorCode.runtimeUnsupported | typeof ErrorCode.dependencyMissing;
 
 export type InfrastructureCode =
-  typeof ErrorCode.filesystemFailure | typeof ErrorCode.processFailure;
+  | typeof ErrorCode.filesystemFailure
+  | typeof ErrorCode.processFailure
+  | typeof ErrorCode.filesystemPathInvalid
+  | typeof ErrorCode.filesystemInvalidJson
+  | typeof ErrorCode.filesystemLocked;
 
 export type ExecutionCode = typeof ErrorCode.frameworkExecutionFailed;
 
