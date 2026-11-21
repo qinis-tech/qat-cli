@@ -1,14 +1,56 @@
 {
   "name": "qat-cli",
-  "version": "1.0.0",
-  "description": "QAT (Quality Automation Toolkit) is a TypeScript-based CLI for Cypress projects, simplifying test execution, project diagnostics, configuration, evidence management and automated reporting.",
-  "main": "index.js",
-  "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+  "version": "0.1.0",
+  "description": "CLI-first test automation engineering platform for Cypress projects: project scaffolding, diagnostics, execution, evidence collection and reporting.",
+  "keywords": [
+    "test-automation",
+    "cypress",
+    "cli",
+    "testing",
+    "e2e",
+    "qa",
+    "quality-assurance",
+    "sdet",
+    "test-runner",
+    "qat"
+  ],
+  "author": "Qinis Tech",
+  "license": "MIT",
+  "homepage": "https://github.com/qinis-tech/qat-cli#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/qinis-tech/qat-cli.git"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/qinis-tech/qat-cli/issues"
+  },
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0",
+    "npm": ">=10.0.0"
+  },
+  "bin": {
+    "qat": "./dist/cli/index.js"
+  },
+  "files": [
+    "dist",
+    "CHANGELOG.md"
+  ],
+  "scripts": {
+    "clean": "node --input-type=module -e \"import { rmSync } from 'node:fs'; rmSync('dist', { recursive: true, force: true })\"",
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsx src/cli/index.ts",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "verify": "npm run lint && npm run typecheck && npm run test",
+    "prepack": "npm run clean && npm run build",
+    "prepublishOnly": "npm run verify"
+  },
   "dependencies": {
     "better-sqlite3": "^12.11.1",
     "commander": "^14.0.3",
@@ -25,5 +67,9 @@
     "tsx": "^4.23.15",
     "typescript": "^7.0.2",
     "vitest": "^4.1.12"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
