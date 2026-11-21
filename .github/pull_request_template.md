@@ -17,8 +17,6 @@ What changed, and why. 2-5 sentences. Write for someone who has not read the dif
 State the problem this solves, not the files you edited.
 -->
 
-
-
 ## 2. Explain it simply (Feynman technique)
 
 <!--
@@ -33,16 +31,12 @@ Rules for this section:
 
 **2a. In plain language, what does this change do?**
 
-
-
 **2b. What was not obvious, and how did you find out?**
 
 <!--
 The gap between what you assumed and what was actually true. This is where most review
 value comes from: it shows the reviewer which assumptions to check.
 -->
-
-
 
 **2c. Where is my own explanation still vague?**
 
@@ -53,16 +47,12 @@ Being specific here is encouraged and will not count against the change.
 Write "Nothing — see 2b" only if that is genuinely true.
 -->
 
-
-
 **2d. What would break first?**
 
 <!--
 If this change is wrong, what fails, how loudly, and who notices? "Silent wrong
 results" is a materially different answer from "the command errors out".
 -->
-
-
 
 ## 3. Related requirement or issue
 
@@ -78,8 +68,6 @@ Approach and trade-offs. Where in the codebase does this live and why there.
 What did you deliberately not do? That last question matters more than the diff.
 -->
 
-
-
 ## 5. Tests performed
 
 <!-- Exact commands and their outcome. "Ran the tests" is not evidence. -->
@@ -92,14 +80,13 @@ $ npm test
 
 **Result:**
 
-
-
 - [ ] Unit tests added or updated
 - [ ] Integration tests added or updated
 - [ ] Regression test added (defects only — confirm below)
 - [ ] Verified manually against a real project
 
 <!-- Defects only: the test must fail before the fix and pass after. -->
+
 **Regression test failed before the fix:** <!-- Yes / N/A -->
 **Regression test passes after the fix:** <!-- Yes / N/A -->
 
@@ -110,11 +97,11 @@ Copy each criterion from the WBS task or issue verbatim. No criterion, no merge.
 Evidence means a test name, a command, or an observed output — not "done".
 -->
 
-| # | Criterion | Status | Evidence |
-| --- | --- | --- | --- |
-| 1 |  |  |  |
-| 2 |  |  |  |
-| 3 |  |  |  |
+| #   | Criterion | Status | Evidence |
+| --- | --------- | ------ | -------- |
+| 1   |           |        |          |
+| 2   |           |        |          |
+| 3   |           |        |          |
 
 ## 7. Breaking changes
 
@@ -124,8 +111,6 @@ Does this change an exit code, a config key, a result-schema field, or a command
 signature? If yes, a BREAKING CHANGE footer is required on the commit.
 Write "None" if there is none.
 -->
-
-
 
 ## 8. Documentation impact
 
@@ -142,9 +127,9 @@ what you want checked there. This is the highest-value box in the template.
 -->
 
 | File / area | What to check |
-| --- | --- |
-|  |  |
-|  |  |
+| ----------- | ------------- |
+|             |               |
+|             |               |
 
 **Known out of scope:** <!-- Follow-up issues raised: #... -->
 

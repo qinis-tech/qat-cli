@@ -1,13 +1,13 @@
 # Commit Convention Specification
 
-| | |
-| --- | --- |
-| **Status** | Normative |
-| **Applies to** | All commits on all branches of the QAT repository |
-| **Owner** | Technical Lead |
-| **Enforced by** | `commitlint.config.mjs`, `.github/workflows/contribution-standards.yml` |
-| **Based on** | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) |
-| **Last reviewed** | <!-- YYYY-MM-DD --> |
+|                   |                                                                              |
+| ----------------- | ---------------------------------------------------------------------------- |
+| **Status**        | Normative                                                                    |
+| **Applies to**    | All commits on all branches of the QAT repository                            |
+| **Owner**         | Technical Lead                                                               |
+| **Enforced by**   | `commitlint.config.mjs`, `.github/workflows/contribution-standards.yml`      |
+| **Based on**      | [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/v1.0.0/) |
+| **Last reviewed** | <!-- YYYY-MM-DD -->                                                          |
 
 ---
 
@@ -75,12 +75,12 @@ footer-token= "BREAKING CHANGE" / "Refs" / "Closes"
 
 ### 2.2 Hard limits
 
-| Element | Limit | Enforced |
-| --- | --- | --- |
-| Header (type + scope + subject) | ≤ 72 characters | `header-max-length` |
-| Body line | ≤ 100 characters | `body-max-line-length` |
-| Subject | No trailing period | `subject-full-stop` |
-| Subject | Lowercase first letter | `subject-case` |
+| Element                         | Limit                  | Enforced               |
+| ------------------------------- | ---------------------- | ---------------------- |
+| Header (type + scope + subject) | ≤ 72 characters        | `header-max-length`    |
+| Body line                       | ≤ 100 characters       | `body-max-line-length` |
+| Subject                         | No trailing period     | `subject-full-stop`    |
+| Subject                         | Lowercase first letter | `subject-case`         |
 
 The 72-character header limit is deliberate: `git log --oneline` and most terminal
 diff views truncate around there, and a subject that only fits by scrolling is not
@@ -92,18 +92,18 @@ doing its job.
 
 Exactly one type MUST be used per commit.
 
-| Type | Use for | Release effect | Changelog |
-| --- | --- | --- | --- |
-| `feat` | A new user-facing capability | MINOR | Features |
-| `fix` | A defect correction | PATCH | Bug Fixes |
-| `perf` | Performance improvement with no behaviour change | PATCH | Performance |
-| `refactor` | Restructuring with no behaviour change | none | hidden |
-| `test` | Adding or correcting tests | none | hidden |
-| `docs` | Documentation only | none | hidden |
-| `build` | Build system, bundling, packaging, TypeScript config | none | hidden |
-| `ci` | CI configuration and workflow files | none | hidden |
-| `chore` | Maintenance, dependencies, tooling | none | hidden |
-| `revert` | Reverting a previous commit | none | Reverts |
+| Type       | Use for                                              | Release effect | Changelog   |
+| ---------- | ---------------------------------------------------- | -------------- | ----------- |
+| `feat`     | A new user-facing capability                         | MINOR          | Features    |
+| `fix`      | A defect correction                                  | PATCH          | Bug Fixes   |
+| `perf`     | Performance improvement with no behaviour change     | PATCH          | Performance |
+| `refactor` | Restructuring with no behaviour change               | none           | hidden      |
+| `test`     | Adding or correcting tests                           | none           | hidden      |
+| `docs`     | Documentation only                                   | none           | hidden      |
+| `build`    | Build system, bundling, packaging, TypeScript config | none           | hidden      |
+| `ci`       | CI configuration and workflow files                  | none           | hidden      |
+| `chore`    | Maintenance, dependencies, tooling                   | none           | hidden      |
+| `revert`   | Reverting a previous commit                          | none           | Reverts     |
 
 ### 3.1 Choosing between `fix` and `feat`
 
@@ -135,24 +135,24 @@ change genuinely spans the repository.
 
 Scopes correspond to top-level directories under `src/`, plus reserved scopes.
 
-| Scope | Directory or meaning |
-| --- | --- |
-| `cli` | `src/cli/` — commands, output formatting, prompts |
-| `config` | `src/config/` — schema, loader, resolver |
-| `core` | `src/core/` — application, domain, errors, filesystem, logging, process |
-| `execution` | `src/execution/` — orchestration, process, metadata |
-| `cypress` | `src/execution/adapters/cypress/` |
-| `results` | `src/results/` — parsers, normalisation, domain |
-| `reporting` | `src/reporting/` — generators, security, templates |
-| `diagnostics` | `src/diagnostics/` — checks, models |
-| `evidence` | `src/evidence/` — discovery, manifest |
-| `persistence` | `src/persistence/` — database, repositories |
-| `project` | `src/project/` — detection, validation |
-| `ci` | `src/ci/templates/` — workflow templates shipped to users |
-| `shared` | `src/shared/` — types, utils |
-| `deps` | Dependency additions, removals and upgrades |
-| `release` | Versioning, publishing, changelog configuration |
-| `docs` | `docs/` and repository-level Markdown |
+| Scope         | Directory or meaning                                                    |
+| ------------- | ----------------------------------------------------------------------- |
+| `cli`         | `src/cli/` — commands, output formatting, prompts                       |
+| `config`      | `src/config/` — schema, loader, resolver                                |
+| `core`        | `src/core/` — application, domain, errors, filesystem, logging, process |
+| `execution`   | `src/execution/` — orchestration, process, metadata                     |
+| `cypress`     | `src/execution/adapters/cypress/`                                       |
+| `results`     | `src/results/` — parsers, normalisation, domain                         |
+| `reporting`   | `src/reporting/` — generators, security, templates                      |
+| `diagnostics` | `src/diagnostics/` — checks, models                                     |
+| `evidence`    | `src/evidence/` — discovery, manifest                                   |
+| `persistence` | `src/persistence/` — database, repositories                             |
+| `project`     | `src/project/` — detection, validation                                  |
+| `ci`          | `src/ci/templates/` — workflow templates shipped to users               |
+| `shared`      | `src/shared/` — types, utils                                            |
+| `deps`        | Dependency additions, removals and upgrades                             |
+| `release`     | Versioning, publishing, changelog configuration                         |
+| `docs`        | `docs/` and repository-level Markdown                                   |
 
 ### 4.1 `ci` is ambiguous — here is the rule
 
@@ -189,15 +189,15 @@ undocumented.
 
 The subject completes the sentence "<type>(<scope>): …".
 
-| Rule | Correct | Incorrect |
-| --- | --- | --- |
-| Imperative mood | `add project detection` | `added project detection` |
-| Lowercase | `add project detection` | `Add project detection` |
-| No trailing period | `add project detection` | `add project detection.` |
-| Describes effect | `return exit code 1 on spec failure` | `work on exit codes` |
-| ≤ 60 characters | `reject unknown config keys` | `reject unknown configuration keys and warn the user` |
-| No ticket numbers | `add project detection` | `add project detection [WBS 2.3.1]` |
-| No WIP markers | `add project detection` | `WIP add project detection` |
+| Rule               | Correct                              | Incorrect                                             |
+| ------------------ | ------------------------------------ | ----------------------------------------------------- |
+| Imperative mood    | `add project detection`              | `added project detection`                             |
+| Lowercase          | `add project detection`              | `Add project detection`                               |
+| No trailing period | `add project detection`              | `add project detection.`                              |
+| Describes effect   | `return exit code 1 on spec failure` | `work on exit codes`                                  |
+| ≤ 60 characters    | `reject unknown config keys`         | `reject unknown configuration keys and warn the user` |
+| No ticket numbers  | `add project detection`              | `add project detection [WBS 2.3.1]`                   |
+| No WIP markers     | `add project detection`              | `WIP add project detection`                           |
 
 **Imperative mood test:** the subject MUST read correctly when prefixed with
 "This commit will…". "This commit will add project detection" — correct. "This commit
@@ -243,13 +243,13 @@ Closes #112
 Footers appear after a blank line following the body. Multiple footers are separated by
 blank lines or placed on consecutive lines.
 
-| Token | Purpose | Example |
-| --- | --- | --- |
+| Token             | Purpose                                           | Example                                                        |
+| ----------------- | ------------------------------------------------- | -------------------------------------------------------------- |
 | `BREAKING CHANGE` | Declares a breaking change and its migration path | `BREAKING CHANGE: exit code 2 now means invalid configuration` |
-| `Refs` | Traceability to a WBS task or tasks | `Refs: WBS 2.1.2` |
-| `Closes` | Closes an issue on merge | `Closes #42` |
-| `Reverts` | Identifies the reverted commit | `Reverts 4a1b2c3` |
-| `Co-authored-by` | Attribution | `Co-authored-by: A Name <a@example.com>` |
+| `Refs`            | Traceability to a WBS task or tasks               | `Refs: WBS 2.1.2`                                              |
+| `Closes`          | Closes an issue on merge                          | `Closes #42`                                                   |
+| `Reverts`         | Identifies the reverted commit                    | `Reverts 4a1b2c3`                                              |
+| `Co-authored-by`  | Attribution                                       | `Co-authored-by: A Name <a@example.com>`                       |
 
 ### 7.1 `Refs` format
 
@@ -331,11 +331,11 @@ While QAT is pre-1.0 (`0.x`), the following mapping applies. This deviates from 
 SemVer and is intentional: at `0.x`, breaking changes are expected and the minor number
 is the signal for them.
 
-| Change | `0.x` | `1.x+` |
-| --- | --- | --- |
-| `feat` | PATCH | MINOR |
-| `fix`, `perf` | PATCH | PATCH |
-| Breaking change (`!` or footer) | MINOR | MAJOR |
+| Change                                             | `0.x`      | `1.x+`     |
+| -------------------------------------------------- | ---------- | ---------- |
+| `feat`                                             | PATCH      | MINOR      |
+| `fix`, `perf`                                      | PATCH      | PATCH      |
+| Breaking change (`!` or footer)                    | MINOR      | MAJOR      |
 | `refactor`, `test`, `docs`, `build`, `ci`, `chore` | no release | no release |
 
 This table is applied by semantic-release. Changing it is a `release` scope commit and
@@ -347,27 +347,27 @@ requires an ADR.
 
 ### Valid
 
-| Message | Why it is correct |
-| --- | --- |
-| `feat(cli): add project detection for Cypress repositories` | Type, scope, imperative, lowercase, 60 chars |
-| `fix(cypress): return exit code 1 when specs fail` | States the observable effect |
-| `perf(results): stream large JUnit XML files` | Type distinguishes a performance change from a functional one |
-| `docs(cli): update installation guide` | Scope matches the subject of the docs |
-| `chore(deps): bump execa to 9.5.1` | `deps` scope, no misleading `build` |
-| `refactor(core): separate orchestration from adapters` | Pure restructuring, correctly not `fix` |
+| Message                                                     | Why it is correct                                             |
+| ----------------------------------------------------------- | ------------------------------------------------------------- |
+| `feat(cli): add project detection for Cypress repositories` | Type, scope, imperative, lowercase, 60 chars                  |
+| `fix(cypress): return exit code 1 when specs fail`          | States the observable effect                                  |
+| `perf(results): stream large JUnit XML files`               | Type distinguishes a performance change from a functional one |
+| `docs(cli): update installation guide`                      | Scope matches the subject of the docs                         |
+| `chore(deps): bump execa to 9.5.1`                          | `deps` scope, no misleading `build`                           |
+| `refactor(core): separate orchestration from adapters`      | Pure restructuring, correctly not `fix`                       |
 
 ### Invalid
 
-| Message | Problem | Correction |
-| --- | --- | --- |
-| `fixed the bug` | No type, past tense, no information | `fix(config): reject unknown keys` |
-| `Feat(CLI): Add Detection` | Capitalised type and subject; `CLI` not in scope enum | `feat(cli): add project detection` |
-| `feat: add project detection.` | Trailing period | `feat(cli): add project detection` |
-| `feat(cli): add detection, fix exit codes, update docs` | Three unrelated changes, no scope precision | Three commits |
-| `update stuff` | No type, no effect described | Depends what changed — name it |
-| `WIP` | Not a commit message | Do not commit; use a draft PR |
-| `fix: WBS 2.4.7` | WBS ID in subject, no description of the change | `fix(cypress): …` with `Refs: WBS 2.4.7` |
-| `refactor(execution): change exit code on timeout` | Behaviour change mislabelled as `refactor` | `fix(execution): return exit code 1 on timeout` |
+| Message                                                 | Problem                                               | Correction                                      |
+| ------------------------------------------------------- | ----------------------------------------------------- | ----------------------------------------------- |
+| `fixed the bug`                                         | No type, past tense, no information                   | `fix(config): reject unknown keys`              |
+| `Feat(CLI): Add Detection`                              | Capitalised type and subject; `CLI` not in scope enum | `feat(cli): add project detection`              |
+| `feat: add project detection.`                          | Trailing period                                       | `feat(cli): add project detection`              |
+| `feat(cli): add detection, fix exit codes, update docs` | Three unrelated changes, no scope precision           | Three commits                                   |
+| `update stuff`                                          | No type, no effect described                          | Depends what changed — name it                  |
+| `WIP`                                                   | Not a commit message                                  | Do not commit; use a draft PR                   |
+| `fix: WBS 2.4.7`                                        | WBS ID in subject, no description of the change       | `fix(cypress): …` with `Refs: WBS 2.4.7`        |
+| `refactor(execution): change exit code on timeout`      | Behaviour change mislabelled as `refactor`            | `fix(execution): return exit code 1 on timeout` |
 
 ---
 
@@ -375,33 +375,33 @@ requires an ADR.
 
 ### 12.1 Layers
 
-| Layer | Mechanism | Failure mode |
-| --- | --- | --- |
-| Local, at commit time | `commitlint` via `.husky/commit-msg` | Commit rejected |
-| Pull request | `commitlint` over `base..head` in CI | Check fails |
-| Pull request title | `action-semantic-pull-request` in CI | Check fails |
-| Review | Human check of sections 5, 6, 8 | Change requested |
+| Layer                 | Mechanism                            | Failure mode     |
+| --------------------- | ------------------------------------ | ---------------- |
+| Local, at commit time | `commitlint` via `.husky/commit-msg` | Commit rejected  |
+| Pull request          | `commitlint` over `base..head` in CI | Check fails      |
+| Pull request title    | `action-semantic-pull-request` in CI | Check fails      |
+| Review                | Human check of sections 5, 6, 8      | Change requested |
 
 The local hook is a convenience. **CI is the authority** — a commit that only passed
 locally because `--no-verify` was used WILL fail the pull request.
 
 ### 12.2 Rule-to-enforcement matrix
 
-| Rule | commitlint | CI review | Human review |
-| --- | --- | --- | --- |
-| Valid type | ✅ `type-enum` | ✅ | — |
-| Valid scope | ✅ `scope-enum` | ✅ | — |
-| Header ≤ 72 chars | ✅ `header-max-length` | ✅ | — |
-| Subject lowercase | ✅ `subject-case` | ✅ | — |
-| Subject has no full stop | ✅ `subject-full-stop` | ✅ | — |
-| Body leading blank line | ✅ `body-leading-blank` | ✅ | — |
-| Body lines ≤ 100 | ✅ `body-max-line-length` | ✅ | — |
-| Imperative mood | ❌ not machine-checkable | ❌ | ✅ |
-| Subject describes the effect, not the activity | ❌ | ❌ | ✅ |
-| `refactor` genuinely changes no behaviour | ❌ | ❌ | ✅ |
-| Correct type chosen (`fix` vs `feat`) | ❌ | ❌ | ✅ |
-| Breaking change declared | ⚠️ footer presence only | ✅ | ✅ |
-| `Refs` footer present on `feat`/`fix` | ❌ | ❌ | ✅ |
+| Rule                                           | commitlint                | CI review | Human review |
+| ---------------------------------------------- | ------------------------- | --------- | ------------ |
+| Valid type                                     | ✅ `type-enum`            | ✅        | —            |
+| Valid scope                                    | ✅ `scope-enum`           | ✅        | —            |
+| Header ≤ 72 chars                              | ✅ `header-max-length`    | ✅        | —            |
+| Subject lowercase                              | ✅ `subject-case`         | ✅        | —            |
+| Subject has no full stop                       | ✅ `subject-full-stop`    | ✅        | —            |
+| Body leading blank line                        | ✅ `body-leading-blank`   | ✅        | —            |
+| Body lines ≤ 100                               | ✅ `body-max-line-length` | ✅        | —            |
+| Imperative mood                                | ❌ not machine-checkable  | ❌        | ✅           |
+| Subject describes the effect, not the activity | ❌                        | ❌        | ✅           |
+| `refactor` genuinely changes no behaviour      | ❌                        | ❌        | ✅           |
+| Correct type chosen (`fix` vs `feat`)          | ❌                        | ❌        | ✅           |
+| Breaking change declared                       | ⚠️ footer presence only   | ✅        | ✅           |
+| `Refs` footer present on `feat`/`fix`          | ❌                        | ❌        | ✅           |
 
 The rows marked ❌ are the reason this document exists. A linter can enforce syntax; only
 the author and reviewer can enforce meaning.

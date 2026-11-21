@@ -1,0 +1,17 @@
+# Build output
+dist/
+coverage/
+
+# Dependencies
+node_modules/
+
+# Local execution artefacts
+.qat/
+
+# Generated — rewritten by semantic-release
+CHANGELOG.md
+package-lock.json
+
+# Third-party projects: deliberately written to their own conventions
+tests/fixtures/
+examples/
