@@ -1,0 +1,231 @@
+# name: CI
+
+# # ─────────────────────────────────────────────────────────────────────────────
+# # Triggers
+# #
+# # Three, each with a reason:
+# #
+# #   pull_request → main   Every proposed change is verified before review, so a
+# #                         reviewer never spends time on a branch that cannot pass.
+# #   push → main           A merge is verified again. This catches the case where
+# #                         two independently-green branches conflict semantically
+# #                         but merge cleanly, and it is the run branch protection
+# #                         and release automation can trust.
+# #   workflow_dispatch     Manual re-run after an infrastructure incident or a
+# #                         runner image change, without pushing a commit.
+# #
+# # Deliberately NOT `push: branches: ['**']`. Combined with pull_request that would
+# # run every PR twice — once for the branch push, once for the PR event — doubling
+# # cost for no additional signal.
+# # ─────────────────────────────────────────────────────────────────────────────
+# on:
+#   pull_request:
+#     branches: [main]
+#   push:
+#     branches: [main]
+#   workflow_dispatch:
+
+# # ─────────────────────────────────────────────────────────────────────────────
+# # Permissions
+# #
+# # Least privilege: the workflow reads code and writes nothing. GITHUB_TOKEN gets
+# # `contents: read` and every other scope is `none`.
+# #
+# # Artifact upload does not use GITHUB_TOKEN — it uses the Actions runtime token —
+# # so it needs no additional scope here.
+# #
+# # A compromised third-party action therefore cannot push a commit, publish a
+# # release, or modify an issue with the credentials this workflow carries.
+# # ─────────────────────────────────────────────────────────────────────────────
+# permissions:
+#   contents: read
+
+# # ─────────────────────────────────────────────────────────────────────────────
+# # Concurrency
+# #
+# # A newer commit on the same ref makes the older run's answer irrelevant.
+# #
+# # Cancel only pull requests. Cancelling a push run on `main` would delete the
+# # record of what was verified on the branch that ships, which is precisely the
+# # run an auditor or a release job needs to see complete.
+# # ─────────────────────────────────────────────────────────────────────────────
+# concurrency:
+#   group: ci-${{ github.workflow }}-${{ github.ref }}
+#   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+# env:
+#   # npm's update notifier and funding banner add noise to logs and can interleave
+#   # with output that later tooling parses.
+#   npm_config_update_notifier: 'false'
+#   npm_config_fund: 'false'
+#   npm_config_audit: 'false'
+
+# jobs:
+#   # ═══════════════════════════════════════════════════════════════════════════
+#   # Static gates. Fast, platform-independent, and they answer one question:
+#   # "is this code acceptable before it is ever executed?"
+#   # ═══════════════════════════════════════════════════════════════════════════
+#   quality:
+#     name: Quality gates
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 10
+#     steps:
+#       - name: Check out repository
+#         uses: actions/checkout@v4
+#         with:
+#           # Do not leave the token in .git/config. No later step needs to push,
+#           # so nothing should be able to.
+#           persist-credentials: false
+
+#       - name: Set up Node.js
+#         uses: actions/setup-node@v4
+#         with:
+#           # 24.x matches the `engines.node: ">=24.0.0"` floor.
+#           # See docs/development/continuous-integration.md for why there is no
+#           # Node version matrix at this stage.
+#           node-version: 24.x
+#           # Caches ~/.npm keyed on package-lock.json. It caches downloaded
+#           # tarballs, not node_modules — a stale cache can slow a run, but it can
+#           # never make a run pass with wrong dependency versions.
+#           cache: npm
+
+#       - name: Install dependencies
+#         # `npm ci` installs exactly what the lockfile specifies and fails if the
+#         # lockfile and package.json disagree. `npm install` would silently
+#         # resolve a different tree, which is the difference between testing the
+#         # commit and testing something close to it.
+#         run: npm ci
+
+#       - name: Verify formatting
+#         run: npm run format:check
+
+#       - name: Lint
+#         run: npm run lint
+
+#       - name: Type check
+#         run: npm run typecheck
+
+#       - name: Verify decision-record index
+#         run: npm run adr:check
+
+#   # ═══════════════════════════════════════════════════════════════════════════
+#   # Tests, on every platform the project claims to support.
+#   #
+#   # Two entries, not one. QAT spawns child processes, resolves paths and writes
+#   # to the filesystem; those are the areas where Windows and Linux actually
+#   # diverge, and a bug there is invisible on a single-OS matrix.
+#   #
+#   # fail-fast: false so both platforms report. Cancelling Windows because Ubuntu
+#   # failed loses the more informative signal and saves under a minute.
+#   # ═══════════════════════════════════════════════════════════════════════════
+#   test:
+#     name: Test (${{ matrix.os }})
+#     runs-on: ${{ matrix.os }}
+#     timeout-minutes: 15
+#     strategy:
+#       fail-fast: false
+#       matrix:
+#         os: [ubuntu-latest, windows-latest]
+#     steps:
+#       - name: Check out repository
+#         uses: actions/checkout@v4
+#         with:
+#           persist-credentials: false
+
+#       - name: Set up Node.js
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: 24.x
+#           cache: npm
+
+#       - name: Install dependencies
+#         run: npm ci
+
+#       - name: Run tests
+#         run: npm test
+
+#       # ── Coverage: Linux only ────────────────────────────────────────────────
+#       # Coverage is a property of the source, not of the operating system.
+#       # Collecting it twice produces two numbers that disagree slightly and one
+#       # extra artifact nobody opens. Linux is the authority.
+#       - name: Run tests with coverage
+#         if: runner.os == 'Linux'
+#         run: npm run test:coverage
+
+#       - name: Publish coverage summary
+#         if: always() && runner.os == 'Linux'
+#         # Always run: a partially covered suite that fails is more informative
+#         # than no coverage at all.
+#         run: node .github/scripts/coverage-summary.mjs >> "$GITHUB_STEP_SUMMARY"
+
+#       - name: Upload coverage report
+#         if: always() && runner.os == 'Linux'
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: coverage-linux
+#           path: coverage/
+#           # Short retention: coverage is a development aid, not a compliance
+#           # record, and artifacts consume the repository's storage quota.
+#           retention-days: 7
+#           if-no-files-found: warn
+
+#   # ═══════════════════════════════════════════════════════════════════════════
+#   # Production build.
+#   #
+#   # Separate from the static gates because it answers a different question:
+#   # not "is this code acceptable" but "does the artefact we would publish
+#   # exist and contain what it should".
+#   # ═══════════════════════════════════════════════════════════════════════════
+#   build:
+#     name: Build
+#     runs-on: ubuntu-latest
+#     timeout-minutes: 10
+#     steps:
+#       - name: Check out repository
+#         uses: actions/checkout@v4
+#         with:
+#           persist-credentials: false
+
+#       - name: Set up Node.js
+#         uses: actions/setup-node@v4
+#         with:
+#           node-version: 24.x
+#           cache: npm
+
+#       - name: Install dependencies
+#         run: npm ci
+
+#       - name: Compile
+#         run: npm run build
+
+#       - name: Show package contents
+#         # Visibility, not a gate. Prints the inventory so a pull request that
+#         # unintentionally adds files to the published package is obvious in the
+#         # log rather than discovered at release time.
+#         #
+#         # `--ignore-scripts` avoids re-entering the prepack build.
+#         run: npm pack --dry-run --ignore-scripts
+
+#       # ── Packaging policy gate: not yet enabled ──────────────────────────────
+#       #
+#       # `npm run verify:package` enforces the publication allowlist, required
+#       # files and credential scan over the real tarball. It currently fails
+#       # because it requires dist/cli/index.js and the CLI entry point does not
+#       # exist yet.
+#       #
+#       # Enable it here — as a mandatory step, not continue-on-error — in the
+#       # commit that adds src/cli/index.ts. A permanently red gate teaches people
+#       # to ignore gates.
+#       #
+#       # - name: Verify publication policy
+#       #   run: npm run verify:package
+
+#       - name: Upload package tarball
+#         uses: actions/upload-artifact@v4
+#         with:
+#           name: package-tarball
+#           # A real tarball, unlike --dry-run, so the artefact under review is
+#           # the artefact that would ship.
+#           path: '*.tgz'
+#           retention-days: 7
+#           if-no-files-found: error
