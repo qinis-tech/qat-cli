@@ -37,14 +37,14 @@ npm run build
 npm test
 ```
 
-| Command | Purpose |
-| --- | --- |
-| `npm run build` | Compile TypeScript |
-| `npm test` | Run the Vitest suite |
+| Command                 | Purpose                 |
+| ----------------------- | ----------------------- |
+| `npm run build`         | Compile TypeScript      |
+| `npm test`              | Run the Vitest suite    |
 | `npm run test:coverage` | Run tests with coverage |
-| `npm run lint` | ESLint |
-| `npm run format` | Prettier (write) |
-| `npm run typecheck` | `tsc --noEmit` |
+| `npm run lint`          | ESLint                  |
+| `npm run format`        | Prettier (write)        |
+| `npm run typecheck`     | `tsc --noEmit`          |
 
 Before opening a pull request, all three of these must pass locally:
 
@@ -66,11 +66,11 @@ issue rather than guessing.
 <type>/<wbs-id>[-<slug>]
 ```
 
-| Part | Rule |
-| --- | --- |
-| `<type>` | `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`, `ci`, `build`, `hotfix` |
-| `<wbs-id>` | WBS identifier with dots replaced by hyphens, e.g. `2-1-2` |
-| `<slug>` | Optional, lowercase, hyphens, at most 5 words |
+| Part       | Rule                                                                                |
+| ---------- | ----------------------------------------------------------------------------------- |
+| `<type>`   | `feat`, `fix`, `docs`, `test`, `refactor`, `chore`, `perf`, `ci`, `build`, `hotfix` |
+| `<wbs-id>` | WBS identifier with dots replaced by hyphens, e.g. `2-1-2`                          |
+| `<slug>`   | Optional, lowercase, hyphens, at most 5 words                                       |
 
 **Valid examples**
 
@@ -119,41 +119,41 @@ QAT follows [Conventional Commits 1.0.0](https://www.conventionalcommits.org/en/
 
 ### Types
 
-| Type | Use for | In changelog |
-| --- | --- | --- |
-| `feat` | New user-facing capability | Yes — minor |
-| `fix` | Defect correction | Yes — patch |
-| `perf` | Performance improvement, no behaviour change | Yes — patch |
-| `refactor` | Restructuring, no behaviour change | No |
-| `test` | Adding or correcting tests | No |
-| `docs` | Documentation only | No |
-| `build` | Build system, bundling, packaging | No |
-| `ci` | CI configuration and workflows | No |
-| `chore` | Maintenance, dependencies, tooling | No |
-| `revert` | Reverting a previous commit | Yes |
+| Type       | Use for                                      | In changelog |
+| ---------- | -------------------------------------------- | ------------ |
+| `feat`     | New user-facing capability                   | Yes — minor  |
+| `fix`      | Defect correction                            | Yes — patch  |
+| `perf`     | Performance improvement, no behaviour change | Yes — patch  |
+| `refactor` | Restructuring, no behaviour change           | No           |
+| `test`     | Adding or correcting tests                   | No           |
+| `docs`     | Documentation only                           | No           |
+| `build`    | Build system, bundling, packaging            | No           |
+| `ci`       | CI configuration and workflows               | No           |
+| `chore`    | Maintenance, dependencies, tooling           | No           |
+| `revert`   | Reverting a previous commit                  | Yes          |
 
 ### Scopes
 
 Scopes map to top-level directories under `src/`, plus reserved scopes.
 
-| Scope | Covers |
-| --- | --- |
-| `cli` | `src/cli/` — commands, output formatting |
-| `config` | `src/config/` — schema, loader, resolver |
-| `core` | `src/core/` — application, domain, errors, filesystem, logging, process |
-| `execution` | `src/execution/` — orchestration, process, metadata |
-| `cypress` | `src/execution/adapters/cypress/` |
-| `results` | `src/results/` — parsers, normalisation, domain |
-| `reporting` | `src/reporting/` |
-| `diagnostics` | `src/diagnostics/` |
-| `evidence` | `src/evidence/` |
-| `persistence` | `src/persistence/` |
-| `project` | `src/project/` — detection, validation |
-| `ci` | `src/ci/templates/` |
-| `shared` | `src/shared/` — types, utils |
-| `deps` | Dependency updates |
-| `release` | Versioning and publishing |
-| `docs` | Documentation, repository-level files |
+| Scope         | Covers                                                                  |
+| ------------- | ----------------------------------------------------------------------- |
+| `cli`         | `src/cli/` — commands, output formatting                                |
+| `config`      | `src/config/` — schema, loader, resolver                                |
+| `core`        | `src/core/` — application, domain, errors, filesystem, logging, process |
+| `execution`   | `src/execution/` — orchestration, process, metadata                     |
+| `cypress`     | `src/execution/adapters/cypress/`                                       |
+| `results`     | `src/results/` — parsers, normalisation, domain                         |
+| `reporting`   | `src/reporting/`                                                        |
+| `diagnostics` | `src/diagnostics/`                                                      |
+| `evidence`    | `src/evidence/`                                                         |
+| `persistence` | `src/persistence/`                                                      |
+| `project`     | `src/project/` — detection, validation                                  |
+| `ci`          | `src/ci/templates/`                                                     |
+| `shared`      | `src/shared/` — types, utils                                            |
+| `deps`        | Dependency updates                                                      |
+| `release`     | Versioning and publishing                                               |
+| `docs`        | Documentation, repository-level files                                   |
 
 Omit the scope only when a change is genuinely repository-wide.
 
@@ -168,17 +168,17 @@ Omit the scope only when a change is genuinely repository-wide.
 
 ### Body
 
-Include a body when the *why* is not obvious from the diff. Wrap at 100 characters.
+Include a body when the _why_ is not obvious from the diff. Wrap at 100 characters.
 Explain the problem, the chosen approach, and what was rejected. Do not restate the diff.
 
 ### Footers
 
-| Footer | Purpose |
-| --- | --- |
+| Footer                           | Purpose                                           |
+| -------------------------------- | ------------------------------------------------- |
 | `BREAKING CHANGE: <description>` | Major version transition; include migration steps |
-| `Refs: WBS 2.1.2` | Traceability to the WBS task |
-| `Closes #123` | Closes an issue on merge |
-| `Co-authored-by: Name <email>` | Attribution |
+| `Refs: WBS 2.1.2`                | Traceability to the WBS task                      |
+| `Closes #123`                    | Closes an issue on merge                          |
+| `Co-authored-by: Name <email>`   | Attribution                                       |
 
 `feat!` or a `BREAKING CHANGE:` footer triggers a major release.
 
@@ -252,14 +252,14 @@ Rules:
    traceability.
 4. `feat` and `fix` titles must reference a WBS task or defect in the body.
 
-| | Example |
-| --- | --- |
-| Valid | `feat(cli): add project detection for Cypress repositories` |
-| Valid | `fix(config): reject unknown keys instead of ignoring them` |
-| Invalid | `Feature/Project detection` |
-| Invalid | `[WBS 2.3.1] Add project detection` |
-| Invalid | `WIP` |
-| Invalid | `feat(cli): Added project detection` |
+|         | Example                                                     |
+| ------- | ----------------------------------------------------------- |
+| Valid   | `feat(cli): add project detection for Cypress repositories` |
+| Valid   | `fix(config): reject unknown keys instead of ignoring them` |
+| Invalid | `Feature/Project detection`                                 |
+| Invalid | `[WBS 2.3.1] Add project detection`                         |
+| Invalid | `WIP`                                                       |
+| Invalid | `feat(cli): Added project detection`                        |
 
 Enforced by the semantic-pull-request check in CI.
 
@@ -270,15 +270,15 @@ Enforced by the semantic-pull-request check in CI.
 Use `.github/pull_request_template.md`. Every section must be completed or explicitly
 marked `N/A` with a reason.
 
-| Section | Requirement |
-| --- | --- |
-| Change summary | What changed and why, 2–5 sentences |
-| Related requirement or issue | `Closes #123` or `WBS 2.3.1`. Mandatory for `feat` and `fix` |
-| Implementation details | Approach, trade-offs, files and modules touched |
-| Tests performed | Exact commands run and their outcome |
-| Acceptance criteria verification | Each criterion, with pass/fail and evidence |
-| Breaking changes | Impact and migration path, or `None` |
-| Documentation impact | Docs updated, or justification for none |
+| Section                          | Requirement                                                  |
+| -------------------------------- | ------------------------------------------------------------ |
+| Change summary                   | What changed and why, 2–5 sentences                          |
+| Related requirement or issue     | `Closes #123` or `WBS 2.3.1`. Mandatory for `feat` and `fix` |
+| Implementation details           | Approach, trade-offs, files and modules touched              |
+| Tests performed                  | Exact commands run and their outcome                         |
+| Acceptance criteria verification | Each criterion, with pass/fail and evidence                  |
+| Breaking changes                 | Impact and migration path, or `None`                         |
+| Documentation impact             | Docs updated, or justification for none                      |
 
 A pull request that leaves these blank will not be reviewed. Draft pull requests may be
 incomplete — mark them ready for review only when complete.
@@ -303,12 +303,12 @@ incomplete — mark them ready for review only when complete.
    settled by Prettier and ESLint, not by review comments.
 3. Classify each comment, or it will be misread:
 
-   | Prefix | Meaning |
-   | --- | --- |
-   | `blocking:` | Must change before merge |
-   | `suggestion:` | Non-blocking improvement |
-   | `nit:` | Optional, explicitly ignorable |
-   | `question:` | Requires an answer |
+   | Prefix        | Meaning                        |
+   | ------------- | ------------------------------ |
+   | `blocking:`   | Must change before merge       |
+   | `suggestion:` | Non-blocking improvement       |
+   | `nit:`        | Optional, explicitly ignorable |
+   | `question:`   | Requires an answer             |
 
 4. Approve only when: CI is green, threads are resolved, the change is tested, and
    documentation is updated or its absence justified.
@@ -316,13 +316,13 @@ incomplete — mark them ready for review only when complete.
 
 ### Approval requirements
 
-| Change type | Approvals |
-| --- | --- |
-| Default | 1 |
-| Touches `src/execution/`, `src/config/schema/`, or `src/core/` | 2 |
-| Touches `.github/`, release configuration, or security-sensitive code | 2, including the Technical Lead |
-| Documentation only | 1 |
-| Hotfix | 1, then a retrospective review within 2 business days |
+| Change type                                                           | Approvals                                             |
+| --------------------------------------------------------------------- | ----------------------------------------------------- |
+| Default                                                               | 1                                                     |
+| Touches `src/execution/`, `src/config/schema/`, or `src/core/`        | 2                                                     |
+| Touches `.github/`, release configuration, or security-sensitive code | 2, including the Technical Lead                       |
+| Documentation only                                                    | 1                                                     |
+| Hotfix                                                                | 1, then a retrospective review within 2 business days |
 
 You may not approve your own pull request.
 
@@ -332,15 +332,15 @@ You may not approve your own pull request.
 
 QAT maintains a **linear history on `main`**.
 
-| Aspect | Decision |
-| --- | --- |
-| Strategy | **Squash and merge**, exclusively |
-| Merge commits on `main` | Not permitted |
-| Rebase and merge | Not permitted — loses the squash boundary and PR traceability |
-| Updating a branch | `git rebase origin/main`, never `git merge main` |
-| Branch deletion | Automatic on merge |
-| Result on `main` | One commit per pull request; message = PR title + body |
-| Release tagging | Annotated `v<semver>` tag on a `main` commit |
+| Aspect                  | Decision                                                      |
+| ----------------------- | ------------------------------------------------------------- |
+| Strategy                | **Squash and merge**, exclusively                             |
+| Merge commits on `main` | Not permitted                                                 |
+| Rebase and merge        | Not permitted — loses the squash boundary and PR traceability |
+| Updating a branch       | `git rebase origin/main`, never `git merge main`              |
+| Branch deletion         | Automatic on merge                                            |
+| Result on `main`        | One commit per pull request; message = PR title + body        |
+| Release tagging         | Annotated `v<semver>` tag on a `main` commit                  |
 
 **Rationale.** A single commit per pull request keeps `git bisect` usable, makes the
 changelog derivable from history, and preserves a one-to-one trace between a WBS task
@@ -410,12 +410,12 @@ Rules:
    both observations in the pull request.
 3. **Severity dictates the path:**
 
-   | Severity | Meaning | Path |
-   | --- | --- | --- |
+   | Severity      | Meaning                                       | Path                                                             |
+   | ------------- | --------------------------------------------- | ---------------------------------------------------------------- |
    | S1 — Critical | Data loss, credential leak, corrupted results | `hotfix/`, merge immediately, post-mortem within 2 business days |
-   | S2 — Major | Command unusable, wrong exit code, false pass | `fix/`, prioritised in the current iteration |
-   | S3 — Minor | Incorrect output, poor error message | `fix/`, normal queue |
-   | S4 — Trivial | Cosmetic | `fix/` or `chore/`, batched |
+   | S2 — Major    | Command unusable, wrong exit code, false pass | `fix/`, prioritised in the current iteration                     |
+   | S3 — Minor    | Incorrect output, poor error message          | `fix/`, normal queue                                             |
+   | S4 — Trivial  | Cosmetic                                      | `fix/` or `chore/`, batched                                      |
 
 4. **A wrong exit code from `qat run` is always S1 or S2.** A false pass is worse than
    a crash: it destroys trust in every result the tool has ever produced. Treat exit
@@ -444,12 +444,12 @@ Rules:
    output before submitting. An untested snippet is a defect, not a shortcut.
 2. **Use the documentation type that fits:**
 
-   | Directory | Purpose |
-   | --- | --- |
-   | `docs/guides/` | Task-oriented; the reader achieves a goal |
-   | `docs/reference/` | Command syntax, flags, exit codes, configuration keys |
-   | `docs/architecture/` | Design, ADRs, schemas |
-   | `docs/engineering/` | Process standards, including this repository's conventions |
+   | Directory            | Purpose                                                    |
+   | -------------------- | ---------------------------------------------------------- |
+   | `docs/guides/`       | Task-oriented; the reader achieves a goal                  |
+   | `docs/reference/`    | Command syntax, flags, exit codes, configuration keys      |
+   | `docs/architecture/` | Design, ADRs, schemas                                      |
+   | `docs/engineering/`  | Process standards, including this repository's conventions |
 
 3. **Every CLI command change requires a matching `docs/reference/` update** in the
    same pull request.
