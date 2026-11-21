@@ -1,0 +1,137 @@
+name: Engineering task
+description: Track a WBS deliverable or internal engineering work item.
+title: "chore(<scope>): <short description>"
+labels: ["task", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this for internal work: WBS deliverables, standards, tooling, refactoring,
+        and test coverage. Use the **Feature request** template when the outcome is a
+        new capability users will notice.
+
+  - type: input
+    id: wbs
+    attributes:
+      label: WBS ID
+      description: The task identifier from the project plan, with dots.
+      placeholder: "2.1.2"
+    validations:
+      required: true
+
+  - type: input
+    id: parent
+    attributes:
+      label: Parent work package
+      placeholder: "2.1 - Repository and contribution standards"
+    validations:
+      required: false
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      options:
+        - Repository and process standards
+        - Architecture and design
+        - CLI
+        - Configuration
+        - Execution and adapters
+        - Results and reporting
+        - Diagnostics and evidence
+        - Persistence
+        - Testing and quality
+        - CI/CD and release
+        - Documentation
+    validations:
+      required: true
+
+  - type: textarea
+    id: scope
+    attributes:
+      label: Description and scope
+      description: What must be produced. Include inputs, mentions and explicit exclusions.
+      placeholder: |
+        Define how changes reach main.
+
+        In scope: branch naming, commit conventions, PR conventions, review, merge
+        strategy, defect and feature workflows, docs workflow, version-control hygiene.
+
+        Out of scope: branch protection configuration (2.1.1).
+    validations:
+      required: true
+
+  - type: textarea
+    id: outputs
+    attributes:
+      label: Outputs or deliverables
+      description: Concrete artefacts. Files, commands, documents, configuration.
+      placeholder: |
+        - CONTRIBUTING.md
+        - .github/pull_request_template.md
+        - .github/ISSUE_TEMPLATE/
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: One verifiable statement per line.
+      placeholder: |
+        - Branch naming conventions are documented
+        - A pull request template exists
+        - Commit messages are validated in CI
+    validations:
+      required: true
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - High - blocks other work
+        - Medium - scheduled in the current phase
+        - Low - when capacity allows
+    validations:
+      required: true
+
+  - type: input
+    id: duration
+    attributes:
+      label: Estimated duration
+      description: Calendar or working time. Used for phase planning, not committed.
+      placeholder: "0.25 day"
+    validations:
+      required: false
+
+  - type: input
+    id: dependencies
+    attributes:
+      label: Dependencies
+      description: WBS IDs or issue numbers that must complete first.
+      placeholder: "2.1.1, #12"
+    validations:
+      required: false
+
+  - type: textarea
+    id: definition-of-done
+    attributes:
+      label: Additional definition of done
+      description: |
+        CONTRIBUTING.md section 12 applies to all work. Add anything specific to this
+        task only.
+      placeholder: |
+        - Repository settings documented so the conventions are enforceable
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: This task is independent and can be completed in one pull request, or is split into sub-tasks.
+          required: true
+        - label: The acceptance criteria are verifiable by someone other than me.
+          required: true

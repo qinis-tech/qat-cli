@@ -1,0 +1,155 @@
+name: Defect report
+description: Report incorrect or unexpected behaviour in QAT.
+title: "fix(<scope>): <short description>"
+labels: ["defect", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A defect report is only actionable with an exact command and exact output.
+        Reports without reproduction steps cannot be triaged and will be closed.
+
+        Before submitting, check that you are on the latest release and that the
+        behaviour is not already documented as intentional in `docs/`.
+
+  - type: input
+    id: version
+    attributes:
+      label: QAT version
+      description: Output of `qat --version`.
+      placeholder: "0.1.0"
+    validations:
+      required: true
+
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: Operating system, Node.js version, and the detected framework version.
+      placeholder: "Windows 11 23H2, Node 24.1.0, Cypress 13.15.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Which part of QAT misbehaves?
+      options:
+        - cli - command parsing, flags, help output
+        - config - configuration loading, validation, resolution
+        - execution - run orchestration, process handling
+        - cypress - Cypress adapter, detection, result parsing
+        - results - result normalisation, schema output
+        - reporting - report generation
+        - diagnostics - qat doctor checks
+        - evidence - screenshots, videos, artifact manifest
+        - persistence - execution history storage
+        - project - project detection, validation
+        - other or unsure
+    validations:
+      required: true
+
+  - type: textarea
+    id: command
+    attributes:
+      label: Command executed
+      description: The exact command, including flags and environment variables.
+      render: shell
+      placeholder: "qat run --suite smoke --env staging"
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+      description: What should have happened, and what in the documentation told you so?
+      placeholder: "Exit code 1, because three specs failed."
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+      description: |
+        Include the full terminal output and the exit code (`echo $?` on POSIX,
+        `echo %ERRORLEVEL%` on Windows). Redact credentials.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: exit-code
+    attributes:
+      label: Exit code returned
+      description: |
+        The numeric exit code. This matters more than usual: QAT's exit-code
+        contract is what CI depends on, and a wrong code is a silent failure.
+      placeholder: "0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: severity
+    attributes:
+      label: Severity
+      description: |
+        S1 - Critical: data loss, credential exposure in logs, corrupted result files
+        S2 - Major: command unusable, wrong exit code, or a false pass
+        S3 - Minor: incorrect output, misleading or missing error message
+        S4 - Trivial: cosmetic, formatting, typo
+      options:
+        - S2 - Major
+        - S3 - Minor
+        - S1 - Critical
+        - S4 - Trivial
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Reproduction steps
+      description: Numbered steps from a clean state. The smallest sequence that reproduces it.
+      placeholder: |
+        1. `qat init` in an empty directory, choose Cypress
+        2. Add one passing spec and one failing spec
+        3. `qat run`
+        4. Observe exit code 0 despite the failing spec
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: |
+        Relevant configuration (redact secrets and internal hostnames), log excerpts,
+        and the contents of `.qat/` metadata if generated. Do not attach customer data,
+        production URLs, or recorded video containing personal information.
+    validations:
+      required: false
+
+  - type: input
+    id: workaround
+    attributes:
+      label: Workaround
+      description: If you found one, describe it. This helps others immediately.
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I am running the latest released version of QAT.
+          required: true
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: This is not a security vulnerability, and I have not pasted credentials or customer data.
+          required: true
+        - label: I have not modified `.github/ISSUE_TEMPLATE/config.yml` to bypass the blank-issue setting for this report.
+          required: false

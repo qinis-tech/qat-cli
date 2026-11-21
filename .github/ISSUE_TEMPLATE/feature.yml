@@ -1,0 +1,124 @@
+name: Feature request
+description: Propose a new capability for QAT.
+title: "feat(<scope>): <short description>"
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        A feature request must describe a problem, not only a solution.
+
+        QAT complements existing test tools rather than replacing them. If a framework
+        already solves this well, say so and explain what QAT would add on top.
+        Proposals that rebuild an existing capability will usually be declined.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: |
+        What is difficult or impossible today? Describe the engineering situation, who
+        it affects, and how often. Do not describe the solution here.
+      placeholder: |
+        Every time a Cypress spec fails, I manually dig through video and screenshots to
+        work out whether the failure is real or environmental. That takes 10-15 minutes
+        per failure, several times a day.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed approach
+      description: What should QAT do? Include the intended command shape if it is a CLI change.
+      render: shell
+      placeholder: "qat diagnose --latest"
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: |
+        Including "do nothing", "use an existing framework feature", and "a shell script".
+        Required for any proposal that adds a new abstraction, dependency, or adapter.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - cli - new command or flag
+        - config - configuration capability
+        - execution - execution behaviour
+        - a new framework adapter
+        - reporting
+        - diagnostics
+        - evidence collection
+        - persistence and history
+        - developer experience
+        - other
+    validations:
+      required: true
+
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance criteria
+      description: One verifiable statement per line. Each must be testable without asking you.
+      placeholder: |
+        - qat diagnose --latest lists the failing spec, the error message, and the artifact path
+        - qat diagnose exits 0 when a diagnosis is produced and 1 when no prior run exists
+        - Output is available as JSON via --json for CI consumption
+    validations:
+      required: true
+
+  - type: dropdown
+    id: adr
+    attributes:
+      label: Does this require an architecture decision record?
+      description: Required for new abstractions, dependency boundaries, schema changes and adapter contract changes.
+      options:
+        - "No - additive, no architectural impact"
+        - "Yes - introduces a new abstraction or dependency boundary"
+        - "Yes - changes the config or execution-result schema"
+        - "Yes - changes the adapter contract"
+        - "Unsure - needs assessment"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: breaking
+    attributes:
+      label: Is this a breaking change if accepted?
+      options:
+        - "No"
+        - "Yes - changes an exit code or its meaning"
+        - "Yes - changes a command or flag"
+        - "Yes - changes a config key or its default"
+        - "Yes - changes the result schema"
+        - "Unsure"
+    validations:
+      required: true
+
+  - type: textarea
+    id: docs
+    attributes:
+      label: Documentation impact
+      description: Which pages under `docs/` would change?
+      placeholder: "New docs/reference/qat-diagnose.md; update docs/reference/commands.md"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I searched existing issues and discussions for this proposal.
+          required: true
+        - label: This is not a request to rebuild a capability an existing test framework already provides well.
+          required: true

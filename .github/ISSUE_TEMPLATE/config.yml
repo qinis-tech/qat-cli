@@ -1,0 +1,14 @@
+blank_issues_enabled: false
+
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/qinis/qat-cli/security/policy
+    about: Never report vulnerabilities in a public issue. Use private disclosure.
+
+  - name: Ask a question or discuss an idea
+    url: https://github.com/qinis/qat-cli/discussions
+    about: For usage questions and open-ended discussion that is not yet a defect or task.
+
+  - name: Read the contribution standards
+    url: https://github.com/qinis/qat-cli/blob/main/CONTRIBUTING.md
+    about: Branching, commit conventions, review expectations and merge strategy.

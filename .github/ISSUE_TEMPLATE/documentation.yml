@@ -1,0 +1,82 @@
+name: Documentation issue
+description: Report incorrect, missing, broken or unclear documentation.
+title: "docs(<scope>): <short description>"
+labels: ["documentation", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Documentation defects are real defects. An untested command in a guide is more
+        damaging than a bug, because the reader trusts it and blames themselves when it
+        fails.
+
+        Corrections for typos and broken links do not need a WBS task. Use a `docs/`
+        branch and reference this issue.
+
+  - type: input
+    id: location
+    attributes:
+      label: Location
+      description: File path or documentation URL.
+      placeholder: "docs/reference/qat-run.md"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of issue
+      options:
+        - Incorrect - the content is wrong
+        - Broken - a command or code sample does not work
+        - Missing - required content is absent
+        - Outdated - describes previous behaviour
+        - Unclear - correct but the reader cannot follow it
+        - Broken link
+    validations:
+      required: true
+
+  - type: textarea
+    id: current
+    attributes:
+      label: What the documentation currently says
+      description: Quote the relevant text or command verbatim.
+    validations:
+      required: true
+
+  - type: textarea
+    id: correct
+    attributes:
+      label: What it should say
+      description: If you know the correct content, state it. If not, describe the confusion.
+    validations:
+      required: true
+
+  - type: textarea
+    id: verification
+    attributes:
+      label: How you verified the problem
+      description: |
+        Did you run the documented command? Paste the command and the actual output.
+        This is what distinguishes a documentation defect from a misunderstanding.
+      render: shell
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: QAT version this applies to
+      placeholder: "0.1.0"
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: confirmations
+    attributes:
+      label: Confirmations
+      options:
+        - label: I followed the documentation as written and it did not work as described.
+          required: true
+        - label: I searched existing issues for this documentation problem.
+          required: true
