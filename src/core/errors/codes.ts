@@ -1,28 +1,26 @@
 /**
  * Error codes, categories and recoverability classes.
  *
- * The failure vocabulary for the whole application. Nothing here is framework-specific,
- * nothing here imports anything, and nothing here is a message — codes identify
- * conditions, callers supply the sentence.
+ * The failure vocabulary for the whole application. Nothing here is framework-specific, nothing
+ * here imports anything, and nothing here is a message — codes identify conditions, callers supply
+ * the sentence.
  *
  * ## Why codes are strings and not enum members
  *
- * A code crosses the process boundary: it appears in a terminal, in a log line, in a
- * JSON result and in a bug report pasted by a user. It has to be stable and readable
- * outside the program, so it is a plain string with a fixed value rather than a compiled
- * enum member whose value is an integer.
+ * A code crosses the process boundary: it appears in a terminal, in a log line, in a JSON result
+ * and in a bug report pasted by a user. It has to be stable and readable outside the program, so it
+ * is a plain string with a fixed value rather than a compiled enum member whose value is an
+ * integer.
  *
  * ## Why codes are permanent
  *
- * A code's meaning never changes, and a withdrawn condition leaves its code unused. This
- * mirrors HTTP status codes: the value is a promise to whatever reads it, so stability
- * matters more than tidiness. A user who searched for `QAT3002` last year must find the
- * same explanation this year.
+ * A code's meaning never changes, and a withdrawn condition leaves its code unused. This mirrors
+ * HTTP status codes: the value is a promise to whatever reads it, so stability matters more than
+ * tidiness. A user who searched for `QAT3002` last year must find the same explanation this year.
  *
  * ## Ranges
  *
- * The thousands digit is the category, so a code identifies itself in a log without a
- * lookup:
+ * The thousands digit is the category, so a code identifies itself in a log without a lookup:
  *
  *   1xxx  how the command was invoked
  *   2xxx  the project
@@ -42,16 +40,15 @@
  * 2. Add the value type to that category's union at the bottom of this file.
  * 3. Assign it in `errors.ts` by narrowing the class's constructor parameter type.
  *
- * Step 2 is what makes a mismatched category and code a compile error rather than a
- * runtime surprise in a log.
+ * Step 2 is what makes a mismatched category and code a compile error rather than a runtime
+ * surprise in a log.
  */
 
 /**
  * Every condition the CLI must distinguish.
  *
- * Keys are camelCase for ergonomic reference in code; values are the permanent
- * identifiers. Do not derive one from the other — the key may be renamed for clarity,
- * the value never changes.
+ * Keys are camelCase for ergonomic reference in code; values are the permanent identifiers. Do
+ * not derive one from the other — the key may be renamed for clarity, the value never changes.
  */
 export const ErrorCode = {
   // ── 1xxx — how the command was invoked ─────────────────────────────────────
@@ -81,10 +78,13 @@ export const ErrorCode = {
   dependencyMissing: "QAT4002",
 
   // ── 5xxx — infrastructure ──────────────────────────────────────────────────
+  // Two concerns share this range because both describe "something on the machine went
+  // wrong". They are grouped rather than interleaved so a reader scanning for filesystem
+  // behaviour does not have to filter past process behaviour.
+
+  // Filesystem (5001–5005)
   /** A filesystem operation failed: permission, path, space. */
   filesystemFailure: "QAT5001",
-  /** A child process could not be started, or exited in an unexpected way. */
-  processFailure: "QAT5002",
   /** A path is malformed, or resolves outside the directory it was supposed to stay within. */
   filesystemPathInvalid: "QAT5003",
   /** A file was expected to contain JSON and does not. */
@@ -92,12 +92,22 @@ export const ErrorCode = {
   /** A file could not be accessed because another process holds it. */
   filesystemLocked: "QAT5005",
 
+  // Child processes (5002, 5006–5008)
+  /** A child process could not be started, or exited in an unexpected way. */
+  processFailure: "QAT5002",
+  /** The executable does not exist, or is not on the path. */
+  processExecutableNotFound: "QAT5006",
+  /** The process did not finish within the configured limit and was terminated. */
+  processTimedOut: "QAT5007",
+  /** The process was cancelled by the caller. */
+  processCancelled: "QAT5008",
+
   // ── 6xxx — execution ───────────────────────────────────────────────────────
   /**
    * The framework could not run at all.
    *
-   * Not a failing test. A failing test is a completed run with exit code 1; this means
-   * the run never started.
+   * Not a failing test. A failing test is a completed run with exit code 1; this means the run
+   * never started.
    */
   frameworkExecutionFailed: "QAT6001",
 
@@ -119,12 +129,12 @@ export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 /**
  * Why it happened, in terms a caller can act on.
  *
- * Categories exist to answer one question: which exit code does this produce? They are
- * also what makes a message groupable — "all the configuration failures this week" is a
- * query a category answers and an error code does not.
+ * Categories exist to answer one question: which exit code does this produce? They are also what
+ * makes a message groupable — "all the configuration failures this week" is a query a category
+ * answers and an error code does not.
  *
- * Deliberately not aligned one-to-one with error codes: several codes share a category,
- * and one code range may serve two classes of error.
+ * Deliberately not aligned one-to-one with error codes: several codes share a category, and one
+ * code range may serve two classes of error.
  */
 export const ErrorCategory = {
   /** The command was invoked wrongly. */
@@ -152,13 +162,12 @@ export type ErrorCategory = (typeof ErrorCategory)[keyof typeof ErrorCategory];
 /**
  * Who can fix it.
  *
- * Kept independent of category because one category spans several answers. A missing
- * dependency and an unsupported runtime are both `Environment`, but the first is fixed by
- * the person running the command and the second is not.
+ * Kept independent of category because one category spans several answers. A missing dependency
+ * and an unsupported runtime are both `Environment`, but the first is fixed by the person running
+ * the command and the second is not.
  *
- * This is what turns an error message from a description into a next action: a
- * `UserActionable` failure gets a remediation line, a `Fatal` one gets a request to
- * report a defect.
+ * This is what turns an error message from a description into a next action: a `UserActionable`
+ * failure gets a remediation line, a `Fatal` one gets a request to report a defect.
  */
 export const Recoverability = {
   /** The person running the command can fix it, by changing something. */
@@ -175,8 +184,8 @@ export type Recoverability =
 // ─────────────────────────────────────────────────────────────────────────────
 // Per-category code unions
 //
-// Each specialised error class accepts only its own union, so pairing a storage code
-// with a configuration error is a compile error rather than a confusing log line.
+// Each specialised error class accepts only its own union, so pairing a storage code with a
+// configuration error is a compile error rather than a confusing log line.
 // ─────────────────────────────────────────────────────────────────────────────
 
 export type UserInputCode =
@@ -196,10 +205,13 @@ export type EnvironmentCode =
 
 export type InfrastructureCode =
   | typeof ErrorCode.filesystemFailure
-  | typeof ErrorCode.processFailure
   | typeof ErrorCode.filesystemPathInvalid
   | typeof ErrorCode.filesystemInvalidJson
-  | typeof ErrorCode.filesystemLocked;
+  | typeof ErrorCode.filesystemLocked
+  | typeof ErrorCode.processFailure
+  | typeof ErrorCode.processExecutableNotFound
+  | typeof ErrorCode.processTimedOut
+  | typeof ErrorCode.processCancelled;
 
 export type ExecutionCode = typeof ErrorCode.frameworkExecutionFailed;
 
