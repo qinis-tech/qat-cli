@@ -261,15 +261,20 @@ export type LogContext = Readonly<Record<string, unknown>>;
 /**
  * Structured logging.
  *
+ * Six levels rather than four. `trace` exists for diagnosing the logger itself and should
+ * almost never be used in application code; `fatal` exists because a process about to exit
+ * has no second chance to report why.
+ *
  * A port rather than an import, because the application layer is forbidden from importing
- * `core/logging` — that is an implementation. Without this, the application could not
- * report progress at all without breaking the boundary rule it defines.
+ * `core/logging` — that is an implementation.
  */
 export interface Logger {
+  trace(message: string, context?: LogContext): void;
   debug(message: string, context?: LogContext): void;
   info(message: string, context?: LogContext): void;
   warn(message: string, context?: LogContext): void;
   error(message: string, context?: LogContext): void;
+  fatal(message: string, context?: LogContext): void;
 }
 
 /**
