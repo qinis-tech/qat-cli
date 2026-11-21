@@ -64,6 +64,8 @@ export const ErrorCode = {
   frameworkNotDetected: "QAT2002",
   /** A framework was detected at a version QAT does not support. */
   frameworkUnsupported: "QAT2003",
+  /** More than one framework configuration exists, so the intended one is unknowable. */
+  projectAmbiguous: "QAT2004",
 
   // ── 3xxx — the configuration ───────────────────────────────────────────────
   /** A configuration file was referenced but does not exist. */
@@ -194,7 +196,8 @@ export type UserInputCode =
 export type ProjectCode =
   | typeof ErrorCode.projectNotFound
   | typeof ErrorCode.frameworkNotDetected
-  | typeof ErrorCode.frameworkUnsupported;
+  | typeof ErrorCode.frameworkUnsupported
+  | typeof ErrorCode.projectAmbiguous;
 
 export type ConfigurationCode =
   | typeof ErrorCode.configurationNotFound

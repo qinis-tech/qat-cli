@@ -10,6 +10,36 @@
  */
 
 /**
+ * Package managers QAT can recognise.
+ *
+ * A closed set, because recognising one is a claim about how a project is installed and what
+ * command fixes a missing dependency. An unrecognised manager is better reported as absent than
+ * guessed at.
+ */
+export const PackageManager = {
+  Npm: "npm",
+  Pnpm: "pnpm",
+  Yarn: "yarn",
+  Bun: "bun",
+} as const;
+
+export type PackageManager =
+  (typeof PackageManager)[keyof typeof PackageManager];
+
+export interface PackageManagerInfo {
+  readonly name: PackageManager;
+  /**
+   * Whether `package.json` declared this, or a lockfile merely implied it.
+   *
+   * The distinction matters: a lockfile left behind after a migration implies a manager the
+   * project no longer uses, and any remediation built on it would be wrong.
+   */
+  readonly declared: boolean;
+  /** The lockfile the inference came from, when it was inferred. */
+  readonly lockfile?: string;
+}
+
+/**
  * Frameworks QAT can drive.
  *
  * A closed set, not `string`. Adding a member is a deliberate act that will break
@@ -58,6 +88,8 @@ export interface ProjectPaths {
   readonly screenshotsDirectory?: string;
   /** Where the framework writes video, before QAT collects it as evidence. */
   readonly videosDirectory?: string;
+  /** Application source directory, where one follows a conventional name. Absent for test-only projects. */
+  readonly sourceDirectory?: string;
 }
 
 /**
@@ -114,4 +146,6 @@ export interface ProjectInfo {
   readonly paths: ProjectPaths;
   /** Absent when the directory has no `package.json`, which is legal for a bare project. */
   readonly packageMetadata?: PackageMetadata;
+  /** Absent when no lockfile or declaration was found. Not an error: a project may have neither. */
+  readonly packageManager?: PackageManagerInfo;
 }
