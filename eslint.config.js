@@ -270,16 +270,16 @@ export default defineConfig(
 
   // The `~` alias is not rewritten by tsc and would break the published build.
   {
-    files: ['src/**/*.ts'],
+    files: ["src/**/*.ts"],
     rules: {
-      'no-restricted-imports': [
-        'error',
+      "no-restricted-imports": [
+        "error",
         {
           patterns: [
             {
-              group: ['~/*'],
+              group: ["~/*"],
               message:
-                'src/ must use relative imports. The ~ alias is not rewritten by tsc and would fail at runtime for package consumers.',
+                "src/ must use relative imports. The ~ alias is not rewritten by tsc and would fail at runtime for package consumers.",
             },
           ],
         },

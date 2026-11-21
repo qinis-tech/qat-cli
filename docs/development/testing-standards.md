@@ -1,21 +1,21 @@
 # Testing Standards
 
-| | |
-| --- | --- |
-| **Status** | Normative |
-| **Applies to** | `tests/`, and any source under test |
-| **Framework** | Vitest 4, coverage via `@vitest/coverage-v8` |
-| **Enforced by** | `npm run verify`, CI |
+|                 |                                              |
+| --------------- | -------------------------------------------- |
+| **Status**      | Normative                                    |
+| **Applies to**  | `tests/`, and any source under test          |
+| **Framework**   | Vitest 4, coverage via `@vitest/coverage-v8` |
+| **Enforced by** | `npm run verify`, CI                         |
 
 ## 1. Directory layout
 
-| Path | Contains |
-| --- | --- |
-| `tests/unit/` | One module under test, no filesystem or process side effects |
-| `tests/integration/` | Several QAT modules together, including real filesystem access |
-| `tests/e2e/` | The built CLI binary, spawned as a child process |
-| `tests/fixtures/` | Static input: sample Cypress projects, config files, captured output |
-| `tests/helpers/` | Shared test utilities. Not product code, not measured by coverage |
+| Path                 | Contains                                                             |
+| -------------------- | -------------------------------------------------------------------- |
+| `tests/unit/`        | One module under test, no filesystem or process side effects         |
+| `tests/integration/` | Several QAT modules together, including real filesystem access       |
+| `tests/e2e/`         | The built CLI binary, spawned as a child process                     |
+| `tests/fixtures/`    | Static input: sample Cypress projects, config files, captured output |
+| `tests/helpers/`     | Shared test utilities. Not product code, not measured by coverage    |
 
 `tests/unit/` mirrors the `src/` tree. A source file at
 `src/shared/utils/duration.ts` is tested at
@@ -34,14 +34,14 @@
 
 ## 3. Commands
 
-| Command | Purpose |
-| --- | --- |
-| `npm test` | Run unit and integration tests once |
-| `npm run test:unit` | Unit tests only |
-| `npm run test:integration` | Integration tests only |
-| `npm run test:watch` | Watch mode, local development only |
-| `npm run test:coverage` | Run once with a coverage report |
-| `npm run test:ci` | Run once, also writing JUnit XML to `reports/` |
+| Command                    | Purpose                                        |
+| -------------------------- | ---------------------------------------------- |
+| `npm test`                 | Run unit and integration tests once            |
+| `npm run test:unit`        | Unit tests only                                |
+| `npm run test:integration` | Integration tests only                         |
+| `npm run test:watch`       | Watch mode, local development only             |
+| `npm run test:coverage`    | Run once with a coverage report                |
+| `npm run test:ci`          | Run once, also writing JUnit XML to `reports/` |
 
 `npm test` never runs end-to-end tests. Those spawn the built binary and are
 executed on demand once that configuration exists.
@@ -55,8 +55,8 @@ QAT is ESM under `moduleResolution: nodenext`. This has one consequence that
 catches everyone at least once:
 
 ```ts
-import { formatDuration } from '~/shared/utils/duration.js';   // correct
-import { formatDuration } from '~/shared/utils/duration';      // tsc error
+import { formatDuration } from "~/shared/utils/duration.js"; // correct
+import { formatDuration } from "~/shared/utils/duration"; // tsc error
 ```
 
 The `.js` extension is mandatory even though the file is `duration.ts`. `tsc`
@@ -83,13 +83,13 @@ no test imports is reported at 0% rather than being absent from the report.
 
 ### What is excluded, and why
 
-| Path | Reason |
-| --- | --- |
-| `src/**/*.d.ts` | Type declarations only; nothing executable |
-| `src/**/index.ts` | Barrel re-exports only. **If an `index.ts` gains logic, delete its exclusion** |
-| `src/cli/index.ts` | Process bootstrap. Covered by e2e tests, not unit tests |
-| `tests/**` | Not product behaviour; would inflate the number |
-| `vitest.config.ts`, `eslint.config.js` | Configuration |
+| Path                                   | Reason                                                                         |
+| -------------------------------------- | ------------------------------------------------------------------------------ |
+| `src/**/*.d.ts`                        | Type declarations only; nothing executable                                     |
+| `src/**/index.ts`                      | Barrel re-exports only. **If an `index.ts` gains logic, delete its exclusion** |
+| `src/cli/index.ts`                     | Process bootstrap. Covered by e2e tests, not unit tests                        |
+| `tests/**`                             | Not product behaviour; would inflate the number                                |
+| `vitest.config.ts`, `eslint.config.js` | Configuration                                                                  |
 
 Excluding a path requires a stated reason. "It was hard to test" is not one.
 
@@ -179,10 +179,10 @@ CI runs `npm run test:ci`. Requirements for CI compatibility:
 
 Deliberately deferred, each with the trigger that will bring it in:
 
-| Item | Trigger |
-| --- | --- |
-| End-to-end suite | First command that spawns the built binary |
-| Coverage thresholds | First real feature; see §5 |
-| Vitest `projects` for per-suite config | Integration tests needing a different timeout or pool |
-| Type-level tests via `expectTypeOf` | First published declaration file |
-| Regression test per defect | Every defect that reaches `main`; mandatory per CONTRIBUTING §9 |
+| Item                                   | Trigger                                                         |
+| -------------------------------------- | --------------------------------------------------------------- |
+| End-to-end suite                       | First command that spawns the built binary                      |
+| Coverage thresholds                    | First real feature; see §5                                      |
+| Vitest `projects` for per-suite config | Integration tests needing a different timeout or pool           |
+| Type-level tests via `expectTypeOf`    | First published declaration file                                |
+| Regression test per defect             | Every defect that reaches `main`; mandatory per CONTRIBUTING §9 |

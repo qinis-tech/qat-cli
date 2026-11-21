@@ -1,7 +1,7 @@
 // @ts-check
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath } from "node:url";
 
-import { defineConfig } from 'vitest/config';
+import { defineConfig } from "vitest/config";
 
 /**
  * Resolves a path relative to this configuration file, so the config does not
@@ -26,7 +26,7 @@ export default defineConfig({
      * `eslint.config.js` enforces that.
      */
     alias: {
-      '~': fromRoot('./src'),
+      "~": fromRoot("./src"),
     },
   },
 
@@ -36,7 +36,7 @@ export default defineConfig({
      * loading a browser-like environment would add startup cost and hide
      * accidental dependencies on browser globals.
      */
-    environment: 'node',
+    environment: "node",
 
     /**
      * Globals are off deliberately. Every test imports `describe`, `it` and
@@ -57,15 +57,20 @@ export default defineConfig({
      * the first one is written; silently including slow process-spawning tests
      * in the default run is how a fast suite becomes one people stop running.
      */
-    include: ['tests/unit/**/*.test.ts', 'tests/integration/**/*.test.ts'],
-    exclude: ['tests/fixtures/**', 'tests/e2e/**', 'node_modules/**', 'dist/**'],
+    include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    exclude: [
+      "tests/fixtures/**",
+      "tests/e2e/**",
+      "node_modules/**",
+      "dist/**",
+    ],
 
     /**
      * Forks rather than threads. Tests that spawn child processes or write to
      * the filesystem behave more predictably in separate processes, and the
      * isolation cost is negligible at this suite size.
      */
-    pool: 'forks',
+    pool: "forks",
 
     /**
      * Explicit timeouts. The default 5s is too short for integration tests that
@@ -89,10 +94,10 @@ export default defineConfig({
      */
     passWithNoTests: false,
 
-    reporters: ['default'],
+    reporters: ["default"],
 
     coverage: {
-      provider: 'v8',
+      provider: "v8",
 
       /**
        * Report coverage even when tests fail. A failing run still produces the
@@ -100,14 +105,14 @@ export default defineConfig({
        */
       reportOnFailure: true,
 
-      reportsDirectory: './coverage',
+      reportsDirectory: "./coverage",
 
       /**
        * `html` for local inspection, `lcov` for CI tooling, `text` for the
        * terminal, `json-summary` so a later step can read one number without
        * parsing lcov.
        */
-      reporter: ['text', 'html', 'lcov', 'json-summary'],
+      reporter: ["text", "html", "lcov", "json-summary"],
 
       /**
        * Measure production source only. `tests/`, `dist/` and configuration
@@ -116,16 +121,16 @@ export default defineConfig({
        * Setting `include` explicitly also means unimported source files count
        * as zero rather than being silently absent from the report.
        */
-      include: ['src/**/*.ts'],
+      include: ["src/**/*.ts"],
 
       exclude: [
-        'src/**/*.d.ts',
+        "src/**/*.d.ts",
         // Barrel files that only re-export. If an index.ts gains logic, delete
         // this entry rather than letting the logic go unmeasured.
-        'src/**/index.ts',
+        "src/**/index.ts",
         // Process bootstrap: creates a CLI, binds signals, exits. Covered by
         // end-to-end tests against the built binary, not by unit tests.
-        'src/cli/index.ts',
+        "src/cli/index.ts",
       ],
 
       /**

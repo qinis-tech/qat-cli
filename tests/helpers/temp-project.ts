@@ -1,6 +1,6 @@
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
 
 export interface TempProject {
   /** Absolute path to the throwaway project root. */
@@ -20,12 +20,15 @@ export interface TempProject {
 export async function withTempProject(
   run: (project: TempProject) => Promise<void>,
 ): Promise<void> {
-  const root = await mkdtemp(join(tmpdir(), 'qat-test-'));
+  const root = await mkdtemp(join(tmpdir(), "qat-test-"));
 
-  const write = async (relativePath: string, contents: string): Promise<void> => {
+  const write = async (
+    relativePath: string,
+    contents: string,
+  ): Promise<void> => {
     const target = join(root, relativePath);
     await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, contents, 'utf8');
+    await writeFile(target, contents, "utf8");
   };
 
   try {
