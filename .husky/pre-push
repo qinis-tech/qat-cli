@@ -1,0 +1,5 @@
+# Runs before objects are sent to the remote. Target: under 60 seconds.
+#
+# Git passes the push specification on stdin; the script reads it to detect a
+# direct push to a protected branch.
+node scripts/hooks/pre-push.mjs
