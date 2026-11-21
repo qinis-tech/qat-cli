@@ -1,49 +1,45 @@
 {
+  // Type-checks the whole repository: src, tests, and tool configs.
+  // Emit is handled exclusively by tsconfig.build.json.
   "compilerOptions": {
-    // File Layout
-    "rootDir": "./src",
-    "outDir": "./dist",
-
-    // Environment Settings
+    // ── Environment ────────────────────────────────────────────────
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
-    "target": "ES2022",
-    "lib": ["ES2022"],
+    "target": "ES2024",
+    "lib": ["ES2024"],
     "types": ["node"],
+    "resolveJsonModule": true,
 
-    // JavaScript and TypeScript Outputs
-    "sourceMap": true,
-    "declaration": true,
-    "declarationMap": true,
+    // ── Modules ────────────────────────────────────────────────────
+    "verbatimModuleSyntax": true,
+    "moduleDetection": "force",
+    "noUncheckedSideEffectImports": true,
+    "esModuleInterop": true,
 
-    // Strict Type Checking
+    // ── Strictness ─────────────────────────────────────────────────
     "strict": true,
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
-
-    // Module Configuration
-    "verbatimModuleSyntax": true,
-    "isolatedModules": true,
-    "moduleDetection": "force",
-    "noUncheckedSideEffectImports": true,
-
-    // Code Quality
+    "noPropertyAccessFromIndexSignature": true,
     "noImplicitReturns": true,
     "noImplicitOverride": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true,
-    "forceConsistentCasingInFileNames": true,
+    "allowUnreachableCode": false,
+    "allowUnusedLabels": false,
 
-    // Compatibility
-    "esModuleInterop": true,
-    "skipLibCheck": true
+    // ── Correctness / performance ──────────────────────────────────
+    "forceConsistentCasingInFileNames": true,
+    "skipLibCheck": true,
+
+    // ── This configuration never emits ─────────────────────────────
+    "noEmit": true
   },
-  "include": ["src/**/*.ts"],
-  "exclude": [
-    "node_modules",
-    "dist",
-    "tests",
-    "examples"
-  ]
+  "include": [
+    "src/**/*.ts",
+    "tests/**/*.ts",
+    "vitest.config.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
 }
