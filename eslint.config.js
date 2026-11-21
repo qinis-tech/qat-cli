@@ -268,6 +268,25 @@ export default defineConfig(
     },
   },
 
+  // The `~` alias is not rewritten by tsc and would break the published build.
+  {
+    files: ['src/**/*.ts'],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['~/*'],
+              message:
+                'src/ must use relative imports. The ~ alias is not rewritten by tsc and would fail at runtime for package consumers.',
+            },
+          ],
+        },
+      ],
+    },
+  },
+
   // ───────────────────────────────────────────────────────────────────────────
   // 6. Prettier — MUST be last. Disables every formatting-related ESLint rule.
   // ───────────────────────────────────────────────────────────────────────────

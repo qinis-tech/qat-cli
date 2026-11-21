@@ -168,3 +168,9 @@ Thumbs.db
 # Test output
 coverage/
 *.log
+
+# Test coverage output
+coverage/
+
+# CI machine-readable test output
+reports/
