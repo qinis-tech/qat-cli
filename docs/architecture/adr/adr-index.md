@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0005](0005-separate-diagnostic-logs-from-user-facing-output.md) | Separate diagnostic logs from user-facing output | Accepted | 2026-11-21 |
 | [ADR-0004](0004-derive-exit-codes-from-error-category-rather-than-from-the-c.md) | Derive exit codes from error category rather than from the call site | Accepted | 2026-11-21 |
 | [ADR-0003](0003-test-an-os-matrix-with-a-single-node-version.md) | Test an OS matrix with a single Node version | Accepted | 2026-11-21 |
 | [ADR-0002](0002-verify-every-change-in-continuous-integration.md) | Verify every change in continuous integration | Accepted | 2026-11-21 |
