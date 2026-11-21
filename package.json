@@ -1,0 +1,29 @@
+{
+  "name": "qat-cli",
+  "version": "1.0.0",
+  "description": "QAT (Quality Automation Toolkit) is a TypeScript-based CLI for Cypress projects, simplifying test execution, project diagnostics, configuration, evidence management and automated reporting.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "better-sqlite3": "^12.11.1",
+    "commander": "^14.0.3",
+    "drizzle-orm": "^0.45.4",
+    "execa": "^9.6.1",
+    "pino": "^10.4.0",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^9.6.0",
+    "@types/node": "^26.6.6",
+    "eslint": "^10.15.0",
+    "prettier": "^3.10.1",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vitest": "^4.1.12"
+  }
+}
