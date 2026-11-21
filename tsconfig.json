@@ -16,6 +16,14 @@
     "noUncheckedSideEffectImports": true,
     "esModuleInterop": true,
 
+    // ── Path mapping ───────────────────────────────────────────────
+    // Resolved relative to this file. No baseUrl: it is deprecated in
+    // TypeScript 6 and stops functioning in 7.0, and paths no longer
+    // requires it.
+    "paths": {
+      "~/*": ["./src/*"]
+    },
+
     // ── Strictness ─────────────────────────────────────────────────
     "strict": true,
     "noUncheckedIndexedAccess": true,
