@@ -1,4 +1,12 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,9 +21,13 @@ import { runProcess } from "~/core/process/index.js";
  *
  * The tool's own process runner spawns the tool, which is the first thing in this project to do so and
  * the trigger the testing architecture document named for this suite existing. `npm run test:e2e`
- * builds first, so a failure here is a failure of the executable rather than of a missing build.
+ * builds first and runs the binary once, so a failure here is a failure of the executable rather than of
+ * a missing build.
  */
 const CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
+const DIST = fileURLToPath(new URL("../../dist", import.meta.url));
+const MANIFEST = fileURLToPath(new URL("../../package.json", import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 const created: string[] = [];
 
@@ -51,6 +63,42 @@ async function temporaryProject(): Promise<string> {
   return root;
 }
 
+/** The repository's own manifest, read once per assertion that needs it. */
+async function packageManifest(): Promise<{
+  version?: string;
+  bin?: Record<string, string>;
+}> {
+  return JSON.parse(await readFile(MANIFEST, "utf8")) as {
+    version?: string;
+    bin?: Record<string, string>;
+  };
+}
+
+/** A package layout — the compiled output beside a manifest — outside the repository. */
+async function packagedLayout(manifest: string | undefined): Promise<string> {
+  const root = await temporaryDirectory();
+
+  await cp(DIST, join(root, "dist"), { recursive: true });
+
+  // A real installation has its dependencies beside it. Without them Node cannot resolve `commander` or
+  // `pino`, and the process dies on the first import — which is what an exit code of 1 means, and is why
+  // a copied `dist/` is not a copy of an installation.
+  //
+  // A junction on Windows; symlink creation there needs elevation for file links but not for directory
+  // junctions, and the resolution behaviour is identical.
+  await symlink(
+    join(REPO_ROOT, "node_modules"),
+    join(root, "node_modules"),
+    process.platform === "win32" ? "junction" : "dir",
+  );
+
+  if (manifest !== undefined) {
+    await writeFile(join(root, "package.json"), manifest);
+  }
+
+  return root;
+}
+
 afterAll(async () => {
   await Promise.all(
     created.map((path) => rm(path, { recursive: true, force: true })),
@@ -58,11 +106,13 @@ afterAll(async () => {
 });
 
 describe("the executable", () => {
-  it("reports the version and exits zero", async () => {
+  it("reports exactly the version the package declares", async () => {
     const result = await qat(["--version"]);
 
+    // Equality rather than a shape match: a version that is merely well-formed is not evidence that the
+    // resolved value is the right one.
     expect(result.exitCode).toBe(ExitCode.Success);
-    expect(result.stdout.trim()).toMatch(/^\d+\.\d+\.\d+/);
+    expect(result.stdout.trim()).toBe((await packageManifest()).version);
   });
 
   it("prints help listing the global options and exits zero", async () => {
@@ -93,13 +143,47 @@ describe("the executable", () => {
   });
 
   it("is executable through the binary mapping the package declares", async () => {
-    const manifest = JSON.parse(
-      await readFile(new URL("../../package.json", import.meta.url), "utf8"),
-    ) as { bin?: Record<string, string> };
-
     // The criterion a declaration alone cannot satisfy: the mapped path must be the file that runs.
-    expect(manifest.bin?.["qat"]).toBe("./dist/cli/index.js");
+    expect((await packageManifest()).bin?.["qat"]).toBe("./dist/cli/index.js");
     expect(await readFile(CLI, "utf8")).toMatch(/^#!\/usr\/bin\/env node/);
+  });
+});
+
+describe("version resolution", () => {
+  it("resolves the version from a package layout that is not the repository", async () => {
+    const root = await packagedLayout(
+      JSON.stringify({ name: "qat-cli", version: "9.8.7", type: "module" }),
+    );
+
+    // An installed package is exactly this: compiled output beside a manifest, with no src/ above it.
+    const installed = await runProcess({
+      executable: process.execPath,
+      args: [join(root, "dist", "cli", "index.js"), "--version"],
+    });
+
+    expect(installed.exitCode).toBe(ExitCode.Success);
+    expect(installed.stdout.trim()).toBe("9.8.7");
+  });
+
+  it("fails predictably when the nearest manifest has no usable version", async () => {
+    // Valid JSON, so Node can read it and start the CLI — and no version, so the resolver fails where
+    // the reader can see it. A malformed manifest never reaches this code: Node refuses the module
+    // before the entry point runs.
+    const root = await packagedLayout(
+      JSON.stringify({ name: "qat-cli", type: "module" }),
+    );
+
+    const result = await runProcess({
+      executable: process.execPath,
+      args: [join(root, "dist", "cli", "index.js"), "--version"],
+    });
+
+    // Environment, not internal: an installation with damaged metadata is a broken install, and the
+    // remedy is to reinstall rather than to report a defect.
+    expect(result.exitCode).toBe(ExitCode.Environment);
+    expect(result.stderr).toContain("QAT4003");
+    expect(result.stderr).toContain("does not declare a usable version");
+    expect(result.stderr).not.toContain("at ");
   });
 });
 
@@ -126,8 +210,8 @@ describe("help", () => {
   });
 
   it("exits zero for help, because the user asked for something and got it", async () => {
-    // A distinct case from the global help above: this exercises the path where a subcommand prints
-    // its own help and the parser throws to stop further work.
+    // A distinct case from the global help above: this exercises the path where a subcommand prints its
+    // own help and the parser throws to stop further work.
     const result = await qat(["doctor", "--help"]);
 
     expect(result.exitCode).toBe(ExitCode.Success);
@@ -209,8 +293,8 @@ describe("doctor", () => {
     expect(result.stderr).toContain("QAT2001");
     expect(result.stderr).toContain("No project found");
 
-    // The remedy names what the reader can actually do here — passing a directory — rather than
-    // pointing at the help screen, which would not help with this failure.
+    // The remedy names what the reader can actually do here — passing a directory — rather than pointing
+    // at the help screen, which would not help with this failure.
     expect(result.stderr).toContain("pass --cwd");
   });
 

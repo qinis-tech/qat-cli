@@ -78,6 +78,8 @@ export const ErrorCode = {
   runtimeUnsupported: "QAT4001",
   /** A required dependency is absent or not executable. */
   dependencyMissing: "QAT4002",
+  /** An installed copy of QAT is missing or has damaged package metadata. */
+  installationIncomplete: "QAT4003",
 
   // ── 5xxx — infrastructure ──────────────────────────────────────────────────
   // Two concerns share this range because both describe "something on the machine went
@@ -204,7 +206,9 @@ export type ConfigurationCode =
   | typeof ErrorCode.configurationInvalid;
 
 export type EnvironmentCode =
-  typeof ErrorCode.runtimeUnsupported | typeof ErrorCode.dependencyMissing;
+  | typeof ErrorCode.runtimeUnsupported
+  | typeof ErrorCode.dependencyMissing
+  | typeof ErrorCode.installationIncomplete;
 
 export type InfrastructureCode =
   | typeof ErrorCode.filesystemFailure
