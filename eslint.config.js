@@ -81,8 +81,12 @@ const restrictedImports = (patterns) => ({
  * The domain may import none of them: it is the product's vocabulary, and an
  * implementation import there makes every consumer of that vocabulary inherit the
  * implementation permanently.
+ *
+ * `app` is in the list because the composition root is an implementation boundary
+ * rather than a layer: a domain type that imported it would depend on wiring.
  */
 const IMPLEMENTATION_LAYERS = [
+  "**/app/**",
   "**/cli/**",
   "**/config/**",
   "**/project/**",
@@ -101,12 +105,14 @@ const IMPLEMENTATION_LAYERS = [
 ];
 
 /**
- * Implementation layers the CLI must not touch outside the composition root.
+ * Implementation layers the CLI must not touch outside the entry point.
  *
  * `core/application` and `core/domain` are absent deliberately: those are the CLI's
- * permitted dependencies.
+ * permitted dependencies. `app` is present because the assembly is reached through
+ * the entry point, not through a command module.
  */
 const CLI_FORBIDDEN = [
+  "**/app/**",
   "**/config/**",
   "**/project/**",
   "**/execution/**",
@@ -252,6 +258,10 @@ export default defineConfig(
           alphabetize: { order: "asc", caseInsensitive: true },
         },
       ],
+      // A cycle between modules is a design error the compiler does not report and
+      // that surfaces as an undefined binding at runtime, at import time, in
+      // whichever file happens to load first.
+      "import-x/no-cycle": ["error", { maxDepth: 6, ignoreExternal: true }],
       // Resolution is already enforced by `tsc` with moduleResolution: nodenext,
       // which also understands the mandatory `.js` extension on TS imports. The
       // ESLint resolver does not, so duplicating the check only produces false
@@ -367,32 +377,50 @@ export default defineConfig(
   // ───────────────────────────────────────────────────────────────────────────
 
   // Baseline for the CLI tree. This is the only rule that applies to
-  // `src/cli/index.ts`, the composition root, which is permitted to import
-  // implementations and forbidden only the alias.
+  // `src/cli/index.ts`, the process entry point, which is permitted to import the
+  // composition root and forbidden only the alias.
   {
     files: ["src/cli/**/*.ts"],
     rules: restrictedImports([]),
   },
 
-  // Everything outside the CLI tree: the alias ban, plus no upward import into the
-  // CLI. An upward import means the application cannot be driven without a
-  // terminal, which is what makes it testable.
+  // The composition root imports implementations by design — that is its whole job.
+  // It is not exempt from the alias ban, because a `~` import emitted into `dist`
+  // would break a consumer just as surely from here as from anywhere else.
+  {
+    files: ["src/app/**/*.ts"],
+    rules: restrictedImports([]),
+  },
+
+  // Everything outside the CLI tree and the composition root: the alias ban, no
+  // upward import into the CLI, and no import of the assembly. An upward import
+  // means the application cannot be driven without a terminal; importing the
+  // assembly means a service stopped declaring what it needs.
+  //
+  // Both patterns live in one block because a second block covering `src/**` would
+  // replace this one rather than add to it, silently dropping whichever pattern it
+  // did not repeat.
   {
     files: ["src/**/*.ts"],
-    ignores: ["src/cli/**"],
+    ignores: ["src/cli/**", "src/app/**"],
     rules: restrictedImports([
       {
         group: ["**/cli/**"],
         message:
           "No module may import cli/. The CLI is the outermost layer; importing it upward makes the application depend on a terminal and unusable headlessly.",
       },
+      {
+        group: ["**/app/**"],
+        message:
+          "src/app assembles implementations. Only the CLI entry may import it; declare what you need instead.",
+      },
     ]),
   },
 
   // The domain is the product's vocabulary. It imports nothing, so every consumer
   // inherits no implementation. This narrows the block above, which is why
-  // `IMPLEMENTATION_LAYERS` repeats the CLI entry: the narrower block replaces the
-  // broader one rather than adding to it.
+  // `IMPLEMENTATION_LAYERS` repeats the CLI and app entries: the narrower block
+  // replaces the broader one rather than adding to it.
   {
     files: ["src/core/domain/**/*.ts"],
     rules: restrictedImports([
@@ -405,7 +433,8 @@ export default defineConfig(
   },
 
   // The CLI parses arguments and formats output. Selecting implementations is the
-  // composition root's job and belongs to index.ts alone, which is excluded here.
+  // composition root's job and belongs to `src/app/composition.ts`, reached from
+  // `index.ts` alone, which is excluded here.
   {
     files: ["src/cli/**/*.ts"],
     ignores: ["src/cli/index.ts"],
@@ -413,7 +442,7 @@ export default defineConfig(
       {
         group: CLI_FORBIDDEN,
         message:
-          "cli/ may depend on core/application and core/domain only. Implementations are wired in cli/index.ts.",
+          "cli/ may depend on core/application and core/domain only. Implementations are wired in src/app/composition.ts and reached through cli/index.ts.",
       },
     ]),
   },

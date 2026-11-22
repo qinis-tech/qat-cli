@@ -8,6 +8,10 @@
  * The methods are not `async`. They complete synchronously, and marking them `async` would be a claim
  * that something is awaited when nothing is — which the linter rejects, correctly. Returning a promise
  * from a synchronous body honours the interface without the false statement.
+ *
+ * `close` is terminal. Using the repository afterwards rejects, which mirrors what a closed database
+ * connection does — an in-memory store that kept working would be the implementation a test passes
+ * against and production does not.
  */
 import type {
   ExecutionCompletion,
@@ -24,13 +28,19 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
   /**
    * The store.
    *
-   * A `Map` rather than an array: `findById` is the most frequent operation and an array would make
-   * it a linear scan. Insertion order is deliberately not relied on for listings — `list` sorts
+   * A `Map` rather than an array: `findById` is the most frequent operation and an array would make it
+   * a linear scan. Insertion order is deliberately not relied on for listings — `list` sorts
    * explicitly, because an order that comes from insertion would differ between implementations.
    */
   readonly #records = new Map<ExecutionId, ExecutionRecord>();
 
+  /** Set by `close`. Nothing is released, but the state is still recorded so that use after close is
+   * reported rather than silently working. */
+  #closed = false;
+
   create(record: ExecutionRecord): Promise<void> {
+    if (this.#closed) return Promise.reject(this.#closedError());
+
     if (this.#records.has(record.executionId)) {
       return Promise.reject(
         new StorageError(
@@ -45,8 +55,8 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
       );
     }
 
-    // Mirrors the pairing constraint in the schema. Without it this implementation accepts a record
-    // the SQLite one rejects, and the contract suite stops proving that the two are interchangeable.
+    // Mirrors the pairing constraint in the schema. Without it this implementation accepts a record the
+    // SQLite one rejects, and the contract suite stops proving that the two are interchangeable.
     const consistent =
       (record.status === "running" && record.completedAt === undefined) ||
       (record.status !== "running" && record.completedAt !== undefined);
@@ -65,8 +75,8 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
       );
     }
 
-    // Copied, so a caller that keeps a reference cannot mutate stored state afterwards. The cost is
-    // one shallow copy per write, which is nothing next to the bug it prevents.
+    // Copied, so a caller that keeps a reference cannot mutate stored state afterwards. The cost is one
+    // shallow copy per write, which is nothing next to the bug it prevents.
     this.#records.set(record.executionId, { ...record });
 
     return Promise.resolve();
@@ -76,6 +86,8 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
     executionId: ExecutionId,
     completion: ExecutionCompletion,
   ): Promise<void> {
+    if (this.#closed) return Promise.reject(this.#closedError());
+
     const existing = this.#records.get(executionId);
 
     if (existing === undefined) {
@@ -105,6 +117,8 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
   }
 
   findById(executionId: ExecutionId): Promise<ExecutionRecord | undefined> {
+    if (this.#closed) return Promise.reject(this.#closedError());
+
     const record = this.#records.get(executionId);
 
     // A copy, for the same reason `create` takes one: a caller holding the stored object could
@@ -113,6 +127,8 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
   }
 
   list(query: ExecutionQuery): Promise<readonly ExecutionSummary[]> {
+    if (this.#closed) return Promise.reject(this.#closedError());
+
     const summaries = [...this.#records.values()]
       .filter(
         (record) =>
@@ -145,6 +161,19 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
     return Promise.resolve(summaries);
   }
 
+  /**
+   * Marks the store closed.
+   *
+   * Nothing is released — a `Map` is the garbage collector's problem — but the state is recorded so
+   * that a caller who disposes an application and then keeps using its repository gets an error
+   * rather than a store that quietly still works.
+   */
+  close(): Promise<void> {
+    this.#closed = true;
+
+    return Promise.resolve();
+  }
+
   /** Shared by `complete`, so the two failure modes cannot drift apart. */
   #notFound(executionId: ExecutionId): StorageError {
     return new StorageError(
@@ -156,14 +185,26 @@ export class InMemoryExecutionRepository implements ExecutionRepository {
       },
     );
   }
+
+  #closedError(): StorageError {
+    return new StorageError(
+      ErrorCode.storageFailure,
+      "The execution store is closed.",
+      {
+        context: {},
+        remediation:
+          "This is a defect: a repository is not used after it has been closed.",
+      },
+    );
+  }
 }
 
 /**
  * Newest first, with a total order.
  *
- * ISO 8601 timestamps compare correctly as strings, so no parsing is needed. The identifier
- * tie-break exists because two runs can start in the same millisecond, and an order that is not
- * total makes a listing depend on how the store happens to be laid out.
+ * ISO 8601 timestamps compare correctly as strings, so no parsing is needed. The identifier tie-break
+ * exists because two runs can start in the same millisecond, and an order that is not total makes a
+ * listing depend on how the store happens to be laid out.
  */
 function compareDescending(
   left: ExecutionRecord,

@@ -264,6 +264,18 @@ export interface ExecutionRepository {
 
   /** Newest first, ordered by `startedAt` then `executionId` so the order is total. */
   list(query: ExecutionQuery): Promise<readonly ExecutionSummary[]>;
+
+  /**
+   * Releases whatever the implementation holds.
+   *
+   * Part of the contract rather than an implementation detail, because a database connection is a
+   * resource and a caller that never closes one leaks it. Called once by whoever constructed the
+   * implementation — the composition root, and nobody else.
+   *
+   * Must be safe to call more than once: shutdown is reached from a signal handler and from a normal
+   * exit, and neither can be relied on to be the only path.
+   */
+  close(): Promise<void>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

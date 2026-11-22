@@ -22,6 +22,7 @@ export default {
       2,
       "always",
       [
+        "app",
         "cli",
         "config",
         "core",
