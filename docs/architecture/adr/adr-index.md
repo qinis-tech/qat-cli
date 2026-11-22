@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0013](0013-register-a-command-only-when-its-capability-exists.md) | Register a command only when its capability exists | Accepted | 2026-11-21 |
 | [ADR-0012](0012-register-commands-as-data-rather-than-as-commander-calls-in.md) | Register commands as data rather than as Commander calls in the entry point | Accepted | 2026-11-21 |
 | [ADR-0011](0011-separate-dependency-assembly-from-the-cli-entry-point.md) | Separate dependency assembly from the CLI entry point | Accepted | 2026-11-21 |
 | [ADR-0010](0010-store-execution-metadata-in-a-local-sqlite-database.md) | Store execution metadata in a local SQLite database | Accepted | 2026-11-21 |

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
-import type { CommandDefinition } from "~/cli/contracts.js";
+import type {
+  ApplicationOverrides,
+  CommandContext,
+  CommandDefinition,
+} from "~/cli/contracts.js";
 import { createProgram, readGlobalOptions } from "~/cli/program.js";
 import type { Application } from "~/core/application/ports.js";
 import { ErrorCode, InvalidArgumentError } from "~/core/errors/index.js";
@@ -12,10 +16,8 @@ import { ErrorCode, InvalidArgumentError } from "~/core/errors/index.js";
  * exists to avoid; and Commander writes help and usage errors to the real streams, which would make a
  * passing suite look like a failing one.
  */
-function build(commands: readonly CommandDefinition[] = []) {
-  const disposed: string[] = [];
-
-  const application: Application = {
+function fakeApplication(disposed: string[] = []): Application {
+  return {
     logger: {
       trace: () => undefined,
       debug: () => undefined,
@@ -37,12 +39,46 @@ function build(commands: readonly CommandDefinition[] = []) {
       return Promise.resolve();
     },
   };
+}
+
+/**
+ * A minimal definition.
+ *
+ * The four documentation fields are present because the contract requires them; a fixture that
+ * omitted them would compile only if the contract were loosened, which is the thing it exists to
+ * prevent.
+ */
+function command(
+  overrides: Partial<CommandDefinition> = {},
+): CommandDefinition {
+  return {
+    name: "demo",
+    summary: "a command that does nothing",
+    description: "A command that does nothing, used to exercise registration.",
+    examples: ["qat demo"],
+    run: () => Promise.resolve(),
+    ...overrides,
+  };
+}
+
+function build(
+  commands: readonly CommandDefinition[] = [],
+  onCreate: (overrides: ApplicationOverrides) => void = () => undefined,
+) {
+  const disposed: string[] = [];
+  const application = fakeApplication(disposed);
 
   const program = createProgram(
     "9.9.9",
-    { createApplication: () => application },
+    {
+      createApplication: (overrides) => {
+        onCreate(overrides);
+        return application;
+      },
+    },
     commands,
   );
+
   program.configureOutput({
     writeOut: () => undefined,
     writeErr: () => undefined,
@@ -99,6 +135,7 @@ describe("reading global options", () => {
 
     const options = readGlobalOptions(program);
 
+    // Absent, not present-and-undefined: the shape is compared and serialised.
     expect("cwd" in options).toBe(false);
     expect("logLevel" in options).toBe(false);
   });
@@ -128,28 +165,85 @@ describe("usage errors", () => {
 
 describe("command registration", () => {
   it("hands the command an application and the parsed options", async () => {
-    let received: Application | undefined;
+    let received: CommandContext | undefined;
 
     const { program } = build([
-      {
-        name: "demo",
-        summary: "a command that does nothing",
-        run: ({ application }) => {
-          received = application;
+      command({
+        run: (context) => {
+          received = context;
           return Promise.resolve();
         },
-      },
+      }),
     ]);
 
     await program.parseAsync(["node", "qat", "demo", "--json"]);
 
-    expect(received).toBeDefined();
+    // Both halves of the context: the application it can act with, and the flags the user typed. A
+    // test asserting only the first would pass while every global flag was silently discarded.
+    expect(received?.application).toBeDefined();
+    expect(received?.options.json).toBe(true);
+  });
+
+  it("passes declared arguments through by name", async () => {
+    let received: CommandContext | undefined;
+
+    const { program } = build([
+      command({
+        arguments: [
+          { name: "directory", description: "where", required: false },
+        ],
+        examples: ["qat demo ./somewhere"],
+        run: (context) => {
+          received = context;
+          return Promise.resolve();
+        },
+      }),
+    ]);
+
+    await program.parseAsync(["node", "qat", "demo", "./somewhere"]);
+
+    expect(received?.arguments["directory"]).toBe("./somewhere");
+  });
+
+  it("leaves an omitted optional argument absent rather than empty", async () => {
+    let received: CommandContext | undefined;
+
+    const { program } = build([
+      command({
+        arguments: [
+          { name: "directory", description: "where", required: false },
+        ],
+        examples: ["qat demo"],
+        run: (context) => {
+          received = context;
+          return Promise.resolve();
+        },
+      }),
+    ]);
+
+    await program.parseAsync(["node", "qat", "demo"]);
+
+    // A handler must be able to tell "not provided" from "provided as nothing".
+    expect(received?.arguments["directory"]).toBeUndefined();
+  });
+
+  it("rejects an extra positional rather than ignoring it", async () => {
+    const { program } = build([
+      command({
+        arguments: [
+          { name: "directory", description: "where", required: false },
+        ],
+        examples: ["qat demo"],
+      }),
+    ]);
+
+    await expect(
+      program.parseAsync(["node", "qat", "demo", "one", "two"]),
+    ).rejects.toMatchObject({ code: "commander.excessArguments" });
   });
 
   it("disposes the application after a successful command", async () => {
-    const { program, disposed } = build([
-      { name: "demo", summary: "ok", run: () => Promise.resolve() },
-    ]);
+    const { program, disposed } = build([command()]);
 
     await program.parseAsync(["node", "qat", "demo"]);
 
@@ -158,14 +252,12 @@ describe("command registration", () => {
 
   it("disposes the application when the command throws, and propagates the error", async () => {
     const { program, disposed } = build([
-      {
-        name: "demo",
-        summary: "fails",
+      command({
         run: () =>
           Promise.reject(
             new InvalidArgumentError(ErrorCode.invalidArgument, "boom"),
           ),
-      },
+      }),
     ]);
 
     await expect(
@@ -182,38 +274,8 @@ describe("command registration", () => {
   it("passes the log level through to the assembly", async () => {
     let seen: string | undefined;
 
-    const program = createProgram(
-      "9.9.9",
-      {
-        createApplication: (overrides) => {
-          seen = overrides.logLevel;
-          return {
-            logger: {
-              trace: () => undefined,
-              debug: () => undefined,
-              info: () => undefined,
-              warn: () => undefined,
-              error: () => undefined,
-              fatal: () => undefined,
-            },
-            repository: {
-              create: () => Promise.resolve(),
-              complete: () => Promise.resolve(),
-              findById: () => Promise.resolve(undefined),
-              list: () => Promise.resolve([]),
-              close: () => Promise.resolve(),
-            },
-            discovery: { discover: () => Promise.reject(new Error("unused")) },
-            dispose: () => Promise.resolve(),
-          };
-        },
-      },
-      [{ name: "demo", summary: "ok", run: () => Promise.resolve() }],
-    );
-
-    program.configureOutput({
-      writeOut: () => undefined,
-      writeErr: () => undefined,
+    const { program } = build([command()], (overrides) => {
+      seen = overrides.logLevel;
     });
 
     await program.parseAsync(["node", "qat", "demo", "--log-level", "debug"]);
