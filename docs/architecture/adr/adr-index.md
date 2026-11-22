@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0014](0014-resolve-the-version-by-walking-up-to-the-nearest-package-man.md) | Resolve the version by walking up to the nearest package manifest | Accepted | 2026-11-21 |
 | [ADR-0013](0013-register-a-command-only-when-its-capability-exists.md) | Register a command only when its capability exists | Accepted | 2026-11-21 |
 | [ADR-0012](0012-register-commands-as-data-rather-than-as-commander-calls-in.md) | Register commands as data rather than as Commander calls in the entry point | Accepted | 2026-11-21 |
 | [ADR-0011](0011-separate-dependency-assembly-from-the-cli-entry-point.md) | Separate dependency assembly from the CLI entry point | Accepted | 2026-11-21 |
