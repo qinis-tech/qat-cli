@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0011](0011-separate-dependency-assembly-from-the-cli-entry-point.md) | Separate dependency assembly from the CLI entry point | Accepted | 2026-11-21 |
 | [ADR-0010](0010-store-execution-metadata-in-a-local-sqlite-database.md) | Store execution metadata in a local SQLite database | Accepted | 2026-11-21 |
 | [ADR-0009](0009-prefer-environment-variables-over-configuration-file-values.md) | Prefer environment variables over configuration file values | Accepted | 2026-11-21 |
 | [ADR-0008](0008-do-not-evaluate-the-framework-configuration-during-discovery.md) | Do not evaluate the framework configuration during discovery | Accepted | 2026-11-21 |
