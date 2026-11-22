@@ -2,9 +2,9 @@
 /**
  * The process boundary.
  *
- * Resolves the version, builds the program, and turns whatever comes back into an exit code. It holds
- * no application logic and no command behaviour: everything it could have done lives in a command or in
- * the assembly.
+ * Resolves the version, builds the program, and turns whatever comes back into an exit code. It holds no
+ * application logic and no command behaviour: everything it could have done lives in a command or in the
+ * assembly.
  *
  * ## Exit codes
  *
@@ -16,6 +16,12 @@
  * `exitOverride` makes the parser throw instead of exiting. A usage error (`--nope`) already carries a
  * good message that Commander has printed; wrapping it in this project's error rendering would print it
  * twice. So a `CommanderError` contributes an exit code and nothing else.
+ *
+ * ## Output
+ *
+ * This file writes nothing directly. Both failure paths go through the output module, so the format a
+ * user sees for a damaged installation is the same format they see for a failed command — there is no
+ * second, hand-written renderer here to keep in step.
  */
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,8 +42,8 @@ import { resolveVersion } from "./version.js";
 
 async function main(): Promise<void> {
   // Resolved from this module's own directory rather than a fixed relative depth, so a change to the
-  // output layout cannot silently point at a file that is not there. It runs before the program is
-  // built because the version is program metadata.
+  // output layout cannot silently point at a file that is not there. It runs before the program is built
+  // because the version is program metadata.
   const { version } = await resolveVersion(
     dirname(fileURLToPath(import.meta.url)),
   );
@@ -79,14 +85,10 @@ async function main(): Promise<void> {
 try {
   await main();
 } catch (error) {
-  // Reached before the program exists — a damaged installation, most likely, since nothing else can
-  // fail this early. Options have not been parsed, so `--json` and `--debug` are unavailable and this is
-  // deliberately plain.
-  const rendered = describeError(error);
-
-  // The code is included because it is the one thing worth quoting in a bug report, and this path has no
-  // other way to identify the failure.
-  process.stderr.write(`error ${rendered.code}: ${rendered.message}\n`);
+  // Reached before the program exists — a damaged installation, most likely, since nothing else can fail
+  // this early. No options have been parsed, so `--json` cannot have been requested and the human form is
+  // the only correct one.
+  reportError(describeError(error), { json: false });
 
   process.exitCode = exitCodeForError(error);
 }
