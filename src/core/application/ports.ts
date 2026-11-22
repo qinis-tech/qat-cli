@@ -2,8 +2,8 @@
  * Ports: what the application needs from the outside world, expressed as types.
  *
  * Declared by the layer that consumes them, implemented by the layer that can supply them. The
- * direction is the point — the application never names an implementation, so any implementation can
- * be replaced, including by a fake in a test.
+ * direction is the point — the application never names an implementation, so any implementation can be
+ * replaced, including by a fake in a test.
  *
  * Every member here is an interface. The application layer contains no logic in this file, and no
  * implementation may appear in it, or the dependency rule that justifies the whole arrangement
@@ -11,13 +11,12 @@
  *
  * Error contract, uniform across every port: a port **rejects** with an `ApplicationError` when a
  * condition prevents it from doing its job, and **resolves** otherwise. Returning `undefined` means
- * "not found", which is not an error. Nothing here throws a bare `string` or a framework-specific
- * error object.
+ * "not found", which is not an error. Nothing here throws a bare `string` or a framework-specific error
+ * object.
  *
  * Path convention: a **live request** carries absolute paths, resolved once at the composition
  * boundary. **Stored and returned data** carries paths relative to a declared root, so records stay
- * portable. The asymmetry is deliberate — absolute paths are convenient in flight and corrosive at
- * rest.
+ * portable. The asymmetry is deliberate — absolute paths are convenient in flight and corrosive at rest.
  */
 import type {
   ConfigurationInput,
@@ -39,14 +38,60 @@ import type {
 // Discovery and configuration
 // ─────────────────────────────────────────────────────────────────────────────
 
+/**
+ * Where a project directory was taken from.
+ *
+ * Recorded because three inputs can produce the same failure and they have three different fixes: "not
+ * a directory" without saying which one sends the reader looking in the wrong place.
+ */
+export const WorkingDirectorySource = {
+  /** Named as a positional argument to the command. */
+  Argument: "argument",
+  /** Named by the global working-directory option. */
+  Option: "option",
+  /** Neither: the directory the process was started in. */
+  Process: "process",
+} as const;
+
+export type WorkingDirectorySource =
+  (typeof WorkingDirectorySource)[keyof typeof WorkingDirectorySource];
+
+/** The two ways a command can be told which directory to work on. */
+export interface WorkingDirectoryCandidates {
+  readonly argument?: string | undefined;
+  readonly option?: string | undefined;
+}
+
+export interface ResolvedWorkingDirectory {
+  /** Absolute and normalised. Resolved once, passed to discovery, never re-derived downstream. */
+  readonly directory: string;
+  readonly source: WorkingDirectorySource;
+}
+
 export interface ProjectDiscovery {
+  /**
+   * Decides which directory a command should look at, before any discovery happens.
+   *
+   * On this port rather than in the CLI because it answers a question about a project — which one are we
+   * on — rather than about argument parsing. A command supplies the two values it knows about and
+   * receives one answer, so no command re-implements the precedence.
+   *
+   * Checks existence and refuses anything that is not a directory, so an invalid input never reaches
+   * `discover`.
+   *
+   * @throws {ApplicationError} when the chosen directory does not exist or is not a directory.
+   */
+  resolveWorkingDirectory(
+    candidates: WorkingDirectoryCandidates,
+  ): Promise<ResolvedWorkingDirectory>;
+
   /**
    * Establishes what the project is, once.
    *
    * @param root Absolute path to the directory to inspect.
-   * @throws {ApplicationError} when the directory is not a project QAT can run — no framework
-   *   detected, or a framework present but unusable. A project with no configuration file is not an
-   *   error: defaults exist for that case.
+   * @throws {ApplicationError} when the directory is not a project QAT can run — no framework detected,
+   *   or a framework present but unusable. A project with no configuration file is not an error:
+   *   defaults exist for that case.
    */
   discover(root: string): Promise<ProjectInfo>;
 }
@@ -55,9 +100,9 @@ export interface ConfigurationLoader {
   /**
    * Reads, validates and defaults the configuration.
    *
-   * Returns a result rather than rejecting, because an invalid configuration is expected input, not
-   * an exceptional condition. A caller reporting the problem needs every issue at once, not the first
-   * one to fail.
+   * Returns a result rather than rejecting, because an invalid configuration is expected input, not an
+   * exceptional condition. A caller reporting the problem needs every issue at once, not the first one
+   * to fail.
    */
   load(input: ConfigurationInput): Promise<ConfigurationResult>;
 }
@@ -69,9 +114,9 @@ export interface ConfigurationLoader {
 /**
  * Boundary around one testing framework.
  *
- * Everything framework-specific lives behind this interface: process invocation, output parsing,
- * version quirks, option translation. Adding a second framework means adding an implementation, not
- * editing this file or anything that consumes it.
+ * Everything framework-specific lives behind this interface: process invocation, output parsing, version
+ * quirks, option translation. Adding a second framework means adding an implementation, not editing this
+ * file or anything that consumes it.
  */
 export interface FrameworkAdapter {
   /** Which framework this adapter drives. Used to select it from discovery. */
@@ -81,8 +126,8 @@ export interface FrameworkAdapter {
    * Whether the framework can actually run here.
    *
    * Separate from discovery so that "the project declares Cypress" and "Cypress is installed and
-   * executable" stay distinguishable. The first is a property of the project; the second is a
-   * property of the machine, and it is the one that changes between a developer laptop and CI.
+   * executable" stay distinguishable. The first is a property of the project; the second is a property
+   * of the machine, and it is the one that changes between a developer laptop and CI.
    */
   available(project: ProjectInfo): Promise<boolean>;
 
@@ -105,8 +150,8 @@ export interface FrameworkAdapter {
  * What the CLI is allowed to call.
  *
  * The application's public surface, and the reason `src/cli` needs no knowledge of adapters,
- * repositories or reports. Its input is what a command parsed; its output is the record that
- * everything downstream consumes.
+ * repositories or reports. Its input is what a command parsed; its output is the record that everything
+ * downstream consumes.
  */
 export interface ExecutionService {
   /**
@@ -128,8 +173,8 @@ export interface ExecutionService {
 /**
  * An artefact the collector found on disk, before it was recorded.
  *
- * No `evidenceId` and no `createdAt`: both are assigned at recording time, so a caller cannot invent
- * them and end up with two references that disagree.
+ * No `evidenceId` and no `createdAt`: both are assigned at recording time, so a caller cannot invent them
+ * and end up with two references that disagree.
  */
 export interface EvidenceCandidate {
   readonly type: EvidenceType;
@@ -160,20 +205,19 @@ export interface EvidenceStore {
 /**
  * Status of a *stored* execution.
  *
- * The domain's `ExecutionStatus` describes how a run ended, so it has no member for a run that has
- * not. Storage needs one: a row is created when a run starts and updated when it finishes, which is
- * what makes "a run that began and whose process died" discoverable afterwards. Adding `running` to
- * the domain union would put a state into the result schema that a result can never legitimately
- * have.
+ * The domain's `ExecutionStatus` describes how a run ended, so it has no member for a run that has not.
+ * Storage needs one: a row is created when a run starts and updated when it finishes, which is what
+ * makes "a run that began and whose process died" discoverable afterwards. Adding `running` to the
+ * domain union would put a state into the result schema that a result can never legitimately have.
  */
 export type ExecutionRecordStatus = ExecutionStatus | "running";
 
 /**
  * The metadata QAT retains about one execution.
  *
- * Metadata only. Test-level results live in the result document on disk and are never duplicated
- * here: duplicating them would create two copies of the same fact that can disagree, and the database
- * exists to answer "which runs happened" rather than "what did each test do".
+ * Metadata only. Test-level results live in the result document on disk and are never duplicated here:
+ * duplicating them would create two copies of the same fact that can disagree, and the database exists to
+ * answer "which runs happened" rather than "what did each test do".
  */
 export interface ExecutionRecord {
   readonly executionId: ExecutionId;
@@ -211,8 +255,8 @@ export interface ExecutionCompletion {
 /**
  * Query for a history listing.
  *
- * An object rather than positional arguments so filters can be added without changing every call
- * site, which is the cheapest kind of extensibility available.
+ * An object rather than positional arguments so filters can be added without changing every call site,
+ * which is the cheapest kind of extensibility available.
  */
 export interface ExecutionQuery {
   readonly limit: number;
@@ -234,16 +278,16 @@ export interface ExecutionSummary {
 /**
  * Persistence of execution metadata.
  *
- * The interface names no storage technology and must not. An implementation may be SQLite, an
- * in-memory map or a JSON file, and no caller may be able to tell — which is what keeps the
- * application unaware that a database exists and lets every test run without one.
+ * The interface names no storage technology and must not. An implementation may be SQLite, an in-memory
+ * map or a JSON file, and no caller may be able to tell — which is what keeps the application unaware
+ * that a database exists and lets every test run without one.
  *
  * Every method is atomic: either the whole effect is applied or none of it is. A caller never sees a
  * half-written record.
  *
- * `findById` returns `undefined` for an unknown identifier. A missing record is an ordinary answer to
- * an ordinary question, not a failure. `complete` on an unknown identifier **is** a failure, because
- * it means the store lost something a caller had just written.
+ * `findById` returns `undefined` for an unknown identifier. A missing record is an ordinary answer to an
+ * ordinary question, not a failure. `complete` on an unknown identifier **is** a failure, because it
+ * means the store lost something a caller had just written.
  */
 export interface ExecutionRepository {
   /** @throws {ApplicationError} when a record with this identifier already exists. */
@@ -285,8 +329,8 @@ export interface ExecutionRepository {
 /**
  * Output formats.
  *
- * Lives here rather than in the domain because a format is how a result is *presented*, not what a
- * result *is*. Adding a format is an application concern and must not force a domain change.
+ * Lives here rather than in the domain because a format is how a result is *presented*, not what a result
+ * *is*. Adding a format is an application concern and must not force a domain change.
  */
 export const ReportFormat = {
   Html: "html",
@@ -303,8 +347,8 @@ export interface ReportRequest {
   /**
    * Absolute output directory.
    *
-   * Absolute because this is a live request, resolved once by the caller from the project root and
-   * the configured output directory. Stored artefacts are relative; in-flight requests are absolute.
+   * Absolute because this is a live request, resolved once by the caller from the project root and the
+   * configured output directory. Stored artefacts are relative; in-flight requests are absolute.
    */
   readonly outputDirectory: string;
 }
@@ -320,8 +364,8 @@ export interface ReportArtifact {
  * Generation of one report format.
  *
  * One generator per format, selected by `format`. A single generator switching on the format would
- * accumulate every format's concerns in one file and make adding a format a change to code that
- * already works.
+ * accumulate every format's concerns in one file and make adding a format a change to code that already
+ * works.
  */
 export interface ReportGenerator {
   readonly format: ReportFormat;
@@ -334,17 +378,17 @@ export interface ReportGenerator {
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
- * Context attached to a log entry. Values are `unknown` because the logger decides how to serialise
- * and redact, and a port that pre-shapes them would move that decision into every caller.
+ * Context attached to a log entry. Values are `unknown` because the logger decides how to serialise and
+ * redact, and a port that pre-shapes them would move that decision into every caller.
  */
 export type LogContext = Readonly<Record<string, unknown>>;
 
 /**
  * Structured logging.
  *
- * Six levels rather than four. `trace` exists for diagnosing the logger itself and should almost
- * never be used in application code; `fatal` exists because a process about to exit has no second
- * chance to report why.
+ * Six levels rather than four. `trace` exists for diagnosing the logger itself and should almost never be
+ * used in application code; `fatal` exists because a process about to exit has no second chance to report
+ * why.
  *
  * A port rather than an import, because the application layer is forbidden from importing
  * `core/logging` — that is an implementation.
@@ -361,9 +405,9 @@ export interface Logger {
 /**
  * Current time.
  *
- * Not ceremony. Without it, every test of anything timestamped asserts "roughly now" and every
- * duration is approximate. With it, a test supplies a fixed clock and asserts an exact value — the
- * difference between a test that proves something and one that proves the code did not crash.
+ * Not ceremony. Without it, every test of anything timestamped asserts "roughly now" and every duration
+ * is approximate. With it, a test supplies a fixed clock and asserts an exact value — the difference
+ * between a test that proves something and one that proves the code did not crash.
  */
 export interface Clock {
   now(): Date;
@@ -372,22 +416,26 @@ export interface Clock {
 /**
  * Identifier generation.
  *
- * Same reasoning as `Clock`, plus one more: a deterministic generator makes result files diffable
- * between runs, which is what makes a golden-file test possible at all.
+ * Same reasoning as `Clock`, plus one more: a deterministic generator makes result files diffable between
+ * runs, which is what makes a golden-file test possible at all.
  */
 export interface IdGenerator {
   next(): string;
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// The assembled application
+// ─────────────────────────────────────────────────────────────────────────────
+
 /**
  * What a command handler receives.
  *
- * A contract, not the assembled object. It lives here rather than beside the composition root so the
- * CLI can depend on what it is given without depending on what assembles it — which is the whole
- * reason the assembly was separated from the entry point.
+ * A contract, not the assembled object. It lives here rather than beside the composition root so the CLI
+ * can depend on what it is given without depending on what assembles it — which is the whole reason the
+ * assembly was separated from the entry point.
  *
- * `logger` is the port, not the concrete logger service: a handler reports, it does not derive
- * correlated children. Anything that needs a run-scoped logger receives one as a parameter later.
+ * `logger` is the port, not the concrete logger service: a handler reports, it does not derive correlated
+ * children. Anything that needs a run-scoped logger receives one as a parameter later.
  */
 export interface Application {
   readonly logger: Logger;

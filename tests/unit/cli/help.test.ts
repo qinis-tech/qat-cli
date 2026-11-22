@@ -27,7 +27,10 @@ const application: Application = {
     list: () => Promise.resolve([]),
     close: () => Promise.resolve(),
   },
-  discovery: { discover: () => Promise.reject(new Error("unused")) },
+  discovery: {
+    resolveWorkingDirectory: () => Promise.reject(new Error("unused")),
+    discover: () => Promise.reject(new Error("unused")),
+  },
   dispose: () => Promise.resolve(),
 };
 

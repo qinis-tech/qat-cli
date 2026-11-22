@@ -33,7 +33,10 @@ function fakeApplication(disposed: string[] = []): Application {
       list: () => Promise.resolve([]),
       close: () => Promise.resolve(),
     },
-    discovery: { discover: () => Promise.reject(new Error("unused")) },
+    discovery: {
+      resolveWorkingDirectory: () => Promise.reject(new Error("unused")),
+      discover: () => Promise.reject(new Error("unused")),
+    },
     dispose: () => {
       disposed.push("dispose");
       return Promise.resolve();

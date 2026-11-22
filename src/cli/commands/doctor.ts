@@ -1,13 +1,13 @@
 /**
  * `qat doctor`.
  *
- * The one command registered today, and it is registered because its capability exists: project
- * discovery, the environment utilities and the error model between them can already answer the
- * question. Registering it with a stub handler would have put a command in `--help` that does nothing,
- * and a help system describing hypothetical software is worse than a short one.
+ * The one command registered today, and it is registered because its capability exists: project discovery,
+ * the environment utilities and the error model between them can already answer the question. Registering
+ * it with a stub handler would have put a command in `--help` that does nothing, and a help system
+ * describing hypothetical software is worse than a short one.
  *
- * It reports; it does not repair. A command that silently changed the project would be a different
- * command with a different name.
+ * It reports; it does not repair. A command that silently changed the project would be a different command
+ * with a different name.
  */
 import type { CommandDefinition } from "../contracts.js";
 import { reportResult } from "../output/report.js";
@@ -30,15 +30,19 @@ export const doctorCommand: CommandDefinition = {
     {
       name: "directory",
       description:
-        "directory to inspect; defaults to --cwd, or to the working directory",
+        "directory to inspect; overrides --cwd, and defaults to the working directory",
       required: false,
     },
   ],
   examples: ["qat doctor", "qat doctor ./packages/api", "qat doctor --json"],
   async run({ application, arguments: values, options }) {
-    // Precedence: an explicit argument, then --cwd, then the process directory. Stated here because
-    // two ways to name a directory is one more than ideal, and whichever wins should be discoverable.
-    const directory = values["directory"] ?? options.cwd ?? process.cwd();
+    // Resolved before discovery, and by the shared resolver rather than here. A command that worked out
+    // its own precedence would eventually work it out slightly differently from its neighbours, and an
+    // invalid directory would reach discovery before anyone noticed.
+    const { directory } = await application.discovery.resolveWorkingDirectory({
+      argument: values["directory"],
+      option: options.cwd,
+    });
 
     const project = await application.discovery.discover(directory);
 
@@ -51,8 +55,8 @@ export const doctorCommand: CommandDefinition = {
           `config     ${project.paths.configFile}`,
           `specs      ${project.paths.specsDirectory}`,
         ],
-        // Wrapped rather than bare, so a later field can be added without changing the shape a
-        // consumer parses today.
+        // Wrapped rather than bare, so a later field can be added without changing the shape a consumer
+        // parses today.
         document: { project },
       },
       { json: options.json },

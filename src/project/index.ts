@@ -7,3 +7,4 @@
  */
 export * from "./contracts.js";
 export { discoverProject } from "./discovery.js";
+export { resolveWorkingDirectory } from "./working-directory.js";

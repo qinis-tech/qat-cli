@@ -19,10 +19,14 @@ import { runProcess } from "~/core/process/index.js";
 /**
  * Runs the built binary.
  *
- * The tool's own process runner spawns the tool, which is the first thing in this project to do so and
- * the trigger the testing architecture document named for this suite existing. `npm run test:e2e`
- * builds first and runs the binary once, so a failure here is a failure of the executable rather than of
- * a missing build.
+ * The tool's own process runner spawns the tool, which is the first thing in this project to do so and the
+ * trigger the testing architecture document named for this suite existing. `npm run test:e2e` builds first
+ * and runs the binary once, so a failure here is a failure of the executable rather than of a missing
+ * build.
+ *
+ * Exit code `1` from any of these means Node died before qat decided anything — an empty build, or an
+ * installation whose imports cannot resolve. The evidence is in stderr, and every assertion below reads
+ * the stream as well as the code for that reason.
  */
 const CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
 const DIST = fileURLToPath(new URL("../../dist", import.meta.url));
@@ -31,8 +35,12 @@ const REPO_ROOT = fileURLToPath(new URL("../../", import.meta.url));
 
 const created: string[] = [];
 
-function qat(args: readonly string[]) {
-  return runProcess({ executable: process.execPath, args: [CLI, ...args] });
+function qat(args: readonly string[], options: { readonly cwd?: string } = {}) {
+  return runProcess({
+    executable: process.execPath,
+    args: [CLI, ...args],
+    ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
+  });
 }
 
 /** An empty directory, for the cases that need somewhere real that is not a project. */
@@ -81,8 +89,8 @@ async function packagedLayout(manifest: string | undefined): Promise<string> {
   await cp(DIST, join(root, "dist"), { recursive: true });
 
   // A real installation has its dependencies beside it. Without them Node cannot resolve `commander` or
-  // `pino`, and the process dies on the first import — which is what an exit code of 1 means, and is why
-  // a copied `dist/` is not a copy of an installation.
+  // `pino`, and the process dies on the first import — which is what an exit code of 1 means, and is why a
+  // copied `dist/` is not a copy of an installation.
   //
   // A junction on Windows; symlink creation there needs elevation for file links but not for directory
   // junctions, and the resolution behaviour is identical.
@@ -166,9 +174,9 @@ describe("version resolution", () => {
   });
 
   it("fails predictably when the nearest manifest has no usable version", async () => {
-    // Valid JSON, so Node can read it and start the CLI — and no version, so the resolver fails where
-    // the reader can see it. A malformed manifest never reaches this code: Node refuses the module
-    // before the entry point runs.
+    // Valid JSON, so Node can read it and start the CLI — and no version, so the resolver fails where the
+    // reader can see it. A malformed manifest never reaches this code: Node refuses the module before the
+    // entry point runs.
     const root = await packagedLayout(
       JSON.stringify({ name: "qat-cli", type: "module" }),
     );
@@ -178,8 +186,8 @@ describe("version resolution", () => {
       args: [join(root, "dist", "cli", "index.js"), "--version"],
     });
 
-    // Environment, not internal: an installation with damaged metadata is a broken install, and the
-    // remedy is to reinstall rather than to report a defect.
+    // Environment, not internal: an installation with damaged metadata is a broken install, and the remedy
+    // is to reinstall rather than to report a defect.
     expect(result.exitCode).toBe(ExitCode.Environment);
     expect(result.stderr).toContain("QAT4003");
     expect(result.stderr).toContain("does not declare a usable version");
@@ -249,6 +257,62 @@ describe("unknown input", () => {
   });
 });
 
+describe("working directory", () => {
+  it("uses the process working directory when nothing is named", async () => {
+    const root = await temporaryProject();
+
+    // No argument, no option. The answer comes from where the process was started.
+    const result = await qat(["doctor"], { cwd: root });
+
+    expect(result.exitCode).toBe(ExitCode.Success);
+    expect(result.stdout).toContain("demo");
+  });
+
+  it("resolves a relative argument against the process working directory", async () => {
+    const root = await temporaryProject();
+
+    // `.` and a nested relative path are the combinations a developer uses most, and the ones a path bug
+    // breaks first.
+    const result = await qat(["doctor", "."], { cwd: root });
+
+    expect(result.exitCode).toBe(ExitCode.Success);
+    expect(result.stdout).toContain(root);
+  });
+
+  it("uses the working-directory option when no argument is given", async () => {
+    const root = await temporaryProject();
+
+    const result = await qat(["doctor", "--cwd", root], { cwd: tmpdir() });
+
+    expect(result.exitCode).toBe(ExitCode.Success);
+    expect(result.stdout).toContain("demo");
+  });
+
+  it("prefers an explicit argument over the working-directory option", async () => {
+    const argument = await temporaryProject();
+    const option = await temporaryDirectory();
+
+    // The option points at an empty directory, so if it won this would fail with QAT2001 instead.
+    const result = await qat(["doctor", argument, "--cwd", option]);
+
+    expect(result.exitCode).toBe(ExitCode.Success);
+    expect(result.stdout).toContain("demo");
+  });
+
+  it("names the offending input when the directory does not exist", async () => {
+    const result = await qat([
+      "doctor",
+      join(tmpdir(), "qat-absent-directory-7f3a"),
+    ]);
+
+    expect(result.exitCode).toBe(ExitCode.InvalidInput);
+    expect(result.stderr).toContain("QAT1001");
+    // Which of the three inputs was wrong is the actionable part of the message.
+    expect(result.stderr).toContain("argument");
+    expect(result.stderr).toContain("is not a directory");
+  });
+});
+
 describe("doctor", () => {
   it("reports a project as human-readable lines and exits zero", async () => {
     const root = await temporaryProject();
@@ -293,18 +357,8 @@ describe("doctor", () => {
     expect(result.stderr).toContain("QAT2001");
     expect(result.stderr).toContain("No project found");
 
-    // The remedy names what the reader can actually do here — passing a directory — rather than pointing
-    // at the help screen, which would not help with this failure.
+    // The remedy names what the reader can actually do here — passing a directory — rather than pointing at
+    // the help screen, which would not help with this failure.
     expect(result.stderr).toContain("pass --cwd");
-  });
-
-  it("exits two for a directory that does not exist", async () => {
-    const result = await qat([
-      "doctor",
-      join(tmpdir(), "qat-absent-directory-7f3a"),
-    ]);
-
-    expect(result.exitCode).toBe(ExitCode.InvalidInput);
-    expect(result.stderr).toContain("is not a directory");
   });
 });
