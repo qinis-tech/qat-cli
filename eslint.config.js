@@ -97,6 +97,7 @@ const IMPLEMENTATION_LAYERS = [
   "**/core/logging/**",
   "**/core/process/**",
   "**/core/errors/**",
+  "**/core/environment/**",
 ];
 
 /**
