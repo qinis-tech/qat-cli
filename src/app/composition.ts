@@ -5,6 +5,9 @@
  * and receives it, which is what makes a service testable without a database, a terminal or a clock —
  * and what makes this file the single place to look when the question is "where does this come from".
  *
+ * The shape it returns is declared in `core/application/ports`, not here: a command handler receives
+ * a contract, and depending on the assembly's own type would make the CLI depend on what builds it.
+ *
  * ## Why this is not in `src/cli`
  *
  * It was, in the architecture as first written: `src/cli/index.ts` was both the entry point and the
@@ -18,7 +21,10 @@
  * so that something can be "constructed" would add a layer that exists only to be injected, and every
  * caller would then need the wrapper instead of the function. They are imported where they are used.
  */
-import type { ProjectDiscovery } from "../core/application/ports.js";
+import type {
+  Application,
+  ProjectDiscovery,
+} from "../core/application/ports.js";
 import type { EnvironmentSource } from "../core/environment/index.js";
 import { ErrorCode, InvalidArgumentError } from "../core/errors/index.js";
 import {
@@ -31,7 +37,7 @@ import {
 import { InMemoryExecutionRepository } from "../persistence/index.js";
 import { discoverProject } from "../project/index.js";
 
-import type { Application, ApplicationOptions } from "./contracts.js";
+import type { ApplicationOptions } from "./contracts.js";
 
 /**
  * Assembles an application.

@@ -378,3 +378,22 @@ export interface Clock {
 export interface IdGenerator {
   next(): string;
 }
+
+/**
+ * What a command handler receives.
+ *
+ * A contract, not the assembled object. It lives here rather than beside the composition root so the
+ * CLI can depend on what it is given without depending on what assembles it — which is the whole
+ * reason the assembly was separated from the entry point.
+ *
+ * `logger` is the port, not the concrete logger service: a handler reports, it does not derive
+ * correlated children. Anything that needs a run-scoped logger receives one as a parameter later.
+ */
+export interface Application {
+  readonly logger: Logger;
+  readonly repository: ExecutionRepository;
+  readonly discovery: ProjectDiscovery;
+
+  /** Releases everything the application holds. Safe to call more than once. */
+  dispose(): Promise<void>;
+}
