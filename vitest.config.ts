@@ -57,7 +57,11 @@ export default defineConfig({
      * the first one is written; silently including slow process-spawning tests
      * in the default run is how a fast suite becomes one people stop running.
      */
-    include: ["tests/unit/**/*.test.ts", "tests/integration/**/*.test.ts"],
+    include: [
+      "tests/unit/**/*.test.ts",
+      "tests/integration/**/*.test.ts",
+      "tests/contract/**/*.test.ts",
+    ],
     exclude: [
       "tests/fixtures/**",
       "tests/e2e/**",
