@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0009](0009-prefer-environment-variables-over-configuration-file-values.md) | Prefer environment variables over configuration file values | Accepted | 2026-11-21 |
 | [ADR-0008](0008-do-not-evaluate-the-framework-configuration-during-discovery.md) | Do not evaluate the framework configuration during discovery | Accepted | 2026-11-21 |
 | [ADR-0007](0007-treat-a-non-zero-exit-code-as-a-result-not-an-error.md) | Treat a non-zero exit code as a result, not an error | Accepted | 2026-11-21 |
 | [ADR-0006](0006-write-files-through-a-temporary-file-and-rename.md) | Write files through a temporary file and rename | Accepted | 2026-11-21 |
