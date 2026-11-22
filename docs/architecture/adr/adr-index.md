@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0016](0016-prefer-the-positional-directory-over-the-working-directory-o.md) | Prefer the positional directory over the working-directory option | Accepted | 2026-11-21 |
 | [ADR-0015](0015-send-every-message-to-standard-error-and-only-results-to-sta.md) | Reserve standard output for command results | Accepted | 2026-11-21 |
 | [ADR-0014](0014-resolve-the-version-by-walking-up-to-the-nearest-package-man.md) | Resolve the version by walking up to the nearest package manifest | Accepted | 2026-11-21 |
 | [ADR-0013](0013-register-a-command-only-when-its-capability-exists.md) | Register a command only when its capability exists | Accepted | 2026-11-21 |
