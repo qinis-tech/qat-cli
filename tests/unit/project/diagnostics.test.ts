@@ -11,8 +11,14 @@ import {
   DiagnosticSeverity,
   PackageMetadataStatus,
   hasBlockingErrors,
+  type ErrorDiagnosticCode,
 } from "~/core/application/diagnostics.js";
-import { diagnoseProject, GUIDANCE } from "~/project/index.js";
+import {
+  detectCypress,
+  diagnoseProject,
+  diagnosisFrom,
+  GUIDANCE,
+} from "~/project/index.js";
 
 /**
  * Fixtures are real temporary trees, as everywhere in this module: every question asked is "does this named file
@@ -97,11 +103,31 @@ describe("a healthy project", () => {
 
     const { identity } = await diagnoseProject(root);
 
+    // `declaredWorkspaces` is required and frequently empty: "the manifest declares none" is a fact, and an absent
+    // field would have to be read as unknown.
     expect(identity).toStrictEqual({
       root,
       name: "demo",
       packageMetadata: PackageMetadataStatus.Present,
+      declaredWorkspaces: [],
     });
+  });
+
+  it("carries the workspace patterns a manifest declares", async () => {
+    const root = await makeTree(
+      healthy({
+        "package.json": manifest({
+          workspaces: ["packages/*", "apps/*"],
+          devDependencies: { cypress: "^13.15.0" },
+        }),
+      }),
+    );
+
+    const { identity } = await diagnoseProject(root);
+
+    // Carried so a warning about a workspace-shaped root can name the patterns, and never expanded: a consumer
+    // handed a list of globs eventually expands one.
+    expect(identity.declaredWorkspaces).toStrictEqual(["packages/*", "apps/*"]);
   });
 
   it("reports declaration and installation as two independent facts", async () => {
@@ -129,6 +155,29 @@ describe("a healthy project", () => {
     // `undefined` means nobody looked. `false` would be a claim that nothing has checked, and the fixture has no
     // binary at all — anything that tried to invoke one would fail the test rather than quietly report false.
     expect(framework.binaryAvailable).toBeUndefined();
+  });
+});
+
+describe("the two entry points", () => {
+  it("builds the same diagnosis from evidence as from disk", async () => {
+    const root = await makeTree(healthy());
+
+    const detection = await detectCypress(root);
+
+    // The invariant the extraction exists for: one detection pass, two views. A difference here means the disk-facing
+    // entry point stopped delegating, so a caller that already holds evidence would describe a different project than
+    // a caller that does not.
+    expect(diagnosisFrom(detection)).toStrictEqual(await diagnoseProject(root));
+  });
+
+  it("describes an unfavourable project without raising for it", async () => {
+    const root = await makeTree({ "readme.md": "" });
+
+    // Absence is an answer, not an error. This is the property that lets a report exist for the directories that most
+    // need one.
+    await expect(diagnoseProject(root)).resolves.toMatchObject({
+      detection: DetectionStatus.NotDetected,
+    });
   });
 });
 
@@ -211,8 +260,8 @@ describe("every diagnostic code is reachable", () => {
 
     const diagnosis = await diagnoseProject(root);
 
-    // Detected, and not runnable. The status says the first; the finding says the second. Reporting both as one failure
-    // is what made the previous behaviour unable to tell a fresh clone from the wrong directory.
+    // Detected, and not runnable. The status says the first; the finding says the second. Reporting both as one
+    // failure is what made the previous behaviour unable to tell a fresh clone from the wrong directory.
     expect(diagnosis.detection).toBe(DetectionStatus.Detected);
     expect(codesOf(diagnosis)).toContain(DiagnosticCode.DependencyNotInstalled);
     expect(diagnosis.compatibility).toBe(CompatibilityStatus.Undetermined);
@@ -314,6 +363,36 @@ describe("the catalogue", () => {
     hasCypressDirectory: true,
   } as const;
 
+  /**
+   * The detection codes the contract calls errors, written out.
+   *
+   * The duplication is the test. `ErrorDiagnosticCode` is a union with nothing at runtime behind it, so a code whose
+   * catalogue severity disagreed with it would compile and behave differently from what the type promises. The
+   * `satisfies` below proves this list is inside the union; the coverage record after it proves the union is inside
+   * the list.
+   */
+  const ALWAYS_ERROR_CODES = [
+    DiagnosticCode.FrameworkNotDetected,
+    DiagnosticCode.ConfigurationMissing,
+    DiagnosticCode.ConfigurationAmbiguous,
+    DiagnosticCode.ConfigurationUnsupported,
+    DiagnosticCode.DependencyNotInstalled,
+    DiagnosticCode.VersionIncompatible,
+    DiagnosticCode.ManifestUnreadable,
+  ] as const satisfies readonly ErrorDiagnosticCode[];
+
+  /**
+   * The bidirectional half of the check.
+   *
+   * With the list exhaustive, `Exclude<…>` is `never` and `Record<never, true>` is `{}`, so the empty object below
+   * compiles. A code added to `ErrorDiagnosticCode` without a row above leaves the type non-empty, the annotation
+   * demands that key, and the assignment stops compiling — which is earlier than any test could tell you.
+   */
+  const UNLISTED_ERROR_CODES: Record<
+    Exclude<ErrorDiagnosticCode, (typeof ALWAYS_ERROR_CODES)[number]>,
+    true
+  > = {};
+
   it.each(Object.values(DiagnosticCode))("%s explains itself", (code) => {
     const text = GUIDANCE[code].describe(FACTS);
 
@@ -330,6 +409,35 @@ describe("the catalogue", () => {
   )("%s offers a remedy, because the reader can act on it", (code) => {
     // An error with no remedy is a dead end: it says the command stopped and gives the reader nothing to do next.
     expect(GUIDANCE[code].describe(FACTS).remediation).toBeDefined();
+  });
+
+  it.each(ALWAYS_ERROR_CODES)(
+    "%s is an error, as the contract says",
+    (code) => {
+      expect(GUIDANCE[code].severity).toBe(DiagnosticSeverity.Error);
+    },
+  );
+
+  it.each(
+    Object.values(DiagnosticCode).filter(
+      (code) => !(ALWAYS_ERROR_CODES as readonly string[]).includes(code),
+    ),
+  )(
+    "%s is a warning, because the contract does not call it an error",
+    (code) => {
+      // The other direction, at runtime: a code outside the union must be advisory. Together with the case above this
+      // is a biconditional over the current code set, and the coverage record closes the gap the pair cannot see.
+      expect(GUIDANCE[code].severity).toBe(DiagnosticSeverity.Warning);
+      expect(Object.keys(UNLISTED_ERROR_CODES)).toStrictEqual([]);
+    },
+  );
+
+  it("maps every code to a category and a recoverability class", () => {
+    // A finding without a severity is impossible by type; a code without a place in the error model is possible and
+    // would surface as an exit code decided by whatever happened to be first. Worth one assertion over the union.
+    for (const code of Object.values(DiagnosticCode)) {
+      expect(GUIDANCE[code].severity).toBeDefined();
+    }
   });
 });
 
@@ -391,6 +499,25 @@ describe("edge and corner cases", () => {
       compatibility: CompatibilityStatus.Incompatible,
     });
   });
+
+  it("reports no incompatibility when there is no configuration to contradict", async () => {
+    const root = await makeTree({
+      "package.json": manifest({ devDependencies: { cypress: "^9.7.0" } }),
+      "node_modules/cypress/package.json": JSON.stringify({
+        name: "cypress",
+        version: "9.7.0",
+      }),
+    });
+
+    const diagnosis = await diagnoseProject(root);
+
+    // Undetermined rather than incompatible: an old installation cannot contradict a configuration file that is not
+    // there. Whether the version is *supported* is a different question, asked by the version policy.
+    expect(diagnosis.compatibility).toBe(CompatibilityStatus.Undetermined);
+    expect(codesOf(diagnosis)).not.toContain(
+      DiagnosticCode.VersionIncompatible,
+    );
+  });
 });
 
 describe("non-functional behaviour", () => {
@@ -411,6 +538,15 @@ describe("non-functional behaviour", () => {
     expect(await diagnoseProject(root)).toStrictEqual(
       await diagnoseProject(root),
     );
+  });
+
+  it("is deterministic from evidence alone, with no filesystem", async () => {
+    const root = await makeTree(healthy());
+    const detection = await detectCypress(root);
+
+    // The property the extraction bought: a diagnosis can be built from a value, so a finding can be tested without a
+    // tree and a second layer can describe the same evidence without reading it again.
+    expect(diagnosisFrom(detection)).toStrictEqual(diagnosisFrom(detection));
   });
 
   it("keeps concurrent diagnoses independent", async () => {

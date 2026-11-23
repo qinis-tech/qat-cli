@@ -1,9 +1,9 @@
 /**
  * The composition root.
  *
- * The only place in the program that names an implementation. Everything else declares what it needs and receives it,
- * which is what makes a service testable without a database, a terminal or a clock — and what makes this file the
- * single place to look when the question is "where does this come from".
+ * The only place in the program that names an implementation. Everything else declares what it needs and receives
+ * it, which is what makes a service testable without a database, a terminal or a clock — and what makes this file
+ * the single place to look when the question is "where does this come from".
  *
  * The shape it returns is declared in `core/application/ports`, not here: a command handler receives a contract, and
  * depending on the assembly's own type would make the CLI depend on what builds it.
@@ -11,9 +11,9 @@
  * ## Why this is not in `src/cli`
  *
  * It was, in the architecture as first written: `src/cli/index.ts` was both the entry point and the assembler. Those
- * are different jobs. The entry point parses arguments, installs signal handlers and sets an exit code — all of which
- * happens on import, so any test that wanted to check the wiring would have launched the CLI. Assembly has no such
- * side effects and can be called freely.
+ * are different jobs. The entry point parses arguments, installs signal handlers and sets an exit code — all of
+ * which happens on import, so any test that wanted to check the wiring would have launched the CLI. Assembly has no
+ * such side effects and can be called freely.
  *
  * ## What is deliberately not constructed
  *
@@ -21,9 +21,23 @@
  * something can be "constructed" would add a layer that exists only to be injected, and every caller would then need
  * the wrapper instead of the function. They are imported where they are used.
  *
- * What *is* adapted here is only what the port's shape requires: a function that takes one argument instead of two, or
- * a directory instead of an options object. An adapter with no translation in it would be a second name for the same
- * thing.
+ * What *is* adapted here is only what the port's shape requires, and the three adaptations are one of two kinds:
+ *
+ * | Port member | Implementation | Adaptation |
+ * | --- | --- | --- |
+ * | `resolveWorkingDirectory(candidates)` | `resolveWorkingDirectory(candidates, processDirectory?)` | Narrowed — the second argument is a test seam |
+ * | `diagnose(root)` | `diagnoseProject(root, options?)` | Narrowed — the search depth is a test seam |
+ * | `assess(root)` | `assessProject(root, options?)` | Narrowed, for the same reason |
+ * | `discover(root)` | `discoverProject({ cwd: root })` | Reshaped — the function takes options |
+ *
+ * Three of the four are the same move for the same reason; the fourth is a different one. That is the pattern worth
+ * keeping: **narrow a test seam, or reshape an argument.** A fifth member that needed neither should be assigned
+ * directly rather than wrapped for symmetry, because an adapter with no translation in it is a second name for the
+ * same thing.
+ *
+ * The narrowing is deliberate rather than incidental. A command should not be able to tune the parent search depth:
+ * the engine's default is right for every real invocation, and putting it on a port turns a constant into a decision
+ * each command has to make — and eventually make differently.
  */
 import type {
   Application,
@@ -40,6 +54,7 @@ import {
 } from "../core/logging/index.js";
 import { InMemoryExecutionRepository } from "../persistence/index.js";
 import {
+  assessProject,
   diagnoseProject,
   discoverProject,
   resolveWorkingDirectory,
@@ -50,9 +65,9 @@ import type { ApplicationOptions } from "./contracts.js";
 /**
  * Assembles an application.
  *
- * Synchronous on purpose: nothing here is awaited. A repository that opens a database file will make this asynchronous,
- * and the only caller is the entry point — one line to change, which is cheaper than a signature claiming to wait when
- * it does not.
+ * Synchronous on purpose: nothing here is awaited. A repository that opens a database file will make this
+ * asynchronous, and the only caller is the entry point — one line to change, which is cheaper than a signature
+ * claiming to wait when it does not.
  *
  * @throws {InvalidArgumentError} when the log level is not one of the known levels.
  */
@@ -72,18 +87,23 @@ export function createApplication(
   const repository = options.repository ?? new InMemoryExecutionRepository();
 
   const discovery: ProjectDiscovery = {
-    // Wrapped rather than assigned directly, so only the port's one-argument shape is exposed. The implementation also
-    // accepts a process directory for tests; nothing outside a test has any business supplying one.
+    // Wrapped rather than assigned directly, so only the port's one-argument shape is exposed. The implementation
+    // also accepts a process directory for tests; nothing outside a test has any business supplying one.
     resolveWorkingDirectory: (candidates) =>
       resolveWorkingDirectory(candidates),
 
-    // The second parameter is the search depth, which is a test seam rather than something a command should tune — the
-    // engine's default is the right answer for every real caller, and exposing it here would make a constant into a
-    // decision each command has to make.
+    // The second parameter is the search depth, which is a test seam rather than something a command should tune —
+    // the engine's default is the right answer for every real caller, and exposing it here would make a constant into
+    // a decision each command has to make.
     diagnose: (root) => diagnoseProject(root),
 
-    // The port takes a directory; the function takes options. Adapting here rather than widening either keeps the port
-    // shaped like the thing it describes.
+    // Bound beside `diagnose` rather than folded into it because the two answer different questions, and because a
+    // command that only wants a report should not be charged for a verdict it will not read. The assessment embeds
+    // the diagnosis, so nothing is gathered twice.
+    assess: (root) => assessProject(root),
+
+    // The port takes a directory; the function takes options. Adapting here rather than widening either keeps the
+    // port shaped like the thing it describes.
     discover: (root) => discoverProject({ cwd: root }),
   };
 
@@ -109,9 +129,9 @@ export function createApplication(
 /**
  * Resolves the effective log level, refusing a bad flag rather than falling back.
  *
- * The shared resolver deliberately ignores an invalid value from either source, because the environment is not a place
- * to fail a run. A flag is different: it was typed for this invocation, and quietly using a different level than the one
- * asked for is exactly the kind of wrongness this project spends effort avoiding.
+ * The shared resolver deliberately ignores an invalid value from either source, because the environment is not a
+ * place to fail a run. A flag is different: it was typed for this invocation, and quietly using a different level
+ * than the one asked for is exactly the kind of wrongness this project spends effort avoiding.
  */
 function resolveLevel(
   flag: string | undefined,

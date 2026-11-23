@@ -1,22 +1,20 @@
 /**
  * Error codes, categories and recoverability classes.
  *
- * The failure vocabulary for the whole application. Nothing here is framework-specific, nothing
- * here imports anything, and nothing here is a message — codes identify conditions, callers supply
- * the sentence.
+ * The failure vocabulary for the whole application. Nothing here is framework-specific, nothing here imports
+ * anything, and nothing here is a message — codes identify conditions, callers supply the sentence.
  *
  * ## Why codes are strings and not enum members
  *
- * A code crosses the process boundary: it appears in a terminal, in a log line, in a JSON result
- * and in a bug report pasted by a user. It has to be stable and readable outside the program, so it
- * is a plain string with a fixed value rather than a compiled enum member whose value is an
- * integer.
+ * A code crosses the process boundary: it appears in a terminal, in a log line, in a JSON result and in a bug
+ * report pasted by a user. It has to be stable and readable outside the program, so it is a plain string with a
+ * fixed value rather than a compiled enum member whose value is an integer.
  *
  * ## Why codes are permanent
  *
- * A code's meaning never changes, and a withdrawn condition leaves its code unused. This mirrors
- * HTTP status codes: the value is a promise to whatever reads it, so stability matters more than
- * tidiness. A user who searched for `QAT3002` last year must find the same explanation this year.
+ * A code's meaning never changes, and a withdrawn condition leaves its code unused. This mirrors HTTP status
+ * codes: the value is a promise to whatever reads it, so stability matters more than tidiness. A user who
+ * searched for `QAT3002` last year must find the same explanation this year.
  *
  * ## Ranges
  *
@@ -40,15 +38,14 @@
  * 2. Add the value type to that category's union at the bottom of this file.
  * 3. Assign it in `errors.ts` by narrowing the class's constructor parameter type.
  *
- * Step 2 is what makes a mismatched category and code a compile error rather than a runtime
- * surprise in a log.
+ * Step 2 is what makes a mismatched category and code a compile error rather than a runtime surprise in a log.
  */
 
 /**
  * Every condition the CLI must distinguish.
  *
- * Keys are camelCase for ergonomic reference in code; values are the permanent identifiers. Do
- * not derive one from the other — the key may be renamed for clarity, the value never changes.
+ * Keys are camelCase for ergonomic reference in code; values are the permanent identifiers. Do not derive one
+ * from the other — the key may be renamed for clarity, the value never changes.
  */
 export const ErrorCode = {
   // ── 1xxx — how the command was invoked ─────────────────────────────────────
@@ -62,10 +59,34 @@ export const ErrorCode = {
   projectNotFound: "QAT2001",
   /** A project exists, but no supported test framework was detected. */
   frameworkNotDetected: "QAT2002",
-  /** A framework was detected at a version QAT does not support. */
+  /**
+   * A framework is present, but in a form QAT does not support.
+   *
+   * Two shapes reach it: a configuration in a format the tool cannot read — a pre-Cypress-10 `cypress.json` —
+   * and an installation outside the supported version range. The original wording named only the second, which
+   * had stopped describing what the code is used for.
+   */
   frameworkUnsupported: "QAT2003",
   /** More than one framework configuration exists, so the intended one is unknowable. */
   projectAmbiguous: "QAT2004",
+  /**
+   * A project was recognised, but validation found a condition that prevents the requested operation.
+   *
+   * The gate's code. Every other code in this range is raised where the single reason is known; this one is
+   * raised when a caller asked to act on an assessment that says no. The reason is therefore not one condition
+   * but whichever findings the assessment classified as blocking for that operation, and their codes travel in
+   * the error's context.
+   *
+   * Grouped with the project rather than the environment because the project is the problem, not the machine.
+   * It never replaces the codes above it: a missing install is still `dependencyMissing`, raised by discovery
+   * where it is detected, and an unsupported version is still `frameworkUnsupported` when discovery is what
+   * found it. This code is the refusal, not the diagnosis.
+   *
+   * The trigger to retire it: when discovery stops raising its own errors and delegates to the assessment, this
+   * becomes the only project refusal there is and the four codes above become unreachable for new callers. That
+   * is a deletion rather than a migration, and it is cheapest while there is one caller.
+   */
+  projectInvalid: "QAT2005",
 
   // ── 3xxx — the configuration ───────────────────────────────────────────────
   /** A configuration file was referenced but does not exist. */
@@ -110,8 +131,7 @@ export const ErrorCode = {
   /**
    * The framework could not run at all.
    *
-   * Not a failing test. A failing test is a completed run with exit code 1; this means the run
-   * never started.
+   * Not a failing test. A failing test is a completed run with exit code 1; this means the run never started.
    */
   frameworkExecutionFailed: "QAT6001",
 
@@ -133,12 +153,12 @@ export type ErrorCode = (typeof ErrorCode)[keyof typeof ErrorCode];
 /**
  * Why it happened, in terms a caller can act on.
  *
- * Categories exist to answer one question: which exit code does this produce? They are also what
- * makes a message groupable — "all the configuration failures this week" is a query a category
- * answers and an error code does not.
+ * Categories exist to answer one question: which exit code does this produce? They are also what makes a
+ * message groupable — "all the configuration failures this week" is a query a category answers and an error
+ * code does not.
  *
- * Deliberately not aligned one-to-one with error codes: several codes share a category, and one
- * code range may serve two classes of error.
+ * Deliberately not aligned one-to-one with error codes: several codes share a category, and one code range may
+ * serve two classes of error.
  */
 export const ErrorCategory = {
   /** The command was invoked wrongly. */
@@ -166,12 +186,12 @@ export type ErrorCategory = (typeof ErrorCategory)[keyof typeof ErrorCategory];
 /**
  * Who can fix it.
  *
- * Kept independent of category because one category spans several answers. A missing dependency
- * and an unsupported runtime are both `Environment`, but the first is fixed by the person running
- * the command and the second is not.
+ * Kept independent of category because one category spans several answers. A missing dependency and an
+ * unsupported runtime are both `Environment`, but the first is fixed by the person running the command and the
+ * second is not.
  *
- * This is what turns an error message from a description into a next action: a `UserActionable`
- * failure gets a remediation line, a `Fatal` one gets a request to report a defect.
+ * This is what turns an error message from a description into a next action: a `UserActionable` failure gets a
+ * remediation line, a `Fatal` one gets a request to report a defect.
  */
 export const Recoverability = {
   /** The person running the command can fix it, by changing something. */
@@ -195,11 +215,19 @@ export type Recoverability =
 export type UserInputCode =
   typeof ErrorCode.invalidArgument | typeof ErrorCode.unsupportedCommand;
 
+/**
+ * The project codes.
+ *
+ * `projectInvalid` belongs here rather than in the environment union, and the distinction is the one the union
+ * exists to enforce: a project that cannot be used is something its owner fixes by editing the project, while
+ * `dependencyMissing` may be a machine that never ran an install. Both stop a run; only one is about the code.
+ */
 export type ProjectCode =
   | typeof ErrorCode.projectNotFound
   | typeof ErrorCode.frameworkNotDetected
   | typeof ErrorCode.frameworkUnsupported
-  | typeof ErrorCode.projectAmbiguous;
+  | typeof ErrorCode.projectAmbiguous
+  | typeof ErrorCode.projectInvalid;
 
 export type ConfigurationCode =
   | typeof ErrorCode.configurationNotFound
