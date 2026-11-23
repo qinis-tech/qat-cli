@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0020](0020-gate-each-operation-on-its-own-rules.md) | Gate each operation on its own rules | Accepted | 2026-11-22 |
 | [ADR-0019](0019-register-diagnostics-in-a-catalogue.md) | Register diagnostics in a catalogue | Accepted | 2026-11-21 |
 | [ADR-0018](0018-separate-detection-from-validation.md) | Separate detection from validation | Accepted | 2026-11-21 |
 | [ADR-0017](0017-record-dependency-declaration-separately-from-installation.md) | Record dependency declaration separately from installation | Accepted | 2026-11-21 |

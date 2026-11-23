@@ -7,11 +7,17 @@
  *
  * The table is a `Record` over the code union, so a code without an entry does not compile. That is the guarantee
  * behind "every diagnostic code has an understandable explanation" — it is not a promise anybody has to remember.
+ *
+ * ## Severity here answers for the project, not for an operation
+ *
+ * An entry's severity says how serious the condition is, not whether it stops anything. Whether it stops something
+ * depends on what the caller was about to do: a project with no configuration is blocked for a run and perfectly
+ * reportable by an inspection, and one severity field cannot say both. The per-operation verdict belongs to the
+ * validation layer's gate, which reads these severities rather than re-deciding them.
  */
 import {
   DiagnosticCode,
   DiagnosticSeverity,
-  type ErrorDiagnosticCode,
 } from "../../core/application/diagnostics.js";
 import type { FrameworkDeclaration } from "../../core/domain/index.js";
 
@@ -21,6 +27,11 @@ import type { FrameworkDeclaration } from "../../core/domain/index.js";
  * A fact about the configuration format rather than a support policy. Cypress 10 replaced `cypress.json` with a
  * module, so an installation older than that cannot read the file whose presence caused this project to be
  * identified at all.
+ *
+ * The number this tool will *drive* is a separate decision and lives in the validation layer's version policy. The
+ * two coincide today and are deliberately not the same constant: one is a fact about a file, the other a choice
+ * about support, and a single value serving both would make the next change to either look like a change to the
+ * other.
  */
 export const MINIMUM_CYPRESS_MAJOR = 10;
 
@@ -31,7 +42,6 @@ export interface DiagnosticFacts {
   readonly workspaces: readonly string[];
   readonly declaration?: FrameworkDeclaration;
   readonly installationVersion?: string;
-  readonly installationSource?: string;
   readonly configurations: readonly string[];
   readonly unsupportedConfigurations: readonly string[];
   readonly hasCypressDirectory: boolean;
@@ -47,18 +57,6 @@ export interface DiagnosticText {
 interface Guidance {
   readonly severity: DiagnosticSeverity;
   readonly describe: (facts: DiagnosticFacts) => DiagnosticText;
-}
-
-/**
- * Reads a version's major number, or `undefined` when the string does not start with one.
- *
- * No range implementation: the only question asked here is "which major", and pulling a semver parser in for that
- * would put a dependency behind every consumer of a project description.
- */
-export function majorOf(version: string): number | undefined {
-  const match = /^(\d+)\./.exec(version);
-
-  return match?.[1] === undefined ? undefined : Number.parseInt(match[1], 10);
 }
 
 /**
@@ -88,8 +86,8 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
   [DiagnosticCode.ConfigurationMissing]: {
     severity: DiagnosticSeverity.Error,
     describe: (facts) => {
-      // Three causes, three explanations, because they have three different next steps: one file to create, the same
-      // file plus an install, or a configuration that was deleted.
+      // Three causes, three explanations, because they have three different next steps: one file to create, the
+      // same file plus an install, or a configuration that was deleted.
       if (facts.installationVersion !== undefined) {
         return {
           explanation: `Cypress ${facts.installationVersion} is installed in ${facts.root}, but no configuration file was found.`,
@@ -148,8 +146,7 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
     severity: DiagnosticSeverity.Error,
     describe: (facts) => ({
       explanation: `Cypress ${facts.installationVersion ?? "unknown"} is installed, but ${facts.configurations[0] ?? "the configuration"} uses the format introduced in Cypress ${String(MINIMUM_CYPRESS_MAJOR)}.`,
-      remediation:
-        "Upgrade Cypress to 10 or later, or restore a cypress.json configuration.",
+      remediation: `Upgrade Cypress to ${String(MINIMUM_CYPRESS_MAJOR)} or later, or restore a cypress.json configuration.`,
       ...(facts.configurations[0] === undefined
         ? {}
         : { path: facts.configurations[0] }),
@@ -195,15 +192,3 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
     }),
   },
 };
-
-/**
- * The codes whose catalogue entry is an error.
- *
- * Derived from the table rather than written out, so a code cannot be an error here and a warning there. Used by the
- * validation layer to decide which findings are fatal.
- */
-export const ERROR_CODES: readonly ErrorDiagnosticCode[] = (
-  Object.entries(GUIDANCE) as readonly (readonly [DiagnosticCode, Guidance])[]
-)
-  .filter(([, guidance]) => guidance.severity === DiagnosticSeverity.Error)
-  .map(([code]) => code as ErrorDiagnosticCode);

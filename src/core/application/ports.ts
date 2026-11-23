@@ -2,8 +2,8 @@
  * Ports: what the application needs from the outside world, expressed as types.
  *
  * Declared by the layer that consumes them, implemented by the layer that can supply them. The direction is the
- * point — the application never names an implementation, so any implementation can be replaced, including by a fake in
- * a test.
+ * point — the application never names an implementation, so any implementation can be replaced, including by a fake
+ * in a test.
  *
  * Every member here is an interface. The application layer contains no logic in this file, and no implementation may
  * appear in it, or the dependency rule that justifies the whole arrangement collapses.
@@ -19,8 +19,14 @@
  * ## Sibling modules
  *
  * A contract group large enough to have its own vocabulary lives in its own file in this directory and is imported
- * from here, rather than being inlined. `./diagnostics.js` is the first: a diagnosis has statuses, codes and findings,
- * and pasting those into this file would double it. Nothing else moves until it has the same reason.
+ * from here, rather than being inlined. Two do:
+ *
+ * - `./diagnostics.js` — a diagnosis has statuses, a code set and a finding shape.
+ * - `./validation.js` — an assessment adds operations, readiness and a second code vocabulary.
+ *
+ * Inlining either would put three vocabularies in one namespace, and a reader checking "what can a finding say"
+ * would find it a hundred lines below the interface that mentions it. The rule as this file grows is that a group
+ * moves out when its *vocabulary* is independent, not when the file gets long.
  */
 import type {
   ConfigurationInput,
@@ -39,6 +45,7 @@ import type {
 } from "../domain/index.js";
 
 import type { ProjectDiagnosis } from "./diagnostics.js";
+import type { ProjectAssessment } from "./validation.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Discovery and configuration
@@ -74,6 +81,27 @@ export interface ResolvedWorkingDirectory {
   readonly source: WorkingDirectorySource;
 }
 
+/**
+ * The project a command is working on, reached four ways.
+ *
+ * The members form a ladder of commitment, and reading them in this order is the intended use:
+ *
+ * | Member | Question | On a bad project |
+ * | --- | --- | --- |
+ * | `resolveWorkingDirectory` | Which directory? | Rejects — the input was wrong |
+ * | `diagnose` | What is there, and what is wrong with it? | Never rejects; the problems are findings |
+ * | `assess` | May I act on it, and for which operations? | Never rejects; the verdict is on the value |
+ * | `discover` | Give me the project, or stop. | Rejects |
+ *
+ * The middle two exist because the outer two were not enough. A report cannot be built from a function that
+ * throws on the condition it exists to describe, which is exactly when a report is most wanted; and a
+ * per-operation verdict cannot be read from a function that answers for the project as a whole, because
+ * inspection and execution have different answers.
+ *
+ * A command picks the lowest rung that answers its question. Anything that mutates the project should be
+ * reached through `assess` and its gate rather than through `discover`, so the refusal names every condition
+ * that applies rather than whichever check ran first.
+ */
 export interface ProjectDiscovery {
   /**
    * Decides which directory a command should look at, before any discovery happens.
@@ -82,7 +110,8 @@ export interface ProjectDiscovery {
    * than about argument parsing. A command supplies the two values it knows about and receives one answer, so no
    * command re-implements the precedence.
    *
-   * Checks existence and refuses anything that is not a directory, so an invalid input never reaches `discover`.
+   * Checks existence and refuses anything that is not a directory, so an invalid input never reaches `diagnose`,
+   * `assess` or `discover`.
    *
    * @throws {ApplicationError} when the chosen directory does not exist or is not a directory.
    */
@@ -93,27 +122,43 @@ export interface ProjectDiscovery {
   /**
    * Reports what was found about the directory, including what is wrong with it, without throwing.
    *
-   * The two members below answer different questions. `diagnose` produces a report — including a report that says
-   * there is nothing here — and never raises for an unfavourable answer. `discover` produces a project QAT can use, or
-   * raises the error that stopped it.
-   *
-   * A command that wants to tell a user what it sees needs this one, and cannot get it from `discover` without
-   * catching an exception purely to obtain information.
+   * Never raises for an unfavourable project. A missing configuration, an ambiguous one, an unusable format and
+   * an unreadable manifest all come back as findings, because the caller asking this question is usually about
+   * to display them.
    *
    * @param root Absolute path to the directory to inspect.
-   * @throws {ApplicationError} only when something outside the project could not be read: a permission failure, an I/O
-   *   error. A missing configuration, an ambiguous one, an unusable format and an unreadable manifest all come back as
-   *   findings.
+   * @throws {ApplicationError} only when something outside the project could not be read: a permission failure,
+   *   an I/O error.
    */
   diagnose(root: string): Promise<ProjectDiagnosis>;
 
   /**
+   * Decides whether the directory may be used for each operation.
+   *
+   * The same tree, the same evidence, a different question from `diagnose`: not *what did you find* but *may I
+   * act*. Both arrive on one value, because the assessment embeds the diagnosis rather than summarising it — so
+   * the two views cannot disagree about what was found.
+   *
+   * The verdict is read from the value, never from an exception. `isExecutable` and `readinessFor` are pure
+   * functions over this result, and the per-operation detail — which findings block, which merely warn — is on
+   * the gate. Deciding to refuse is the caller's job, which is what keeps a gating policy and a gating message
+   * in different places.
+   *
+   * @param root Absolute path to the directory to inspect.
+   * @throws {ApplicationError} only when something outside the project could not be read.
+   */
+  assess(root: string): Promise<ProjectAssessment>;
+
+  /**
    * Establishes what the project is, once.
+   *
+   * The committed form: a project description, or the error that stopped it. Use `diagnose` to obtain the same
+   * findings without an exception, and `assess` to obtain a per-operation verdict.
    *
    * @param root Absolute path to the directory to inspect.
    * @throws {ApplicationError} when the directory is not a project QAT can run: no project markers, no supported
-   *   configuration, more than one configuration, a configuration in an unusable format, or no installed framework.
-   *   Use `diagnose` to obtain the same findings without an exception.
+   *   configuration, more than one configuration, a configuration in an unusable format, or no installed
+   *   framework.
    */
   discover(root: string): Promise<ProjectInfo>;
 }
@@ -136,8 +181,8 @@ export interface ConfigurationLoader {
  * Boundary around one testing framework.
  *
  * Everything framework-specific lives behind this interface: process invocation, output parsing, version quirks,
- * option translation. Adding a second framework means adding an implementation, not editing this file or anything that
- * consumes it.
+ * option translation. Adding a second framework means adding an implementation, not editing this file or anything
+ * that consumes it.
  */
 export interface FrameworkAdapter {
   /** Which framework this adapter drives. Used to select it from discovery. */
@@ -147,8 +192,12 @@ export interface FrameworkAdapter {
    * Whether the framework can actually run here.
    *
    * Separate from discovery so that "the project declares Cypress" and "Cypress is installed and executable" stay
-   * distinguishable. The first is a property of the project; the second is a property of the machine, and it is the one
-   * that changes between a developer laptop and CI.
+   * distinguishable. The first is a property of the project; the second is a property of the machine, and it is the
+   * one that changes between a developer laptop and CI.
+   *
+   * A positive answer here is evidence that can be written back onto an assessment's `binaryAvailable`; the
+   * validation layer reads an explicit `false` and never an absent answer, so a caller that has not asked this
+   * question cannot accidentally block a run by omission.
    */
   available(project: ProjectInfo): Promise<boolean>;
 
@@ -156,8 +205,8 @@ export interface FrameworkAdapter {
    * Runs the request and returns a normalised result.
    *
    * Resolves for **both** outcomes: a run in which tests failed is a successful execution, and is reported through
-   * `ExecutionResult.status` and `totals`. This is the distinction the whole error model rests on — a failing assertion
-   * must never arrive here as a rejection.
+   * `ExecutionResult.status` and `totals`. This is the distinction the whole error model rests on — a failing
+   * assertion must never arrive here as a rejection.
    *
    * @throws {ApplicationError} only when the framework could not run at all.
    */
@@ -170,14 +219,15 @@ export interface FrameworkAdapter {
 /**
  * What the CLI is allowed to call.
  *
- * The application's public surface, and the reason `src/cli` needs no knowledge of adapters, repositories or reports.
- * Its input is what a command parsed; its output is the record that everything downstream consumes.
+ * The application's public surface, and the reason `src/cli` needs no knowledge of adapters, repositories or
+ * reports. Its input is what a command parsed; its output is the record that everything downstream consumes.
  */
 export interface ExecutionService {
   /**
    * Resolves a request against the project, drives the adapter, records the result and returns it.
    *
-   * @throws {ApplicationError} for any expected failure: discovery, configuration, framework unavailability, storage.
+   * @throws {ApplicationError} for any expected failure: discovery, configuration, framework unavailability,
+   *   storage.
    */
   run(
     request: ExecutionRequest,
@@ -225,18 +275,18 @@ export interface EvidenceStore {
  * Status of a *stored* execution.
  *
  * The domain's `ExecutionStatus` describes how a run ended, so it has no member for a run that has not. Storage needs
- * one: a row is created when a run starts and updated when it finishes, which is what makes "a run that began and whose
- * process died" discoverable afterwards. Adding `running` to the domain union would put a state into the result schema
- * that a result can never legitimately have.
+ * one: a row is created when a run starts and updated when it finishes, which is what makes "a run that began and
+ * whose process died" discoverable afterwards. Adding `running` to the domain union would put a state into the result
+ * schema that a result can never legitimately have.
  */
 export type ExecutionRecordStatus = ExecutionStatus | "running";
 
 /**
  * The metadata QAT retains about one execution.
  *
- * Metadata only. Test-level results live in the result document on disk and are never duplicated here: duplicating them
- * would create two copies of the same fact that can disagree, and the database exists to answer "which runs happened"
- * rather than "what did each test do".
+ * Metadata only. Test-level results live in the result document on disk and are never duplicated here: duplicating
+ * them would create two copies of the same fact that can disagree, and the database exists to answer "which runs
+ * happened" rather than "what did each test do".
  */
 export interface ExecutionRecord {
   readonly executionId: ExecutionId;
@@ -298,8 +348,8 @@ export interface ExecutionSummary {
  * Persistence of execution metadata.
  *
  * The interface names no storage technology and must not. An implementation may be SQLite, an in-memory map or a JSON
- * file, and no caller may be able to tell — which is what keeps the application unaware that a database exists and lets
- * every test run without one.
+ * file, and no caller may be able to tell — which is what keeps the application unaware that a database exists and
+ * lets every test run without one.
  *
  * Every method is atomic: either the whole effect is applied or none of it is. A caller never sees a half-written
  * record.
@@ -315,8 +365,8 @@ export interface ExecutionRepository {
   /**
    * Records how a run ended.
    *
-   * @throws {ApplicationError} when the record does not exist, or has already been completed — both indicate a second
-   *   writer or a retry defect, and silently overwriting would hide it.
+   * @throws {ApplicationError} when the record does not exist, or has already been completed — both indicate a
+   *   second writer or a retry defect, and silently overwriting would hide it.
    */
   complete(
     executionId: ExecutionId,
@@ -331,12 +381,12 @@ export interface ExecutionRepository {
   /**
    * Releases whatever the implementation holds.
    *
-   * Part of the contract rather than an implementation detail, because a database connection is a resource and a caller
-   * that never closes one leaks it. Called once by whoever constructed the implementation — the composition root, and
-   * nobody else.
+   * Part of the contract rather than an implementation detail, because a database connection is a resource and a
+   * caller that never closes one leaks it. Called once by whoever constructed the implementation — the composition
+   * root, and nobody else.
    *
-   * Must be safe to call more than once: shutdown is reached from a signal handler and from a normal exit, and neither
-   * can be relied on to be the only path.
+   * Must be safe to call more than once: shutdown is reached from a signal handler and from a normal exit, and
+   * neither can be relied on to be the only path.
    */
   close(): Promise<void>;
 }
@@ -348,8 +398,8 @@ export interface ExecutionRepository {
 /**
  * Output formats.
  *
- * Lives here rather than in the domain because a format is how a result is *presented*, not what a result *is*. Adding
- * a format is an application concern and must not force a domain change.
+ * Lives here rather than in the domain because a format is how a result is *presented*, not what a result *is*.
+ * Adding a format is an application concern and must not force a domain change.
  */
 export const ReportFormat = {
   Html: "html",
@@ -422,9 +472,9 @@ export interface Logger {
 /**
  * Current time.
  *
- * Not ceremony. Without it, every test of anything timestamped asserts "roughly now" and every duration is approximate.
- * With it, a test supplies a fixed clock and asserts an exact value — the difference between a test that proves
- * something and one that proves the code did not crash.
+ * Not ceremony. Without it, every test of anything timestamped asserts "roughly now" and every duration is
+ * approximate. With it, a test supplies a fixed clock and asserts an exact value — the difference between a test that
+ * proves something and one that proves the code did not crash.
  */
 export interface Clock {
   now(): Date;
@@ -433,8 +483,8 @@ export interface Clock {
 /**
  * Identifier generation.
  *
- * Same reasoning as `Clock`, plus one more: a deterministic generator makes result files diffable between runs, which is
- * what makes a golden-file test possible at all.
+ * Same reasoning as `Clock`, plus one more: a deterministic generator makes result files diffable between runs, which
+ * is what makes a golden-file test possible at all.
  */
 export interface IdGenerator {
   next(): string;
@@ -447,9 +497,9 @@ export interface IdGenerator {
 /**
  * What a command handler receives.
  *
- * A contract, not the assembled object. It lives here rather than beside the composition root so the CLI can depend on
- * what it is given without depending on what assembles it — which is the whole reason the assembly was separated from
- * the entry point.
+ * A contract, not the assembled object. It lives here rather than beside the composition root so the CLI can depend
+ * on what it is given without depending on what assembles it — which is the whole reason the assembly was separated
+ * from the entry point.
  *
  * `logger` is the port, not the concrete logger service: a handler reports, it does not derive correlated children.
  * Anything that needs a run-scoped logger receives one as a parameter later.
