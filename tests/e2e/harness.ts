@@ -7,16 +7,29 @@
  * ## Cleanup is explicit, not automatic
  *
  * `removeTemporaryDirectories` is exported rather than registered as a hook here. A helper that registers hooks on
- * import is attributed to whichever file imported it, which works until the module is imported twice or lazily —
- * and the failure mode is a leaked temporary directory nobody looks for. Each file that creates a fixture calls
+ * import is attributed to whichever file imported it, which works until the module is imported twice or lazily — and
+ * the failure mode is a leaked temporary directory nobody looks for. Each file that creates a fixture calls
  * `afterAll(removeTemporaryDirectories)`, one line, visible at the top of the file it belongs to.
+ *
+ * ## Four project shapes, and why they are separate functions
+ *
+ * Each one exists because a different assertion needs it, and a single function with a flag per variation would need a
+ * reader to reconstruct which combination produces what:
+ *
+ * - `temporaryProject` — a real single-package project: declared, installed, configured, with specs.
+ * - `temporaryWarningProject` — the same, minus the manifest. Runnable, and imperfect.
+ * - `temporaryWorkspaceMember` — a member inside a monorepo, with the install hoisted above it.
+ * - `temporaryPackageLayout` — the compiled output beside a manifest, for testing version resolution rather than a
+ *   project.
  */
 import {
   cp,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -48,8 +61,8 @@ export interface QatOptions {
  * The tool's own process runner spawns the tool, which is the first place in this project where that happens.
  *
  * Exit code `1` from any of these means Node died before qat decided anything — an empty build, or an installation
- * whose imports cannot resolve. The evidence is in stderr, and every assertion in this suite reads the stream as
- * well as the code for that reason.
+ * whose imports cannot resolve. The evidence is in stderr, and every assertion in this suite reads the stream as well
+ * as the code for that reason.
  */
 export function qat(args: readonly string[], options: QatOptions = {}) {
   return runProcess({
@@ -76,8 +89,8 @@ export interface ProjectOptions {
    * Files written verbatim, relative to the root — last, so they can override any of the defaults.
    *
    * The escape hatch that keeps this helper from growing an option per variation. A test that needs a legacy
-   * configuration, a malformed manifest or an extra lockfile passes one entry rather than the helper learning
-   * about each.
+   * configuration, a malformed manifest or an extra lockfile passes one entry rather than the helper learning about
+   * each.
    */
   readonly extra?: Readonly<Record<string, string>>;
 }
@@ -85,9 +98,9 @@ export interface ProjectOptions {
 /**
  * The minimum that makes a directory a runnable Cypress project.
  *
- * By default Cypress is declared in `devDependencies` *and* installed under `node_modules`, which is the shape a
- * real single-package project has. `declared: false` produces the other shape — present on disk, absent from the
- * manifest — which is what a workspace member with a hoisted install looks like.
+ * By default Cypress is declared in `devDependencies` *and* installed under `node_modules`, which is the shape a real
+ * single-package project has. `declared: false` produces the other shape — present on disk, absent from the manifest —
+ * which is what a workspace member with a hoisted install looks like.
  */
 export async function temporaryProject(
   options: ProjectOptions = {},
@@ -126,11 +139,36 @@ export async function temporaryProject(
 }
 
 /**
+ * A project that is runnable and imperfect: a configuration, an installed framework, and no manifest.
+ *
+ * The warning is the point of the fixture. A project with a blocker would let a report that printed only blockers pass
+ * every assertion about warnings, because the warning would never be reached — and the difference between "reports
+ * warnings" and "reports warnings when there is also an error" is the whole behaviour being tested.
+ *
+ * No manifest means the missing-manifest warning and nothing else: the dependency is installed, so `QAT-D005` does not
+ * fire, and an undeclared install is not reported for a project with no manifest to have declared it.
+ */
+export async function temporaryWarningProject(): Promise<string> {
+  const root = await temporaryDirectory();
+
+  await mkdir(join(root, "cypress", "e2e"), { recursive: true });
+  await mkdir(join(root, "node_modules", "cypress"), { recursive: true });
+
+  await writeFile(join(root, "cypress.config.ts"), "export default {};\n");
+  await writeFile(
+    join(root, "node_modules", "cypress", "package.json"),
+    JSON.stringify({ name: "cypress", version: "13.15.0" }),
+  );
+
+  return root;
+}
+
+/**
  * A workspace member: its own manifest and configuration, with the framework installed at the root above it.
  *
- * The root declares `workspaces`, which is what makes this a real monorepo rather than two nested directories. It
- * also proves the member is still an ordinary project — the declaration above it neither helps nor interferes, and
- * only the *install* search is expected to climb.
+ * The root declares `workspaces`, which is what makes this a real monorepo rather than two nested directories. It also
+ * proves the member is still an ordinary project — the declaration above it neither helps nor interferes, and only the
+ * *install* search is expected to climb.
  */
 export async function temporaryWorkspaceMember(): Promise<{
   readonly root: string;
@@ -166,10 +204,10 @@ export async function temporaryWorkspaceMember(): Promise<{
 /**
  * A package layout — the compiled output beside a manifest — outside the repository.
  *
- * The dependencies are symlinked rather than copied. Without them Node cannot resolve `commander` or `pino`, and
- * the process dies on the first import — which is what an exit code of 1 means, and is why a copied `dist/` is not
- * a copy of an installation. A junction on Windows: symlink creation there needs elevation for file links but not
- * for directory junctions, and the resolution behaviour is identical.
+ * The dependencies are symlinked rather than copied. Without them Node cannot resolve `commander` or `pino`, and the
+ * process dies on the first import — which is what an exit code of 1 means, and is why a copied `dist/` is not a copy
+ * of an installation. A junction on Windows: symlink creation there needs elevation for file links but not for
+ * directory junctions, and the resolution behaviour is identical.
  */
 export async function temporaryPackageLayout(
   manifest?: string,
@@ -198,6 +236,27 @@ export interface RepositoryManifest {
 /** The repository's own manifest, read once per assertion that needs it. */
 export async function packageManifest(): Promise<RepositoryManifest> {
   return JSON.parse(await readFile(MANIFEST, "utf8")) as RepositoryManifest;
+}
+
+/**
+ * Every path under `root`, with its size and modification time.
+ *
+ * Used to prove that running a command wrote nothing. Sizes and times are included rather than contents alone, because
+ * a rewrite with identical bytes is still a write: an atomic-write helper that rewrote a configuration with the same
+ * contents would pass a content-only comparison and fail this one.
+ *
+ * Recursive, so a file created inside an existing directory is caught. The root itself is not included — `readdir`
+ * lists its children — which is correct: the command may be given the directory without changing it.
+ */
+export async function snapshot(root: string): Promise<readonly string[]> {
+  const paths = (await readdir(root, { recursive: true })).sort();
+
+  return Promise.all(
+    paths.map(async (path) => {
+      const stats = await stat(join(root, path));
+      return `${path}|${String(stats.size)}|${String(stats.mtimeMs)}`;
+    }),
+  );
 }
 
 /** Removes every directory a fixture created. Called from `afterAll` in each file that has one. */
