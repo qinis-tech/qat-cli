@@ -20,13 +20,12 @@ import { runProcess } from "~/core/process/index.js";
  * Runs the built binary.
  *
  * The tool's own process runner spawns the tool, which is the first thing in this project to do so and the
- * trigger the testing architecture document named for this suite existing. `npm run test:e2e` builds first
- * and runs the binary once, so a failure here is a failure of the executable rather than of a missing
- * build.
+ * trigger the testing architecture document named for this suite existing. `npm run test:e2e` builds first and
+ * runs the binary once, so a failure here is a failure of the executable rather than of a missing build.
  *
  * Exit code `1` from any of these means Node died before qat decided anything — an empty build, or an
- * installation whose imports cannot resolve. The evidence is in stderr, and every assertion below reads
- * the stream as well as the code for that reason.
+ * installation whose imports cannot resolve. The evidence is in stderr, and every assertion below reads the
+ * stream as well as the code for that reason.
  */
 const CLI = fileURLToPath(new URL("../../dist/cli/index.js", import.meta.url));
 const DIST = fileURLToPath(new URL("../../dist", import.meta.url));
@@ -51,8 +50,18 @@ async function temporaryDirectory(): Promise<string> {
   return root;
 }
 
-/** The minimum that makes a directory a runnable Cypress project. */
-async function temporaryProject(): Promise<string> {
+/**
+ * The minimum that makes a directory a runnable Cypress project.
+ *
+ * By default Cypress is declared in `devDependencies` *and* installed under `node_modules`, which is the shape
+ * a real single-package project has. `declared: false` produces the other shape — present on disk, absent from
+ * the manifest — which is what a workspace member with a hoisted install looks like. Both are worth exercising
+ * because the whole point of the change is that they are reported separately.
+ */
+async function temporaryProject(
+  options: { readonly declared?: boolean } = {},
+): Promise<string> {
+  const declared = options.declared ?? true;
   const root = await temporaryDirectory();
 
   await mkdir(join(root, "cypress", "e2e"), { recursive: true });
@@ -60,7 +69,11 @@ async function temporaryProject(): Promise<string> {
 
   await writeFile(
     join(root, "package.json"),
-    JSON.stringify({ name: "demo", version: "1.0.0" }),
+    JSON.stringify({
+      name: "demo",
+      version: "1.0.0",
+      ...(declared ? { devDependencies: { cypress: "^13.15.0" } } : {}),
+    }),
   );
   await writeFile(join(root, "cypress.config.ts"), "export default {};\n");
   await writeFile(
@@ -71,6 +84,44 @@ async function temporaryProject(): Promise<string> {
   return root;
 }
 
+/**
+ * A workspace member: its own manifest and configuration, with the framework installed at the root above it.
+ *
+ * The root declares `workspaces`, which is what makes this a real monorepo rather than two nested directories.
+ * It also proves the member is still an ordinary project — the declaration above it neither helps nor
+ * interferes, and only the *install* search is expected to climb.
+ */
+async function temporaryWorkspaceMember(): Promise<{
+  readonly root: string;
+  readonly member: string;
+}> {
+  const root = await temporaryDirectory();
+
+  const member = join(root, "packages", "app");
+  await mkdir(join(member, "cypress", "e2e"), { recursive: true });
+  await mkdir(join(root, "node_modules", "cypress"), { recursive: true });
+
+  await writeFile(
+    join(root, "package.json"),
+    JSON.stringify({
+      name: "root",
+      version: "1.0.0",
+      workspaces: ["packages/*"],
+    }),
+  );
+  await writeFile(
+    join(member, "package.json"),
+    JSON.stringify({ name: "demo", version: "1.0.0" }),
+  );
+  await writeFile(join(member, "cypress.config.ts"), "export default {};\n");
+  await writeFile(
+    join(root, "node_modules", "cypress", "package.json"),
+    JSON.stringify({ name: "cypress", version: "13.15.0" }),
+  );
+
+  return { root, member };
+}
+
 /** The repository's own manifest, read once per assertion that needs it. */
 async function packageManifest(): Promise<{
   version?: string;
@@ -79,6 +130,16 @@ async function packageManifest(): Promise<{
   return JSON.parse(await readFile(MANIFEST, "utf8")) as {
     version?: string;
     bin?: Record<string, string>;
+  };
+}
+
+/** The `--json` document `doctor` writes, narrowed to the fields these assertions read. */
+interface DoctorDocument {
+  project?: {
+    name?: string;
+    frameworkDeclaration?: { section?: string; range?: string };
+    installation?: { version?: string; source?: string };
+    packageMetadata?: { name?: string; version?: string };
   };
 }
 
@@ -174,9 +235,9 @@ describe("version resolution", () => {
   });
 
   it("fails predictably when the nearest manifest has no usable version", async () => {
-    // Valid JSON, so Node can read it and start the CLI — and no version, so the resolver fails where the
-    // reader can see it. A malformed manifest never reaches this code: Node refuses the module before the
-    // entry point runs.
+    // Valid JSON, so Node can read it and start the CLI — and no version, so the resolver fails where the reader
+    // can see it. A malformed manifest never reaches this code: Node refuses the module before the entry point
+    // runs.
     const root = await packagedLayout(
       JSON.stringify({ name: "qat-cli", type: "module" }),
     );
@@ -186,8 +247,8 @@ describe("version resolution", () => {
       args: [join(root, "dist", "cli", "index.js"), "--version"],
     });
 
-    // Environment, not internal: an installation with damaged metadata is a broken install, and the remedy
-    // is to reinstall rather than to report a defect.
+    // Environment, not internal: an installation with damaged metadata is a broken install, and the remedy is to
+    // reinstall rather than to report a defect.
     expect(result.exitCode).toBe(ExitCode.Environment);
     expect(result.stderr).toContain("QAT4003");
     expect(result.stderr).toContain("does not declare a usable version");
@@ -202,8 +263,8 @@ describe("help", () => {
     expect(result.exitCode).toBe(ExitCode.Success);
     expect(result.stdout).toContain("doctor");
 
-    // The summary, not only the name: a command list without a description tells a user nothing about
-    // which command they want.
+    // The summary, not only the name: a command list without a description tells a user nothing about which
+    // command they want.
     expect(result.stdout).toContain("Report what QAT can see");
   });
 
@@ -218,8 +279,8 @@ describe("help", () => {
   });
 
   it("exits zero for help, because the user asked for something and got it", async () => {
-    // A distinct case from the global help above: this exercises the path where a subcommand prints its
-    // own help and the parser throws to stop further work.
+    // A distinct case from the global help above: this exercises the path where a subcommand prints its own help
+    // and the parser throws to stop further work.
     const result = await qat(["doctor", "--help"]);
 
     expect(result.exitCode).toBe(ExitCode.Success);
@@ -232,8 +293,8 @@ describe("unknown input", () => {
 
     expect(result.exitCode).toBe(ExitCode.InvalidInput);
 
-    // The exact wording, including the code: this failure is generated by the program's own action and
-    // rendered by this project's error renderer, not written by the parser.
+    // The exact wording, including the code: this failure is generated by the program's own action and rendered
+    // by this project's error renderer, not written by the parser.
     expect(result.stderr).toContain("QAT1001: Unknown command 'doctr'");
 
     // Actionable rather than merely correct: the suggestion turns a dead end into a typo fix.
@@ -271,8 +332,8 @@ describe("working directory", () => {
   it("resolves a relative argument against the process working directory", async () => {
     const root = await temporaryProject();
 
-    // `.` and a nested relative path are the combinations a developer uses most, and the ones a path bug
-    // breaks first.
+    // `.` and a nested relative path are the combinations a developer uses most, and the ones a path bug breaks
+    // first.
     const result = await qat(["doctor", "."], { cwd: root });
 
     expect(result.exitCode).toBe(ExitCode.Success);
@@ -326,17 +387,46 @@ describe("doctor", () => {
     expect(result.stdout).toContain(root);
   });
 
-  it("reports the same project as a document with --json", async () => {
+  it("reports where the framework is declared, separately from where it is installed", async () => {
+    const root = await temporaryProject();
+
+    const result = await qat(["doctor", root]);
+
+    expect(result.exitCode).toBe(ExitCode.Success);
+    // Four adjacent lines, three different sources: the manifest for identity, the manifest for the declaration,
+    // and `node_modules` for the version. Collapsing any two of them is what the previous single message did.
+    expect(result.stdout).toContain("package    demo@1.0.0");
+    expect(result.stdout).toContain("cypress 13.15.0 (project install)");
+    expect(result.stdout).toContain("declared   devDependencies (^13.15.0)");
+  });
+
+  it("reports a workspace member with a hoisted install as undeclared in the package itself", async () => {
+    const { member } = await temporaryWorkspaceMember();
+
+    const result = await qat(["doctor", member]);
+
+    expect(result.exitCode).toBe(ExitCode.Success);
+    // The version came from three directories up; the declaration came from nowhere. Both are true, and neither
+    // line could be produced by the other.
+    expect(result.stdout).toContain("cypress 13.15.0 (workspace install)");
+    expect(result.stdout).toContain("declared   nowhere in this package");
+  });
+
+  it("includes the declaration in the machine-readable document", async () => {
     const root = await temporaryProject();
 
     const result = await qat(["doctor", root, "--json"]);
 
     expect(result.exitCode).toBe(ExitCode.Success);
 
-    const document = JSON.parse(result.stdout) as {
-      project?: { name?: string };
-    };
+    const document = JSON.parse(result.stdout) as DoctorDocument;
+
     expect(document.project?.name).toBe("demo");
+    expect(document.project?.frameworkDeclaration).toStrictEqual({
+      section: "devDependencies",
+      range: "^13.15.0",
+    });
+    expect(document.project?.installation).toMatchObject({ source: "project" });
   });
 
   it("writes nothing to standard error when it succeeds", async () => {
@@ -357,8 +447,8 @@ describe("doctor", () => {
     expect(result.stderr).toContain("QAT2001");
     expect(result.stderr).toContain("No project found");
 
-    // The remedy names what the reader can actually do here — passing a directory — rather than pointing at
-    // the help screen, which would not help with this failure.
+    // The remedy names what the reader can actually do here — passing a directory — rather than pointing at the
+    // help screen, which would not help with this failure.
     expect(result.stderr).toContain("pass --cwd");
   });
 });
