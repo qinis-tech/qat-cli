@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0019](0019-register-diagnostics-in-a-catalogue.md) | Register diagnostics in a catalogue | Accepted | 2026-11-21 |
 | [ADR-0018](0018-separate-detection-from-validation.md) | Separate detection from validation | Accepted | 2026-11-21 |
 | [ADR-0017](0017-record-dependency-declaration-separately-from-installation.md) | Record dependency declaration separately from installation | Accepted | 2026-11-21 |
 | [ADR-0016](0016-prefer-the-positional-directory-over-the-working-directory-o.md) | Prefer the positional directory over the working-directory option | Accepted | 2026-11-21 |

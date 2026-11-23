@@ -1,55 +1,20 @@
 import { describe, expect, it } from "vitest";
 
+import { fakeApplication } from "./fake-application.js";
+
 import type {
   ApplicationOverrides,
   CommandContext,
   CommandDefinition,
 } from "~/cli/contracts.js";
 import { createProgram, readGlobalOptions } from "~/cli/program.js";
-import type { Application } from "~/core/application/ports.js";
 import { ErrorCode, InvalidArgumentError } from "~/core/errors/index.js";
-
-/**
- * The program is built per test rather than shared, and its output is silenced.
- *
- * A module-level program would carry state between tests, which is the thing the builder function
- * exists to avoid; and Commander writes help and usage errors to the real streams, which would make a
- * passing suite look like a failing one.
- */
-function fakeApplication(disposed: string[] = []): Application {
-  return {
-    logger: {
-      trace: () => undefined,
-      debug: () => undefined,
-      info: () => undefined,
-      warn: () => undefined,
-      error: () => undefined,
-      fatal: () => undefined,
-    },
-    repository: {
-      create: () => Promise.resolve(),
-      complete: () => Promise.resolve(),
-      findById: () => Promise.resolve(undefined),
-      list: () => Promise.resolve([]),
-      close: () => Promise.resolve(),
-    },
-    discovery: {
-      resolveWorkingDirectory: () => Promise.reject(new Error("unused")),
-      discover: () => Promise.reject(new Error("unused")),
-    },
-    dispose: () => {
-      disposed.push("dispose");
-      return Promise.resolve();
-    },
-  };
-}
 
 /**
  * A minimal definition.
  *
- * The four documentation fields are present because the contract requires them; a fixture that
- * omitted them would compile only if the contract were loosened, which is the thing it exists to
- * prevent.
+ * The four documentation fields are present because the contract requires them; a fixture that omitted them would
+ * compile only if the contract were loosened, which is the thing it exists to prevent.
  */
 function command(
   overrides: Partial<CommandDefinition> = {},
@@ -69,7 +34,11 @@ function build(
   onCreate: (overrides: ApplicationOverrides) => void = () => undefined,
 ) {
   const disposed: string[] = [];
-  const application = fakeApplication(disposed);
+  const application = fakeApplication({
+    onDispose: () => {
+      disposed.push("dispose");
+    },
+  });
 
   const program = createProgram(
     "9.9.9",
@@ -104,9 +73,9 @@ describe("program metadata", () => {
 
     const flags = program.options.map((option) => option.long);
 
-    // `--version` is in this list because `.version()` registers it as an option like any other. It is
-    // first because that call happens before the `.option()` calls, and asserting the order documents
-    // that rather than leaving it to be discovered.
+    // `--version` is in this list because `.version()` registers it as an option like any other. It is first because
+    // that call happens before the `.option()` calls, and asserting the order documents that rather than leaving it to
+    // be discovered.
     expect(flags).toStrictEqual([
       "--version",
       "--cwd",
@@ -121,8 +90,8 @@ describe("reading global options", () => {
   it("narrows supplied values and defaults the flags to false", () => {
     const { program } = build();
 
-    // `parseOptions` rather than `parseAsync`: this test is about reading flags, and `parseAsync` would
-    // also run the program — which for a bare invocation is the "no command" path asserted below.
+    // `parseOptions` rather than `parseAsync`: this test is about reading flags, and `parseAsync` would also run the
+    // program — which for a bare invocation is the "no command" path asserted below.
     program.parseOptions(["node", "qat", "--cwd", "/tmp/project", "--json"]);
 
     expect(readGlobalOptions(program)).toStrictEqual({
@@ -148,8 +117,8 @@ describe("usage errors", () => {
   it("throws instead of exiting, so the entry point decides the code", async () => {
     const { program } = build();
 
-    // The default behaviour would be `process.exit(1)`, which no test can observe and which bypasses
-    // the exit-code contract.
+    // The default behaviour would be `process.exit(1)`, which no test can observe and which bypasses the exit-code
+    // contract.
     await expect(
       program.parseAsync(["node", "qat", "--nope"]),
     ).rejects.toMatchObject({
@@ -181,8 +150,8 @@ describe("command registration", () => {
 
     await program.parseAsync(["node", "qat", "demo", "--json"]);
 
-    // Both halves of the context: the application it can act with, and the flags the user typed. A
-    // test asserting only the first would pass while every global flag was silently discarded.
+    // Both halves of the context: the application it can act with, and the flags the user typed. A test asserting only
+    // the first would pass while every global flag was silently discarded.
     expect(received?.application).toBeDefined();
     expect(received?.options.json).toBe(true);
   });
@@ -226,7 +195,8 @@ describe("command registration", () => {
 
     await program.parseAsync(["node", "qat", "demo"]);
 
-    // A handler must be able to tell "not provided" from "provided as nothing".
+    // A handler must be able to tell "not provided" from "provided as nothing" — the same distinction the environment
+    // utilities make, for the same reason.
     expect(received?.arguments["directory"]).toBeUndefined();
   });
 
@@ -269,8 +239,7 @@ describe("command registration", () => {
       code: ErrorCode.invalidArgument,
     });
 
-    // A failing command that also leaks what it opened is two problems, and the second outlives the
-    // first.
+    // A failing command that also leaks what it opened is two problems, and the second outlives the first.
     expect(disposed).toStrictEqual(["dispose"]);
   });
 
