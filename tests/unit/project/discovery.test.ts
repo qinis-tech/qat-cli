@@ -42,8 +42,8 @@ async function makeProject(files: Record<string, string>): Promise<string> {
  *
  * Cypress is present in `node_modules` but deliberately **not** declared in the manifest. That is the shape a
  * workspace member and a project with a hoisted install both have, and it is the case where declaration and
- * installation genuinely differ — so the default fixture exercises the interesting half of the split rather
- * than the easy one. Tests that need a declaration add one.
+ * installation genuinely differ — so the default fixture exercises the interesting half of the split rather than
+ * the easy one. Tests that need a declaration add one.
  */
 function cypressFiles(
   extra: Record<string, string> = {},
@@ -101,9 +101,9 @@ describe("a conventional project", () => {
   it("resolves a relative directory against the working directory", async () => {
     const root = await makeProject(cypressFiles());
 
-    // Expressed relative to wherever the runner is, which is exactly what the option promises to resolve
-    // against. No `chdir`, so the process working directory stays untouched and this test cannot interfere with
-    // the one asserting that it does.
+    // Expressed relative to wherever the runner is, which is exactly what the option promises to resolve against.
+    // No `chdir`, so the process working directory stays untouched and this test cannot interfere with the one
+    // asserting that it does.
     const relativeCwd = relative(process.cwd(), root);
 
     const context = await discoverProject({ cwd: relativeCwd });
@@ -133,6 +133,8 @@ describe("a conventional project", () => {
 
     const { paths } = await discoverProject({ cwd: root });
 
+    // The layout reports no candidates at all, and the fallback is the first conventional name rather than an
+    // empty string — a project with no specs yet is still a project.
     expect(paths.specsDirectory).toBe("cypress/e2e");
     expect(paths.supportFile).toBeUndefined();
     expect(paths.sourceDirectory).toBeUndefined();
@@ -268,14 +270,63 @@ describe("invalid and missing information", () => {
     expect(error.code).toBe(ErrorCode.projectNotFound);
   });
 
-  it("reports a project with no framework configuration", async () => {
+  it("reports a project with no Cypress indicators at all as having no configuration", async () => {
     const root = await makeProject({
       "package.json": JSON.stringify({ name: "x", version: "1" }),
     });
 
     const error = await failure(discoverProject({ cwd: root }));
 
+    // Nothing Cypress-shaped: the message is about the configuration, and the remedy is the one for a project that
+    // might be the wrong directory.
     expect(error.code).toBe(ErrorCode.frameworkNotDetected);
+    expect(error.message).toContain("No Cypress configuration was found");
+    expect(error.remediation).toContain("cypress.config.ts");
+  });
+
+  it("names an installed Cypress when the configuration file is missing", async () => {
+    const root = await makeProject({
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "node_modules/cypress/package.json": CYPRESS_MANIFEST,
+    });
+
+    const error = await failure(discoverProject({ cwd: root }));
+
+    // A different diagnosis from "not a Cypress project", and a different next step: one file to create, not a
+    // different directory to find.
+    expect(error.code).toBe(ErrorCode.frameworkNotDetected);
+    expect(error.message).toContain("13.15.0 is installed in");
+    expect(error.message).toContain("no configuration file");
+  });
+
+  it("names a declared Cypress when the configuration file is missing", async () => {
+    const root = await makeProject({
+      "package.json": JSON.stringify({
+        name: "x",
+        version: "1.0.0",
+        devDependencies: { cypress: "^13.15.0" },
+      }),
+    });
+
+    const error = await failure(discoverProject({ cwd: root }));
+
+    expect(error.code).toBe(ErrorCode.frameworkNotDetected);
+    expect(error.message).toContain("declared in devDependencies");
+    expect(error.message).toContain("no configuration file");
+  });
+
+  it("names a conventional cypress directory when the configuration file is missing", async () => {
+    const root = await makeProject({
+      // The manifest carries no Cypress dependency, so the directory is the only evidence. It is also what makes the
+      // directory a project root at all — without it the failure is QAT2001, before detection is reached.
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "cypress/e2e/smoke.cy.ts": "",
+    });
+
+    const error = await failure(discoverProject({ cwd: root }));
+
+    expect(error.code).toBe(ErrorCode.frameworkNotDetected);
+    expect(error.message).toContain("A cypress directory was found");
   });
 
   it("reports a configured framework that is not installed", async () => {
@@ -302,8 +353,8 @@ describe("invalid and missing information", () => {
     const error = await failure(discoverProject({ cwd: root }));
 
     expect(error.code).toBe(ErrorCode.dependencyMissing);
-    // Naming the section is the whole point: it tells the reader the package is one install command away
-    // rather than absent from the project entirely.
+    // Naming the section is the whole point: it tells the reader the package is one install command away rather
+    // than absent from the project entirely.
     expect(error.message).toContain("declared in devDependencies");
     expect(error.context).toMatchObject({
       declaredIn: "devDependencies",
@@ -332,9 +383,27 @@ describe("invalid and missing information", () => {
     const error = await failure(discoverProject({ cwd: root }));
 
     expect(error.code).toBe(ErrorCode.projectAmbiguous);
+    // Candidate order, not directory order: `ts` precedes `js` in the shared list, so the message is stable on any
+    // filesystem.
     expect(error.context).toMatchObject({
       configFiles: "cypress.config.ts, cypress.config.js",
     });
+  });
+
+  it("reports a legacy cypress.json as an unsupported configuration, not a missing one", async () => {
+    const root = await makeProject({
+      "package.json": JSON.stringify({ name: "x", version: "1.0.0" }),
+      "cypress.json": "{}",
+      "node_modules/cypress/package.json": CYPRESS_MANIFEST,
+    });
+
+    const error = await failure(discoverProject({ cwd: root }));
+
+    // This is a Cypress project. Telling its owner they are in the wrong directory would send them looking for
+    // something that is already there; the remedy is an upgrade.
+    expect(error.code).toBe(ErrorCode.frameworkUnsupported);
+    expect(error.message).toContain("cypress.json");
+    expect(error.remediation).toContain("cypress.config.ts");
   });
 
   it("surfaces a malformed package.json as a structured error", async () => {
@@ -344,8 +413,8 @@ describe("invalid and missing information", () => {
 
     const error = await failure(discoverProject({ cwd: root }));
 
-    // Reported before the framework check, because a manifest that will not parse blocks everything behind it.
-    // Asking the reader to create a configuration file first would only postpone the real error.
+    // Reported before the configuration is judged, because a manifest that will not parse blocks everything behind
+    // it. Asking the reader to create a configuration file first would only postpone the real error.
     expect(error.code).toBe(ErrorCode.filesystemInvalidJson);
     expect(error.remediation).toBeDefined();
   });
@@ -371,10 +440,25 @@ describe("edges and boundaries", () => {
 
     const context = await discoverProject({ cwd: root });
 
-    // Metadata absent, project still described. A partially described package is worse than an absent one,
-    // because downstream code would print `undefined`.
+    // Metadata absent, project still described. A partially described package is worse than an absent one, because
+    // downstream code would print `undefined`.
     expect("packageMetadata" in context).toBe(false);
     expect(context.name).toContain("qat-project-");
+  });
+
+  it("accepts a project part-way through migrating its configuration", async () => {
+    const root = await makeProject(
+      cypressFiles({
+        "cypress.config.ts": "export default {};",
+        "cypress.json": "{}",
+      }),
+    );
+
+    // Both formats present. The supported one wins, because the project still works — the stale file is evidence
+    // for a diagnostic, not a reason to refuse.
+    await expect(discoverProject({ cwd: root })).resolves.toMatchObject({
+      paths: { configFile: "cypress.config.ts" },
+    });
   });
 
   it("finds an installation hoisted to a workspace root", async () => {
@@ -414,8 +498,8 @@ describe("edges and boundaries", () => {
     const error = await failure(discoverProject({ cwd: root }));
 
     // Running at a workspace root is a mistake that otherwise reads like a missing project. Naming the patterns
-    // turns it into a one-line fix without descending into them — expanding globs would mean choosing a package
-    // on the reader's behalf.
+    // turns it into a one-line fix without descending into them — expanding globs would mean choosing a package on
+    // the reader's behalf.
     expect(error.code).toBe(ErrorCode.frameworkNotDetected);
     expect(error.remediation).toContain("workspace root");
     expect(error.remediation).toContain("packages/*");

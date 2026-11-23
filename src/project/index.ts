@@ -34,4 +34,15 @@ export {
   type ProjectManifest,
 } from "./package-discovery/index.js";
 
+export {
+  detectCypress,
+  DetectionVerdict,
+  LEGACY_CONFIG_FILES,
+  type CypressDetection,
+  type CypressLayout,
+  type DetectedProject,
+  type DetectionOptions,
+  type UndetectedProject,
+} from "./cypress-detection/index.js";
+
 export { resolveWorkingDirectory } from "./working-directory.js";
