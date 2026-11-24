@@ -16,15 +16,19 @@
  * `isFile` answers a yes-or-no question, and this module has to answer a question with four answers. A permission failure
  * and an absent file are both `false` to it, and reporting a permission problem as "there is no configuration" is how a
  * reader ends up checking a file that exists.
+ *
+ * The distinction is kept by asking `isMissingPathError` *before* translating anything: that helper answers "is there
+ * nothing at this path", and everything it declines is passed to the shared translator, so a permission problem arrives
+ * with its errno, a remedy and the same wording every other filesystem failure in this codebase carries.
  */
 import { stat } from "node:fs/promises";
 import { join } from "node:path";
 
+import { ErrorCode, InvalidArgumentError } from "../../core/errors/index.js";
 import {
-  ErrorCode,
-  FilesystemError,
-  InvalidArgumentError,
-} from "../../core/errors/index.js";
+  isMissingPathError,
+  translateFilesystemError,
+} from "../../core/filesystem/index.js";
 import { CONFIG_FILE_NAME } from "../contracts.js";
 
 import {
@@ -69,28 +73,14 @@ async function inspect(path: string): Promise<Inspection> {
     return { kind: "other" };
   } catch (error) {
     // `ENOTDIR` as well as `ENOENT`: a path whose parent is a file does not contain a configuration either, and it is the
-    // same absence from the reader's point of view.
-    if (isMissing(error)) return { kind: "absent" };
+    // same absence from the reader's point of view. The predicate decides that; this module does not keep its own opinion
+    // about which errno means "nothing there".
+    if (isMissingPathError(error)) return { kind: "absent" };
 
-    throw new FilesystemError(
-      ErrorCode.filesystemFailure,
-      `Could not inspect ${path}.`,
-      {
-        context: { path },
-        remediation:
-          "Check permissions on the project directory and try again.",
-      },
-    );
+    // Everything else is passed to the one translator, so this failure carries the errno in its context and the remedy
+    // that belongs to it — a permission problem and a symlink loop need different sentences, and neither is `EACCES`.
+    throw translateFilesystemError(error, "inspect", path);
   }
-}
-
-function isMissing(error: unknown): boolean {
-  if (typeof error !== "object" || error === null || !("code" in error))
-    return false;
-
-  const { code } = error as { readonly code?: unknown };
-
-  return code === "ENOENT" || code === "ENOTDIR";
 }
 
 /**
