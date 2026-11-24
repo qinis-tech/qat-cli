@@ -11,7 +11,7 @@
  * | `not-found` | Discovers again — the file moved between discovery and loading |
  * | `empty` | Writes something, or restores the file from version control |
  * | `malformed` | Fixes the syntax, at the line and column carried |
- * | `invalid` | Fixes the fields named by the issues |
+ * | `invalid` | Fixes the fields named by the diagnostics |
  * | `too-large` | Checks that the path is the file they meant |
  *
  * Six sentences rather than one because they send the reader to six places. Collapsing them — the obvious collapse being
@@ -26,8 +26,18 @@
  * comment and incorrectly by the first person in a hurry — and "incorrectly" here means a run whose settings nobody
  * chose, indistinguishable from a correct one. The type is the rule rather than a note about it.
  * See ADR-0026.
+ *
+ * ## What this file does not define
+ *
+ * The shape of a field's problem belongs to the validation service, which owns the codes and authors the sentences. This
+ * file names it and imports it, so a caller reading a load result sees one diagnostic type rather than a loader-specific
+ * projection that the validator would have to be kept in step with.
+ *
+ * The dependency runs one way — loader, then validation, then schema — and this import is the only edge in it that a
+ * reader might not predict.
  */
 import type { QatConfig } from "../schema/index.js";
+import type { ConfigurationDiagnostic } from "../validation/index.js";
 
 /**
  * How a configuration file was loaded, or why it was not.
@@ -45,7 +55,7 @@ export const ConfigurationLoad = {
   Empty: "empty",
   /** The file exists and is not JSON. Carries where the parser stopped. */
   Malformed: "malformed",
-  /** Valid JSON, but not a configuration. Carries one issue per field the schema refused. */
+  /** Valid JSON, but not a configuration. Carries one diagnostic per problem it has. */
   Invalid: "invalid",
   /** Larger than any configuration should be, which usually means the path is not the file the caller meant. */
   TooLarge: "too-large",
@@ -73,25 +83,6 @@ export interface JsonLocation {
   readonly column: number;
   /** The line the parser stopped on, trimmed and truncated. Empty when that line has no content. */
   readonly excerpt: string;
-}
-
-/**
- * One field's problem, projected away from the validation library.
- *
- * Two fields rather than the schema's own issue type, so every consumer of a load result is free of that dependency —
- * the same reason `zod` is not re-exported from the schema barrel. A renderer needs to say *where* and *what*, and those
- * are the two things here.
- */
-export interface ConfigurationIssue {
-  /**
-   * Dotted path to the field, e.g. `output.reports`.
-   *
-   * Empty when the issue is about the document rather than a field — an unrecognised top-level key has no path to point
-   * at, and the key is named in the message instead. A renderer has to handle that case, so it is stated here rather than
-   * discovered.
-   */
-  readonly path: string;
-  readonly message: string;
 }
 
 export interface LoadedConfiguration {
@@ -128,8 +119,17 @@ export interface MalformedConfiguration {
 export interface InvalidConfiguration {
   readonly kind: typeof ConfigurationLoad.Invalid;
   readonly path: string;
-  /** One per problem, in the schema's order. Empty is impossible: an invalid result with no issues would say nothing. */
-  readonly issues: readonly ConfigurationIssue[];
+  /**
+   * One per problem, in the schema's order.
+   *
+   * Empty is impossible: an invalid result with no diagnostics would say nothing. Each carries a permanent code, a dotted
+   * path and a sentence this project wrote — never the value that failed, because the field could be an environment
+   * variable whose value is a credential.
+   *
+   * At most one, where the document declares a schema version this build does not read: the fields are not examined then,
+   * because a field complaint at another version is a guess. See ADR-0027.
+   */
+  readonly diagnostics: readonly ConfigurationDiagnostic[];
 }
 
 export interface OversizedConfiguration {

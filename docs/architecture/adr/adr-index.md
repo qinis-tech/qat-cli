@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0026](0026-stop-at-an-unsupported-version-rather-than-listing-field-err.md) | Stop at an unsupported version rather than listing field errors | Accepted | 2026-11-25 |
 | [ADR-0025](0025-never-fall-back-to-defaults-for-a-configuration-file-that-ex.md) | Never fall back to defaults for a configuration file that exists | Accepted | 2026-11-24 |
 | [ADR-0024](0024-treat-a-missing-configuration-as-a-result-rather-than-a-fail.md) | Treat a missing configuration as a result rather than a failure | Accepted | 2026-11-24 |
 | [ADR-0023](0023-read-configuration-from-one-file-at-the-project-root.md) | Read configuration from one file at the project root | Accepted | 2026-11-24 |

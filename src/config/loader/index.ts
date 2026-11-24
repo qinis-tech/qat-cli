@@ -32,7 +32,6 @@
  */
 export {
   ConfigurationLoad,
-  type ConfigurationIssue,
   type ConfigurationLoadResult,
   type EmptyConfiguration,
   type InvalidConfiguration,

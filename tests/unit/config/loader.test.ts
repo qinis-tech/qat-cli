@@ -9,6 +9,8 @@ import {
   loadConfiguration,
   parseJsonDocument,
 } from "~/config/loader/index.js";
+import { SUPPORTED_CONFIG_VERSION } from "~/config/schema/index.js";
+import { ConfigurationDiagnosticCode } from "~/config/validation/index.js";
 import {
   isApplicationError,
   type ApplicationError,
@@ -20,6 +22,9 @@ import {
  * The parser cases below need none — they are text in, answer out — which is deliberate: error positions are the easiest
  * thing in this module to get wrong and the slowest to test through a directory. The loader cases use real files because
  * absence, a directory, a BOM and a size bound are properties of a file rather than of a string.
+ *
+ * The invalid cases assert *codes* rather than messages. A message is prose and changes; a code is what a caller keys on
+ * and what a reader quotes, and it is the one thing the validation service adds to what the loader used to report.
  */
 let created: string[] = [];
 
@@ -49,10 +54,14 @@ async function failure(run: Promise<unknown>): Promise<ApplicationError> {
   return caught;
 }
 
-const VALID = JSON.stringify({ version: 1, framework: "cypress" });
+/** The two required fields, at the version this build reads. Built from the constant so a version bump does not break it. */
+const VALID = JSON.stringify({
+  version: SUPPORTED_CONFIG_VERSION,
+  framework: "cypress",
+});
 
 const FULL = JSON.stringify({
-  version: 1,
+  version: SUPPORTED_CONFIG_VERSION,
   framework: "cypress",
   defaultEnvironment: "staging",
   environments: { staging: { API_URL: "https://staging.example.test" } },
@@ -108,7 +117,7 @@ describe("a valid configuration", () => {
   });
 
   it("accepts a file with Windows line endings", async () => {
-    const crlf = '{\r\n  "version": 1,\r\n  "framework": "cypress"\r\n}\r\n';
+    const crlf = `{\r\n  "version": ${String(SUPPORTED_CONFIG_VERSION)},\r\n  "framework": "cypress"\r\n}\r\n`;
 
     await expect(
       loadConfiguration(await makeFile("qat.config.json", crlf)),
@@ -201,7 +210,7 @@ describe("a file that is not JSON", () => {
 });
 
 describe("a file that is JSON but not a configuration", () => {
-  it("reports one issue per field", async () => {
+  it("reports an unsupported version as a single coded diagnostic", async () => {
     const result = await loadConfiguration(
       await makeFile(
         "qat.config.json",
@@ -212,11 +221,41 @@ describe("a file that is JSON but not a configuration", () => {
     expect(result.kind).toBe(ConfigurationLoad.Invalid);
     if (result.kind !== ConfigurationLoad.Invalid) return;
 
-    expect(result.issues.map((issue) => issue.path)).toStrictEqual([
-      "version",
-      "framework",
-    ]);
+    // One diagnostic, not two. The file also names a framework this build does not support, and it is not reported: at
+    // another schema version, a field complaint is a guess about a schema this build has never seen. This is the case
+    // that proves the loader delegates to the validation service — a loader still calling the schema directly would
+    // report both.
+    expect(result.diagnostics).toHaveLength(1);
+    expect(result.diagnostics[0]).toMatchObject({
+      code: ConfigurationDiagnosticCode.UnsupportedVersion,
+      path: "version",
+    });
     expect("config" in result).toBe(false);
+  });
+
+  it("reports each field problem when the version is one it reads", async () => {
+    const result = await loadConfiguration(
+      await makeFile(
+        "qat.config.json",
+        JSON.stringify({
+          version: SUPPORTED_CONFIG_VERSION,
+          framework: "playwright",
+          output: { reports: "/var/reports" },
+        }),
+      ),
+    );
+
+    expect(result.kind).toBe(ConfigurationLoad.Invalid);
+    if (result.kind !== ConfigurationLoad.Invalid) return;
+
+    // Two independent problems, collected in one pass — which is what a reader fixing a file needs. Every diagnostic
+    // carries a code, so a caller branches on the category rather than on the sentence.
+    expect(
+      result.diagnostics.map((diagnostic) => diagnostic.path).sort(),
+    ).toStrictEqual(["framework", "output.reports"]);
+    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+      ConfigurationDiagnosticCode.UnsupportedValue,
+    );
   });
 
   it.each([
@@ -225,13 +264,18 @@ describe("a file that is JSON but not a configuration", () => {
     ["a string", '"hello"'],
     ["a number", "42"],
   ])("rejects %s at the root", async (_case, contents) => {
-    // Valid JSON and not a document. The schema says so with one issue at the root, which is why the loader does not need
-    // its own check.
+    // Valid JSON and not a document. One diagnostic with no path, because there are no fields to point at.
     const result = await loadConfiguration(
       await makeFile("qat.config.json", contents),
     );
 
     expect(result.kind).toBe(ConfigurationLoad.Invalid);
+    if (result.kind !== ConfigurationLoad.Invalid) return;
+
+    expect(result.diagnostics[0]).toMatchObject({
+      code: ConfigurationDiagnosticCode.NotAnObject,
+      path: "",
+    });
   });
 });
 
@@ -253,8 +297,7 @@ describe("something that cannot be read as a file", () => {
 
 describe("boundaries", () => {
   it("loads a file exactly at the size limit", async () => {
-    const padding = " ".repeat(64);
-    const contents = `${VALID}${padding}`;
+    const contents = `${VALID}${" ".repeat(64)}`;
 
     await expect(
       loadConfiguration(await makeFile("qat.config.json", contents), {

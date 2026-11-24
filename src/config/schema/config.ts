@@ -10,12 +10,19 @@
  * ## Two policies, both deliberate
  *
  * **Unknown fields are rejected.** A configuration is written by hand and edited by tooling, so a misspelled key is the
- * most common defect it can have. Ignoring one produces a run that behaves as though the reader had not written it —
- * the worst kind of failure, because nothing says anything is wrong. Rejecting one names the field.
+ * most common defect it can have. Ignoring one produces a run that behaves as though the reader had not written it — the
+ * worst kind of failure, because nothing says anything is wrong. Rejecting one names the field.
  *
  * **The version is required, and is a literal.** A file without a version cannot be distinguished from one written for a
  * version that did not have the field yet, so there is no safe default to apply. One supported version, stated as a
  * literal, means any other value fails at `version` with the number that was found.
+ *
+ * ## No configured value in a message
+ *
+ * The messages this file produces name fields and rules, never the value that failed. That is not fastidiousness: a
+ * schema message reaches a terminal, a log line and a pasted issue, and `defaultEnvironment` is a field a reader could
+ * have put anything into. Where a value is worth quoting — a profile name, which this file defines the shape of — it is
+ * quoted through `profileText`, which quotes only what it can recognise.
  *
  * ## What is not here
  *
@@ -54,6 +61,35 @@ const OUTPUT_DEFAULTS = {
   evidence: "results/evidence",
 } as const;
 
+/**
+ * What a profile name looks like, for deciding whether one is safe to quote.
+ *
+ * Mirrors `environmentName`'s rule — the same pattern and the same length bound — because this is not a second definition
+ * of a name, it is a test for whether a string is one. A value that fails it is not a name, and is described rather than
+ * printed.
+ */
+const PROFILE_NAME = /^[a-z][a-z0-9-]*$/;
+const PROFILE_NAME_MAX = 32;
+
+/**
+ * A profile name as it should appear in a sentence.
+ *
+ * Quoted when it is provably a name, and replaced with the words `a profile` when it is not.
+ *
+ * ## Why the conditional
+ *
+ * `defaultEnvironment` takes a name, so a valid value is safe to echo and worth echoing — it is the whole difference
+ * between "some profile is not declared" and a one-line fix. An invalid value, though, is a string the reader put in the
+ * wrong field, and it could be a token copied from a secret store. A message is the last place that should surface one.
+ *
+ * The same reasoning as the version field: echo what is provably an identifier or a number, describe anything else.
+ */
+function profileText(name: string): string {
+  return name.length <= PROFILE_NAME_MAX && PROFILE_NAME.test(name)
+    ? `"${name}"`
+    : "a profile";
+}
+
 /** Where a run's output goes, relative to the project root. */
 const outputSchema = z
   .object({
@@ -83,17 +119,17 @@ const cypressSchema = z
  *
  * `JSON.parse` keeps `__proto__` as an own enumerable key, and a record's key schema would reject it. But a record builds
  * its result by assigning each key, and assigning `__proto__` on an ordinary object *changes that object's prototype*
- * rather than adding a property — so the key is gone before a key schema could refuse it, and the parse succeeds with
- * the profile silently missing. `constructor` is caught by the key refinement; `__proto__` was not, and that asymmetry is
- * how this got through its first test run.
+ * rather than adding a property — so the key is gone before a key schema could refuse it, and the parse succeeds with the
+ * profile silently missing. `constructor` is caught by the key refinement; `__proto__` was not, and that asymmetry is how
+ * this got through its first test run.
  *
  * Walking the input is the only place the key still exists.
  *
  * ## Why it stops at the first one
  *
  * This is a refusal, not a diagnostic. A document that is trying to change a prototype is not one whose remaining field
- * errors are worth collecting, and the pipeline below short-circuits once a stage fails — which is the reason the
- * "reports every independent failure" property holds for everything except this case.
+ * errors are worth collecting, and the pipeline below short-circuits once a stage fails — which is the reason the "reports
+ * every independent failure" property holds for everything except this case.
  */
 function refuseReservedKeys(value: unknown, ctx: z.RefinementCtx): void {
   if (typeof value !== "object" || value === null) return;
@@ -142,8 +178,8 @@ function refuseReservedKeys(value: unknown, ctx: z.RefinementCtx): void {
  * The configuration file's fields.
  *
  * Two required and four optional. Required means the tool cannot proceed sensibly without it; optional means its absence
- * is a legitimate state rather than a gap — `environments` absent is a project with no named profiles, not a
- * configuration somebody forgot to finish.
+ * is a legitimate state rather than a gap — `environments` absent is a project with no named profiles, not a configuration
+ * somebody forgot to finish.
  *
  * Kept separate from the cross-field rule below because `.shape` is lost once a refinement is attached, and the field list
  * exported at the bottom of this file is derived from it. One schema with two views, rather than a copy of the fields for
@@ -202,7 +238,9 @@ const objectSchema = rootSchema.superRefine((config, ctx) => {
   ctx.addIssue({
     code: "custom",
     path: ["defaultEnvironment"],
-    message: `names "${selected}", which is not declared in environments. Declare it, or remove the default.`,
+    // Quoted only when it is a name this schema defines. Anything else could be a token pasted into the wrong field, and a
+    // schema message reaches a terminal, a log line and a pasted issue — the one place a value must not appear.
+    message: `names ${profileText(selected)}, which is not declared in environments. Declare it, or remove the default.`,
   });
 });
 
