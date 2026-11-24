@@ -1,11 +1,11 @@
 # Configuration validation
 
-|                 |                                                                                                                                                                                                                                                                                                                      |
-| --------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Status**      | Normative                                                                                                                                                                                                                                                                                                            |
-| **Module**      | `src/config/validation/`                                                                                                                                                                                                                                                                                             |
-| **Entry point** | `validateConfiguration(value)`                                                                                                                                                                                                                                                                                       |
-| **Companion**   | [configuration-schema.md](configuration-schema.md), [configuration-loading.md](configuration-loading.md), [configuration-format.md](configuration-format.md), [ADR-0022](./adr/0022-reject-unknown-configuration-fields.md), [ADR-0027](adr/0027-stop-at-an-unsupported-version-rather-than-listing-field-errors.md) |
+|                 |                                                                                                                                                                                                                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Status**      | Normative                                                                                                                                                                                                                                                                                                           |
+| **Module**      | `src/config/validation/`                                                                                                                                                                                                                                                                                            |
+| **Entry point** | `validateConfiguration(value)`                                                                                                                                                                                                                                                                                      |
+| **Companion**   | [configuration-schema.md](configuration-schema.md), [configuration-loading.md](configuration-loading.md), [configuration-format.md](configuration-format.md), [ADR-0022](./adr/0022-reject-unknown-configuration-fields.md), [ADR-0026](./adr/0026-stop-at-an-unsupported-version-rather-than-listing-field-err.md) |
 
 Judging a parsed configuration document, and saying what is wrong with it in terms a caller can branch on.
 
@@ -57,7 +57,7 @@ The reasoning is that every field complaint after an unmatched version is a **gu
 
 The declared version is echoed only when it is a number. A string in that position is a defect and could be anything — including the kind of value that must never be printed — so it is described rather than quoted. A number is a number.
 
-See [ADR-0027](adr/0027-stop-at-an-unsupported-version-rather-than-listing-field-errors.md).
+See [ADR-0026](./adr/0026-stop-at-an-unsupported-version-rather-than-listing-field-err.md).
 
 ## 4. What a diagnostic may contain
 
