@@ -1,4 +1,4 @@
-# ADR-0024: Read configuration from one file at the project root
+# ADR-0023: Read configuration from one file at the project root
 
 Date: 2026-11-24
 
