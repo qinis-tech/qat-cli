@@ -1,10 +1,10 @@
 # Manual end-to-end testing
 
-|                |                                                                                                                                                               |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Status**     | Normative                                                                                                                                                     |
-| **Applies to** | The compiled binary, `dist/cli/index.js`                                                                                                                      |
-| **Companion**  | [cli-output.md](../development/cli-output.md), [cli-commands.md](../development/cli-commands.md), [testing-standards.md](../development/testing-standards.md) |
+|                |                                                                                                                                                                                                                   |
+| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Status**     | Normative                                                                                                                                                                                                         |
+| **Applies to** | The compiled binary, `dist/cli/index.js`                                                                                                                                                                          |
+| **Companion**  | [testing-architecture.md](testing-architecture.md), [cli-output.md](../development/cli-output.md), [cli-commands.md](../development/cli-commands.md), [testing-standards.md](../development/testing-standards.md) |
 
 What a human checks that the automated suite cannot, and how to check it the same way twice.
 
@@ -29,14 +29,27 @@ mangles before the tool ever sees it.
 | ------------------------------------------------------ | ------------------------------------------------------------------------------- |
 | A release candidate                                    | The whole procedure, on at least Windows and Linux                              |
 | Any change to the report's wording, labels or ordering | Sections 4.3 to 4.6 — the reading checks                                        |
-| Any change to the exit-status mapping                  | Sections 4.3 and 4.7                                                            |
+| Any change to the exit-status mapping                  | Sections 4.5 and 4.7                                                            |
 | A CI platform failure you cannot reproduce             | The platform section for that OS                                                |
-| Before quoting the README's example output             | Section 4.5, because a README example that no longer matches is worse than none |
+| Before quoting the README's example output             | Section 4.3, because a README example that no longer matches is worse than none |
 
-Not on every pull request. The suite already runs there, and a manual checklist applied to every diff stops being
-applied to any.
+Not on every pull request. The suite already runs there, and a manual checklist applied to every diff stops being applied
+to any.
 
 ## 3. Preconditions
+
+### 3.1 The environment the project claims
+
+```bash
+node --version    # v24 or later
+npm --version     # 10 or later
+```
+
+`npm ci` **warns** rather than fails when the runtime is outside `engines`, and a warning is easy to scroll past. A pass
+on an unsupported Node proves nothing about a supported one: the build may succeed and behave subtly differently, and a
+finding from it cannot be reproduced where it matters. If `node --version` is below 24, fix that before going further.
+
+### 3.2 Install
 
 ```bash
 npm ci
@@ -44,13 +57,53 @@ npm run build
 node dist/cli/index.js --version
 ```
 
-The last command must print the version in `package.json`. If it prints a stack, stop: nothing below is meaningful,
-and the failure is a build rather than a behaviour.
+The last command must print the version in `package.json`. If it prints a stack, stop: nothing below is meaningful, and
+the failure is a build rather than a behaviour.
 
-You need two things besides the repository:
+**`npm ci` once per clone**, or after a lockfile change. For a pass against an existing checkout — the usual case, since
+most passes follow a change to the report — `npm run build` is enough. A reinstall costs a minute and can fail for
+reasons that have nothing to do with the tool.
 
-**A scratch project.** Detection reads manifests and directory names, so a fabricated tree is enough and costs nothing
-to recreate:
+### 3.3 When the install fails on the hooks
+
+```
+sh: 1: husky: Permission denied
+npm error code 127
+```
+
+This is not a half-installed tree. `npm ci` installs the dependencies and _then_ runs `prepare`, so the failure means
+**everything but the git hooks** is in place — which is why `npm run build` still works immediately afterwards. Do not
+re-run the install.
+
+Diagnose:
+
+```bash
+ls -l node_modules/.bin/husky
+./node_modules/.bin/husky --version
+```
+
+`-rw-r--r--` means the executable bit was lost on the way to disk:
+
+```bash
+chmod +x node_modules/.bin/husky && npm run prepare
+```
+
+Executable and still refused means the filesystem is mounted `noexec`:
+
+```bash
+findmnt -no OPTIONS --target "$(df --output=target node_modules | tail -1)"
+```
+
+If that prints `noexec`, hooks cannot run from this checkout and the correct response is to accept it: hooks are a
+courtesy in this project, and `npm run verify` covers what they would have run. Record it in the pass notes, because it
+is the first thing to suspect if a later command behaves oddly.
+
+### 3.4 The projects to test against
+
+Two things besides the repository.
+
+**A scratch project.** Detection reads manifests and directory names, so a fabricated tree is enough and costs nothing to
+recreate:
 
 ```bash
 mkdir -p /tmp/qat-manual/{cypress/e2e,node_modules/cypress}
@@ -60,20 +113,32 @@ printf 'export default {};\n' > cypress.config.ts
 printf '{"name":"cypress","version":"13.15.0"}' > node_modules/cypress/package.json
 ```
 
-**A real Cypress project**, if you have one. It is worth one pass against a project somebody actually maintains,
-because a fabricated tree cannot surprise you. Nothing in QAT should invoke Cypress, so the check is cheap: it either
-returns in under a second or it is doing something it promised not to.
+**A real Cypress project**, if you have one. A fabricated tree cannot surprise you, and the surpares are the point.
+Nothing in QAT should invoke Cypress, so the check is cheap: it either returns in under a second or it is doing something
+it promised not to.
 
-Record: operating system, Node version, version under test, and the terminal (`cmd.exe`, Windows Terminal, iTerm, GNOME
-Terminal). A rendering defect is not reproducible without the last one.
+### 3.5 What to record
+
+Operating system and version, Node version, package version under test, and the terminal — `cmd.exe`, Windows Terminal,
+Git Bash, iTerm, GNOME Terminal. A rendering defect is not reproducible without the last one, and a rendering defect is
+the kind only this procedure finds.
 
 ## 4. The procedure
+
+Set one variable from the repository root, then run every command below from wherever the step says:
+
+```bash
+export QAT="$PWD/dist/cli/index.js"
+```
+
+Absolute, so it survives the `cd` into a scratch project, and quoted at every use so a checkout path containing a space
+works. `$OLDPWD` is the obvious shortcut and breaks the second time a step changes directory.
 
 ### 4.1 Startup and help
 
 ```bash
-node dist/cli/index.js --help
-node dist/cli/index.js doctor --help
+node "$QAT" --help
+node "$QAT" doctor --help
 ```
 
 **Expect:** the command list with `doctor` and its summary; then usage, the `[directory]` argument, and an `Examples:`
@@ -85,9 +150,9 @@ that lists names without saying what they do is help that sends the reader to `m
 ### 4.2 Version and unknown input
 
 ```bash
-node dist/cli/index.js --version
-node dist/cli/index.js docter
-node dist/cli/index.js --nope
+node "$QAT" --version
+node "$QAT" docter
+node "$QAT" --nope
 ```
 
 **Expect:** the version on its own line. Then, for `docter`, `QAT1001: Unknown command 'docter'` with
@@ -101,8 +166,7 @@ actually make — a transposition, a missing letter — not only a prefix.
 
 ```bash
 cd /tmp/qat-manual
-node "$OLDPWD/dist/cli/index.js" doctor
-echo "exit=$?"
+node "$QAT" doctor ; echo "exit=$?"
 ```
 
 **Expect** nine lines — `project`, `root`, `package`, `framework`, `declared`, `config`, `detection`, `compatibility`,
@@ -113,11 +177,11 @@ and takes a single space. A column that steps in by one is the kind of defect no
 
 ### 4.4 A project with warnings
 
-Delete the manifest and run the same command:
+Delete the manifest, run, restore:
 
 ```bash
 mv package.json package.json.bak
-node "$OLDPWD/dist/cli/index.js" doctor ; echo "exit=$?"
+node "$QAT" doctor ; echo "exit=$?"
 mv package.json.bak package.json
 ```
 
@@ -128,10 +192,12 @@ wrong — and the exit status is deliberately `0`, so the wording is the only th
 
 ### 4.5 A project that is blocked
 
+Move the configuration where Cypress will not load it, run, restore:
+
 ```bash
-mkdir -p cypress && printf 'export default {};\n' > cypress/cypress.config.ts
-rm cypress.config.ts
-node "$OLDPWD/dist/cli/index.js" doctor ; echo "exit=$?"
+mv cypress.config.ts cypress/cypress.config.ts
+node "$QAT" doctor ; echo "exit=$?"
+mv cypress/cypress.config.ts cypress.config.ts
 ```
 
 **Expect** `result     blocked`, a `QAT-V001 error` block naming `cypress/cypress.config.ts`, an `at:` line, a `fix:`
@@ -144,45 +210,53 @@ not work is worse than no remedy, because it has been trusted.
 ### 4.6 The structured document
 
 ```bash
-node "$OLDPWD/dist/cli/index.js" doctor --json | jq .assessment.diagnosis.identity
-node "$OLDPWD/dist/cli/index.js" doctor --json > /tmp/out.json 2>/tmp/err.txt
+node "$QAT" doctor --json | jq .assessment.diagnosis.identity
+node "$QAT" doctor --json > /tmp/out.json 2>/tmp/err.txt
 wc -c /tmp/err.txt
 ```
 
 **Expect** one JSON document per invocation, parseable by `jq` with no preprocessing, and an empty `/tmp/err.txt`.
 
-**Read for:** whether the document is the thing you would actually consume. Pipe it through `jq '.assessment.gates'`
-and ask whether the shape answers a question you have. If you have to join two fields to learn whether the project can
-run, the shape is wrong.
+**Read for:** whether the document is the thing you would actually consume. Pipe it through `jq '.assessment.gates'` and
+ask whether the shape answers a question you have. If you have to join two fields to learn whether the project can run,
+the shape is wrong.
 
 ### 4.7 Exit statuses, as a pipeline sees them
 
-```bash
-node "$OLDPWD/dist/cli/index.js" doctor >/dev/null 2>&1 ; echo "ready-ish: $?"
-node "$OLDPWD/dist/cli/index.js" doctor /nonexistent >/dev/null 2>&1 ; echo "bad argument: $?"
-```
-
-**Expect** `2` for both, and — importantly — `1` for neither. `1` is reserved for a failing test, and a tool that
-spends it on a missing directory makes a pipeline unable to tell a bad change from a bad command.
-
-### 4.8 Nothing was modified
+With the scratch project in its healthy state from 4.5, and then against a path that does not exist:
 
 ```bash
-find /tmp/qat-manual -newer package.json -type f | sort
+node "$QAT" doctor /tmp/qat-manual >/dev/null 2>&1 ; echo "healthy: $?"
+node "$QAT" doctor /nonexistent >/dev/null 2>&1 ; echo "bad argument: $?"
 ```
 
-**Expect:** no output. A detection command that repaired something on the way past would be a different command with a
-different name, and the repair happens on whatever machine runs it.
+**Expect** `0` then `2`, and — importantly — `1` for neither. `1` is reserved for a failing test, and a tool that spends
+it on a missing directory makes a pipeline unable to tell a bad change from a bad command.
+
+### 4.8 Nothing new appeared
+
+```bash
+ls -A /tmp/qat-manual
+node "$QAT" doctor >/dev/null
+ls -A /tmp/qat-manual
+```
+
+**Expect** two identical listings. A detection command that wrote a cache, a results directory or a repaired
+configuration on the way past would be a different command with a different name, and the write happens on whatever
+machine runs it.
+
+This catches an added entry, not an edit in place. The automated suite asserts both, byte for byte, including
+modification times — so if this step passes and you suspect a write anyway, that is the assertion to run.
 
 ### 4.9 No terminal control in the output
 
 ```bash
-node "$OLDPWD/dist/cli/index.js" doctor | cat -v
+node "$QAT" doctor | cat -v
 ```
 
-**Expect** no `^[` sequences anywhere. Paths and messages can carry text from a file or a subprocess, and a sequence
-that clears the screen can make a reader believe output came from this tool. `cat -v` renders an escape as `^[`, so a
-clean run has none.
+**Expect** no `^[` sequences anywhere. Paths and messages can carry text from a file or a subprocess, and a sequence that
+clears the screen can make a reader believe output came from this tool. `cat -v` renders an escape as `^[`, so a clean
+run has none.
 
 ## 5. Platform checks
 
@@ -204,9 +278,9 @@ clean run has none.
 
 ### macOS
 
-Expected to work and not exercised in CI, so this is where a manual pass has the most to find. The one known
-platform difference: a process started in `/var/folders/…` reports its working directory as `/private/var/folders/…`, so
-the `root` line may differ from the path you typed when the directory came from the process rather than an argument.
+Expected to work and not exercised in CI, so this is where a manual pass has the most to find. The one known platform
+difference: a process started in `/var/folders/…` reports its working directory as `/private/var/folders/…`, so the `root`
+line may differ from the path you typed when the directory came from the process rather than an argument.
 
 ## 6. Known behaviour that is not a defect
 
@@ -241,7 +315,7 @@ Notes: the remediation worked as written; the report cleared.
 A `PASS` with no output is a claim, not evidence — the same argument this whole tool makes about a green build.
 
 Never paste a real customer path, a repository name you do not own, or a project directory from a machine that is not
-yours. Fabricate the fixture instead; section 3 exists for exactly that.
+yours. Fabricate the fixture instead; section 3.4 exists for exactly that.
 
 ## 8. Raising a defect
 
@@ -249,27 +323,35 @@ A manual finding is worth filing when it meets one of these:
 
 - **The output says something untrue.** A remedy that does not work, a path that is not the one used, a status that
   disagrees with the exit code.
-- **The output says something unreadable.** Not "I would have phrased it differently" — a sentence you cannot act on,
-  or a block you cannot scan.
+- **The output says something unreadable.** Not "I would have phrased it differently" — a sentence you cannot act on, or a
+  block you cannot scan.
 - **A platform renders it wrong.** Include the terminal, the code page, and a screenshot if the problem is visual.
 - **It contradicts a document.** `docs/` is normative; a behavioural difference between it and the binary is a defect in
   whichever is newer.
 
-A finding is worth _not_ filing when it is in section 6, or when it is a preference about wording with no effect on what
-a reader would do next. Those belong in a discussion, and filing them as defects trains people to ignore defects.
+A finding is worth _not_ filing when it is in section 6, or when it is a preference about wording with no effect on what a
+reader would do next. Those belong in a discussion, and filing them as defects trains people to ignore defects.
 
 ## 9. Things that will bite
 
 **A manual pass run against a stale build tests nothing.** `npm run build` before every pass; the binary is not the source
 and nothing warns you when the two disagree.
 
+**An install failure that leaves a working build.** `npm ci` runs `prepare` _after_ installing dependencies, so a failure
+there exits non-zero with a tree that is entirely usable except for the git hooks. The trap works both ways: an `npm error
+code 127` looks catastrophic and is not, and a successful `npm run build` afterwards looks like proof the install
+succeeded when one step of it did not. Read the exit code and the last script name, not the presence of a working binary.
+
+**`engines` is a warning, not a gate.** Node 20 satisfies `npm ci` and produces a warning nobody reads, so a pass can run
+on a runtime the project does not support and look green. Section 3.1 exists because that happened.
+
 **A fabricated project can be too clean.** It has no lockfile, no workspace, no unusual directory names, and no history.
 That is why one pass against a real project matters — it is the only check that sees the shapes the fixtures did not
 imagine.
 
 **A rendering defect is invisible in a captured string.** The suite compares arrays of strings; you are comparing what a
-terminal drew. If the output looks wrong but the assertions pass, the defect is real and belongs in the presenter — not
-in the test.
+terminal drew. If the output looks wrong but the assertions pass, the defect is real and belongs in the presenter — not in
+the test.
 
 **Section 6 grows.** Every entry is a deliberate decision somebody will be tempted to file again. When you add one, say
 what the reason is and where it is recorded, or the next reader will assume it was an oversight and "fix" it.
