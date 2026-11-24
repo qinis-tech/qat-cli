@@ -172,7 +172,10 @@ describe("the loaded document", () => {
 
     // Exactly two own keys. A marker that was enumerable would appear here; one that serialised would reach every log
     // line, snapshot and `--json` document.
-    expect(Object.keys(result.config).sort()).toEqual(["document", "source"]);
+    expect(Object.keys(result.config).sort()).toStrictEqual([
+      "document",
+      "source",
+    ]);
     expect(JSON.stringify(result)).not.toContain("qat.configuration.loaded");
   });
 

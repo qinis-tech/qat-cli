@@ -417,7 +417,7 @@ describe("side effects on disk", () => {
 
     // The lazy-creation policy, asserted rather than assumed: a project that has been inspected but never run contains
     // exactly one file. Empty output directories are repository noise and a misleading signal.
-    expect((await readdir(root)).sort()).toEqual(["qat.config.json"]);
+    expect((await readdir(root)).sort()).toStrictEqual(["qat.config.json"]);
     expect(outputDirectories(resolved)).toStrictEqual([
       resolved.paths.reportsDirectory.absolute,
       resolved.paths.evidenceDirectory.absolute,
@@ -447,7 +447,7 @@ describe("side effects on disk", () => {
     const topLevel = await readdir(root);
     expect(topLevel).toContain("qat.config.json");
     expect(topLevel).toContain(basename(dirname(reports)));
-    expect(await readdir(dirname(reports))).toEqual(["reports"]);
+    expect(await readdir(dirname(reports))).toStrictEqual(["reports"]);
     await expect(stat(evidence)).rejects.toThrow();
   });
 });

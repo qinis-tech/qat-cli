@@ -18,7 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
-| [ADR-0027](0027-apply-defaults-only-to-omitted-fields-and-resolve-paths-agai.md) | Apply defaults only to omitted fields and resolve paths against the project root | Proposed | — |
+| [ADR-0027](0027-apply-defaults-only-to-omitted-fields-and-resolve-paths-agai.md) | Apply defaults only to omitted fields and resolve paths against the project root | Proposed | 2026-11-24 |
 | [ADR-0026](0026-stop-at-an-unsupported-version-rather-than-listing-field-err.md) | Stop at an unsupported version rather than listing field errors | Accepted | 2026-11-25 |
 | [ADR-0025](0025-never-fall-back-to-defaults-for-a-configuration-file-that-ex.md) | Never fall back to defaults for a configuration file that exists | Accepted | 2026-11-24 |
 | [ADR-0024](0024-treat-a-missing-configuration-as-a-result-rather-than-a-fail.md) | Treat a missing configuration as a result rather than a failure | Accepted | 2026-11-24 |

@@ -42,6 +42,26 @@ function readDotted(source: unknown, path: string): unknown {
 }
 
 /**
+ * Canonicalise one markdown table row for comparison.
+ *
+ * Padding is not the claim. Prettier aligns table cells, so every row of a formatted document carries different
+ * whitespace from the generator's single-space form — and asserting on that whitespace would turn this test into a test
+ * of the formatter, which would fail on every `prettier --write` and pass on every genuine drift that happened to keep
+ * its spacing.
+ *
+ * What must agree is cell content: the field, its rule, its default and its rationale.
+ */
+function canonicalRow(line: string): string {
+  return line
+    .split("|")
+    .map((cell) => cell.trim())
+    .join("|");
+}
+
+/** A separator row carries alignment, not content: `| --- |` and `| ---: |` make the same claim. */
+const SEPARATOR = /^\|[\s:|-]+\|$/u;
+
+/**
  * Narrow to an object, or fail with a message that names what was wrong.
  *
  * The frozen-table tests need an `object` for `Reflect.set`, and the values they test are reached through `readDotted`,
@@ -119,7 +139,7 @@ describe("the defaults the resolution stage applies", () => {
   it("fills no more than it must", () => {
     // Only the environment map and the output block. Anything else here is a field the schema either requires or
     // refuses to default.
-    expect(Object.keys(CONFIGURATION_DEFAULTS).sort()).toEqual([
+    expect(Object.keys(CONFIGURATION_DEFAULTS).sort()).toStrictEqual([
       "environments",
       "output",
     ]);
@@ -163,14 +183,14 @@ describe("the documented catalogue", () => {
       (field) => !catalogued.has(field),
     );
 
-    expect(undocumented).toEqual([]);
+    expect(undocumented).toStrictEqual([]);
   });
 
   it("documents no field the schema does not declare", () => {
     const declared = new Set(leafFieldPaths);
     const invented = [...catalogued].filter((field) => !declared.has(field));
 
-    expect(invented).toEqual([]);
+    expect(invented).toStrictEqual([]);
   });
 
   it("has exactly one entry per field", () => {
@@ -186,7 +206,7 @@ describe("the documented catalogue", () => {
           plain(descriptor.value),
     ).map((descriptor) => descriptor.field);
 
-    expect(disagreements).toEqual([]);
+    expect(disagreements).toStrictEqual([]);
   });
 
   it("states no value for an entry with no default", () => {
@@ -195,7 +215,7 @@ describe("the documented catalogue", () => {
         descriptor.rule !== "default" && descriptor.value !== undefined,
     ).map((descriptor) => descriptor.field);
 
-    expect(carrying).toEqual([]);
+    expect(carrying).toStrictEqual([]);
   });
 
   it("refuses a default for the required fields, and says so", () => {
@@ -206,7 +226,7 @@ describe("the documented catalogue", () => {
           descriptor.rationale.trim().length === 0),
     ).map((descriptor) => descriptor.field);
 
-    expect(required).toEqual([]);
+    expect(required).toStrictEqual([]);
   });
 
   it("derives the default environment rather than fixing it", () => {
@@ -228,7 +248,7 @@ describe("the documented catalogue", () => {
         descriptor.rationale.includes("\n"),
     ).map((descriptor) => descriptor.field);
 
-    expect(unexplained).toEqual([]);
+    expect(unexplained).toStrictEqual([]);
   });
 
   it("publishes the conventional environment name the derivation prefers", () => {
@@ -297,7 +317,7 @@ describe("the defaults provider", () => {
   it("exposes nothing else", () => {
     // No override parameter, no profile selector, no test seam. Configuration surface added for the benefit of tests
     // ships without a user.
-    expect(Object.keys(createDefaultsProvider()).sort()).toEqual([
+    expect(Object.keys(createDefaultsProvider()).sort()).toStrictEqual([
       "catalogue",
       "defaults",
     ]);
@@ -330,7 +350,7 @@ describe("the rendered defaults table", () => {
       .split("\n")
       .filter((line) => line.split("|").length !== 6);
 
-    expect(irregular).toEqual([]);
+    expect(irregular).toStrictEqual([]);
   });
 
   it("is stable across calls", () => {
@@ -340,13 +360,25 @@ describe("the rendered defaults table", () => {
   it("appears in the architecture document", async () => {
     // The published table is generated from the same source the runtime reads, so the only thing left to check is that
     // somebody pasted the current output into the document. Rows are asserted individually rather than as one block, so
-    // the document may keep prose around them — and a missing row is named.
+    // the document may keep prose around them — and a missing row is named, in canonical form, so the difference a reader
+    // sees is the one that matters.
     const document = await readDefaultsDocument();
+
+    const published = new Set(
+      document
+        .split("\n")
+        .filter(
+          (line) => line.trim().startsWith("|") && !SEPARATOR.test(line.trim()),
+        )
+        .map(canonicalRow),
+    );
 
     const missing = defaultsAsMarkdown()
       .split("\n")
-      .filter((line) => !line.startsWith("| ---") && !document.includes(line));
+      .filter((line) => !SEPARATOR.test(line))
+      .map(canonicalRow)
+      .filter((row) => !published.has(row));
 
-    expect(missing).toEqual([]);
+    expect(missing).toStrictEqual([]);
   });
 });
