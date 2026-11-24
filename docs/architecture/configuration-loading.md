@@ -83,7 +83,7 @@ the other five carry a reason and nothing else, so a caller cannot read a defaul
 
 This is not the same as defaults being applied. A file that is valid JSON _and_ valid against the schema gets defaults for
 the fields it omits — that is the format working as documented. The rule is about a file that cannot be read at all: it
-produces a failure, not a run whose settings nobody chose. See [ADR-0026](adr/0026-never-fall-back-to-defaults-for-a-configuration-file-that-exists.md).
+produces a failure, not a run whose settings nobody chose. See [ADR-0025](./adr/0025-never-fall-back-to-defaults-for-a-configuration-file-that-ex.md).
 
 ## 7. Where a parse error is
 
