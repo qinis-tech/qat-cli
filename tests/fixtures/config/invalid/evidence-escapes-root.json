@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "framework": "cypress",
+  "output": {
+    "evidence": "../shared/evidence"
+  }
+}

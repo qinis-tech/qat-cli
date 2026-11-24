@@ -153,5 +153,5 @@ ticked.
 
 ---
 
-<sub>Reviewer requirements are in <a href="../blob/main/CONTRIBUTING.md">CONTRIBUTING.md</a> §6.
+<sub>Reviewer requirements are in <a href="../CONTRIBUTING.md">CONTRIBUTING.md</a> §6.
 Merge strategy is squash-only; this title becomes the commit on <code>main</code>.</sub>

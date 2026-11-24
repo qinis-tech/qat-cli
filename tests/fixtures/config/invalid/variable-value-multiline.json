@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "framework": "cypress",
+  "environments": {
+    "smoke": {
+      "API_URL": "https://example.test\nsecond line"
+    }
+  }
+}

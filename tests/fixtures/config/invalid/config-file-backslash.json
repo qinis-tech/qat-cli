@@ -1,0 +1,7 @@
+{
+  "version": 1,
+  "framework": "cypress",
+  "cypress": {
+    "configFile": "config\\cypress.config.ts"
+  }
+}

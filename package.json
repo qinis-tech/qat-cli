@@ -15,7 +15,7 @@
     "qat"
   ],
   "author": "Qinis Tech",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "homepage": "https://github.com/qinis-tech/qat-cli#readme",
   "repository": {
     "type": "git",
@@ -53,7 +53,8 @@
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
     "test:ci": "vitest run --reporter=default --reporter=junit --outputFile.junit=reports/junit.xml",
-    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run adr:check && npm test && npm run test:e2e",
+    "docs:links": "node scripts/check-links.mjs",
+    "verify": "npm run format:check && npm run lint && npm run typecheck && npm run adr:check && npm run docs:links && npm test && npm run test:e2e",
     "verify:package": "node scripts/verify-package.mjs",
     "adr:new": "node scripts/adr.mjs new",
     "adr:index": "node scripts/adr.mjs index",
@@ -83,6 +84,7 @@
     "globals": "^17.14.0",
     "husky": "^9.1.7",
     "lint-staged": "^16.4.0",
+    "markdown-link-check": "^3.13.0",
     "pino-pretty": "^13.2.0",
     "prettier": "^3.10.1",
     "tsx": "^4.23.15",
