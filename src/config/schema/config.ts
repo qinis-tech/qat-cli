@@ -110,7 +110,7 @@ function refuseReservedKeys(value: unknown, ctx: z.RefinementCtx): void {
   for (const name of Object.keys(environments)) {
     if (RESERVED_NAMES.has(name)) {
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["environments", name],
         message: `"${name}" is reserved by the language and cannot be used as a profile name`,
       });
@@ -130,7 +130,7 @@ function refuseReservedKeys(value: unknown, ctx: z.RefinementCtx): void {
       if (!RESERVED_NAMES.has(variable)) continue;
 
       ctx.addIssue({
-        code: z.ZodIssueCode.custom,
+        code: "custom",
         path: ["environments", name, variable],
         message: `"${variable}" is reserved by the language and cannot be used as a variable name`,
       });
@@ -139,13 +139,17 @@ function refuseReservedKeys(value: unknown, ctx: z.RefinementCtx): void {
 }
 
 /**
- * The configuration file's shape.
+ * The configuration file's fields.
  *
- * Two required fields and four optional ones. Required means the tool cannot proceed sensibly without it; optional means
- * its absence is a legitimate state rather than a gap — `environments` absent is a project with no named profiles, not a
+ * Two required and four optional. Required means the tool cannot proceed sensibly without it; optional means its absence
+ * is a legitimate state rather than a gap — `environments` absent is a project with no named profiles, not a
  * configuration somebody forgot to finish.
+ *
+ * Kept separate from the cross-field rule below because `.shape` is lost once a refinement is attached, and the field list
+ * exported at the bottom of this file is derived from it. One schema with two views, rather than a copy of the fields for
+ * introspection to read.
  */
-const objectSchema = z
+const rootSchema = z
   .object({
     /** Which version of this schema the file was written against. */
     version: z.literal(SUPPORTED_CONFIG_VERSION),
@@ -181,24 +185,26 @@ const objectSchema = z
      */
     output: outputSchema.default(OUTPUT_DEFAULTS),
   })
-  .strict()
-  .superRefine((config, ctx) => {
-    const selected = config.defaultEnvironment;
+  .strict();
 
-    if (selected === undefined) return;
+/** The fields, plus the rule that spans them. */
+const objectSchema = rootSchema.superRefine((config, ctx) => {
+  const selected = config.defaultEnvironment;
 
-    const declared = config.environments ?? {};
+  if (selected === undefined) return;
 
-    // `hasOwnProperty` rather than `in`: a name inherited from the prototype is not a profile, and `toString` is not an
-    // environment.
-    if (Object.prototype.hasOwnProperty.call(declared, selected)) return;
+  const declared = config.environments ?? {};
 
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["defaultEnvironment"],
-      message: `names "${selected}", which is not declared in environments. Declare it, or remove the default.`,
-    });
+  // `hasOwnProperty` rather than `in`: a name inherited from the prototype is not a profile, and `toString` is not an
+  // environment.
+  if (Object.prototype.hasOwnProperty.call(declared, selected)) return;
+
+  ctx.addIssue({
+    code: "custom",
+    path: ["defaultEnvironment"],
+    message: `names "${selected}", which is not declared in environments. Declare it, or remove the default.`,
   });
+});
 
 /**
  * The configuration file.
@@ -210,6 +216,26 @@ export const qatConfigSchema = z
   .unknown()
   .superRefine(refuseReservedKeys)
   .pipe(objectSchema);
+
+/**
+ * Every configuration field, as a dotted path.
+ *
+ * Derived from the three object schemas rather than written out, so a field added to the schema appears here whether or
+ * not anybody remembers. It exists for one consumer: the test that compares the field table in
+ * `docs/architecture/configuration-format.md` against it, which is what turns "every field is documented" from a review
+ * promise into an assertion.
+ *
+ * `environments` contributes one path and not its contents. A record's keys are the *user's*, so there is nothing to
+ * enumerate — the paths below are the schema's fields, not a document's possible values.
+ *
+ * Sorted, because the table it is compared against is sorted by whichever order the document was written in, and a set
+ * comparison is the claim being made.
+ */
+export const CONFIG_FIELD_PATHS: readonly string[] = [
+  ...Object.keys(rootSchema.shape),
+  ...Object.keys(cypressSchema.shape).map((field) => `cypress.${field}`),
+  ...Object.keys(outputSchema.shape).map((field) => `output.${field}`),
+].sort();
 
 /**
  * A parsed configuration: defaults applied, constraints satisfied.
