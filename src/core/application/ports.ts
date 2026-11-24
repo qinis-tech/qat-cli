@@ -10,21 +10,25 @@
  *
  * Error contract, uniform across every port: a port **rejects** with an `ApplicationError` when a condition prevents
  * it from doing its job, and **resolves** otherwise. Returning `undefined` means "not found", which is not an error.
- * Nothing here throws a bare `string` or a framework-specific error object.
+ * Nothing here throws a bare `string` or a framework-specific error object. The one exception to the *asynchrony*
+ * is `ConfigurationResolver.resolve`, which is synchronous because it performs no I/O — a promise there would
+ * announce work that never happens.
  *
  * Path convention: a **live request** carries absolute paths, resolved once at the composition boundary. **Stored and
  * returned data** carries paths relative to a declared root, so records stay portable. The asymmetry is deliberate —
- * absolute paths are convenient in flight and corrosive at rest.
+ * absolute paths are convenient in flight and corrosive at rest. A *resolved configuration* is the one value that is
+ * absolute on both sides of that line, because its whole purpose is to be a live request's output location.
  *
  * ## Sibling modules
  *
  * A contract group large enough to have its own vocabulary lives in its own file in this directory and is imported
- * from here, rather than being inlined. Two do:
+ * from here, rather than being inlined. Three do:
  *
  * - `./diagnostics.js` — a diagnosis has statuses, a code set and a finding shape.
  * - `./validation.js` — an assessment adds operations, readiness and a second code vocabulary.
+ * - `./configuration.js` — a resolved configuration has paths, findings and two outcomes.
  *
- * Inlining either would put three vocabularies in one namespace, and a reader checking "what can a finding say"
+ * Inlining any of them would put three vocabularies in one namespace, and a reader checking "what can a finding say"
  * would find it a hundred lines below the interface that mentions it. The rule as this file grows is that a group
  * moves out when its *vocabulary* is independent, not when the file gets long.
  */
@@ -44,6 +48,7 @@ import type {
   ProjectInfo,
 } from "../domain/index.js";
 
+import type { ConfigurationResolver } from "./configuration.js";
 import type { ProjectDiagnosis } from "./diagnostics.js";
 import type { ProjectAssessment } from "./validation.js";
 
@@ -508,6 +513,23 @@ export interface Application {
   readonly logger: Logger;
   readonly repository: ExecutionRepository;
   readonly discovery: ProjectDiscovery;
+
+  /**
+   * The configuration a project supplied, defaulted and anchored.
+   *
+   * Beside `discovery` rather than inside it, because the two answer different questions and fail in different ways.
+   * Discovery reports what a project *is* and never rejects for an unfavourable project; resolution reports where that
+   * project's output goes and returns findings, rather than throwing, for a path it refused.
+   *
+   * Deliberately not folded into `ConfigurationLoader`: that port answers "may I trust this file", and this one
+   * answers "where does this file point". Merging them would force a caller that only wants to read a configuration to
+   * acquire an opinion about the project root as well.
+   *
+   * The one synchronous member in this file. Resolution is a pure function of a validated document and an absolute
+   * root — no file is read, no clock is consulted, and the working directory is never involved — so a promise here
+   * would advertise I/O that does not happen and every caller would begin handling a failure that cannot occur.
+   */
+  readonly configuration: ConfigurationResolver;
 
   /** Releases everything the application holds. Safe to call more than once. */
   dispose(): Promise<void>;

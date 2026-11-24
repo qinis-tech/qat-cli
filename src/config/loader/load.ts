@@ -23,6 +23,14 @@
  * configuration*. They are different questions asked by different modules, which is what makes a syntax error and a schema
  * error distinguishable by construction rather than by their wording — and what stops this file growing a second opinion
  * about what a valid field is.
+ *
+ * ## Why the loaded outcome is branded
+ *
+ * The successful outcome carries a document stamped with a marker only this module can set. The defaulting service
+ * requires that marker, so "defaults were applied to a document that never loaded" is not a rule to remember during
+ * review — it is a compile error, and a runtime error for anything that casts its way around the compiler. The marker is
+ * non-enumerable, so it never appears in a log line or a snapshot, and the document inside is the same object validation
+ * produced: branding adds a claim, not a copy.
  */
 import type { Stats } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
@@ -32,6 +40,7 @@ import {
   isMissingPathError,
   translateFilesystemError,
 } from "../../core/filesystem/index.js";
+import { markLoaded } from "../resolver/contracts.js";
 import { validateConfiguration } from "../validation/index.js";
 
 import {
@@ -131,7 +140,14 @@ export async function loadConfiguration(
     };
   }
 
-  return { kind: ConfigurationLoad.Loaded, path, config: validation.config };
+  // The only place a document is ever declared loadable. `markLoaded` keeps the validated type as well as adding the
+  // marker, so a consumer of this outcome still sees the strict contract rather than the resolver's tolerant view. No
+  // copying happens here: the document is passed through unchanged, and only the claim around it is new.
+  return {
+    kind: ConfigurationLoad.Loaded,
+    path,
+    config: markLoaded(validation.config, path),
+  };
 }
 
 /**

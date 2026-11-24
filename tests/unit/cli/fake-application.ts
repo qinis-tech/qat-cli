@@ -15,11 +15,16 @@
  * it is a file move, not a rewrite; importing a CLI-specific fake from a shared directory before then would make it look
  * like a general facility.
  *
- * ## Every collaborator that is not provided rejects
+ * ## Every collaborator that is not provided fails loudly
  *
- * `discovery` and `repository` reject rather than resolve, with a message naming which one was reached for. A test that
- * accidentally calls one fails loudly instead of silently succeeding against a stub that returned nothing — and the
- * silent success is the worse failure, because it looks like a passing test and hides an assertion that never ran.
+ * `repository` and `discovery` reject, and `configuration.resolve` throws, each with a message naming the collaborator
+ * that was reached for. A test that accidentally calls one fails loudly instead of silently succeeding against a stub
+ * that returned nothing — and the silent success is the worse failure, because it looks like a passing test and hides an
+ * assertion that never ran.
+ *
+ * The two shapes follow the port: `configuration.resolve` is synchronous, because resolution is a pure function of a
+ * document and a project root, so a fake that rejected a promise from it would be describing a different interface. The
+ * asymmetry is the port's, not an oversight here.
  *
  * The logger is the exception, and deliberately: a handler is entitled to log, and a rejecting logger would fail a test
  * for doing something correct. Its methods discard.
@@ -44,6 +49,19 @@ export interface FakeApplicationOptions {
  */
 function unused(collaborator: "discovery" | "repository"): Promise<never> {
   return Promise.reject(new Error(`${collaborator} is unused in this test`));
+}
+
+/**
+ * The same trap for a member that returns a value rather than a promise.
+ *
+ * Throwing synchronously rather than returning a rejected promise is the whole point: a caller that awaited the result
+ * of a fake would be testing an interface with an `await` the real one does not need, and a bug in that caller would
+ * surface as an unhandled rejection at the end of the run instead of at the line that caused it.
+ *
+ * `never` is assignable to the member's declared return type, so the signature stays intact.
+ */
+function unusedImmediately(collaborator: "configuration"): never {
+  throw new Error(`${collaborator} is unused in this test`);
 }
 
 export function fakeApplication(
@@ -78,6 +96,14 @@ export function fakeApplication(
       diagnose: () => unused("discovery"),
       assess: () => unused("discovery"),
       discover: () => unused("discovery"),
+    },
+
+    // One member, and it throws rather than rejecting: see `unusedImmediately`. A command that needs a resolved
+    // configuration does not call this — it reads the one attached to its assessment, which `discovery.assess` above
+    // traps for the same reason. Reaching for the resolver directly from a handler is itself the defect this trap
+    // reports.
+    configuration: {
+      resolve: () => unusedImmediately("configuration"),
     },
 
     dispose: () => {

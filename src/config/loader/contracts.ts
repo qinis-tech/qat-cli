@@ -27,6 +27,13 @@
  * chose, indistinguishable from a correct one. The type is the rule rather than a note about it.
  * See ADR-0026.
  *
+ * ## Why the loaded value is branded
+ *
+ * `config` is not a plain document but a stamped one: the marker is set only by this module, and the defaulting service
+ * requires it. So "defaults were applied on top of a file that never loaded" is a compile error rather than something a
+ * reviewer has to notice, and a runtime error for anything that casts around the compiler. The marker is non-enumerable,
+ * so it never appears in a log line or a snapshot, and the document inside is the same object validation produced.
+ *
  * ## What this file does not define
  *
  * The shape of a field's problem belongs to the validation service, which owns the codes and authors the sentences. This
@@ -34,8 +41,11 @@
  * projection that the validator would have to be kept in step with.
  *
  * The dependency runs one way — loader, then validation, then schema — and this import is the only edge in it that a
- * reader might not predict.
+ * reader might not predict. The one edge pointing at the resolution stage is the brand, and it reaches
+ * `resolver/contracts.ts` directly rather than through that stage's public entry point, so reading a file does not load
+ * the defaulting table into the process.
  */
+import type { LoadedConfigurationDocument } from "../resolver/contracts.js";
 import type { QatConfig } from "../schema/index.js";
 import type { ConfigurationDiagnostic } from "../validation/index.js";
 
@@ -47,7 +57,7 @@ import type { ConfigurationDiagnostic } from "../validation/index.js";
  * slightly imprecise name.
  */
 export const ConfigurationLoad = {
-  /** Parsed, validated, defaults applied. */
+  /** Parsed and validated. Defaults and path anchoring follow in the resolution stage. */
   Loaded: "loaded",
   /** Nothing at the path. Removed between discovery and loading, or the caller never ran discovery. */
   NotFound: "not-found",
@@ -89,8 +99,18 @@ export interface LoadedConfiguration {
   readonly kind: typeof ConfigurationLoad.Loaded;
   /** Absolute, as it was given. Carried so a caller reporting success names the file rather than assuming which one. */
   readonly path: string;
-  /** Parsed, validated, defaults applied. The only variant with one, deliberately. */
-  readonly config: QatConfig;
+  /**
+   * Parsed and validated — and nothing more.
+   *
+   * Defaults are deliberately absent: they are the lowest precedence in the chain, so they can only be applied once the
+   * file and the environment overrides have been merged, and only the resolution stage knows both. Applying them here
+   * would also mean applying them to a project whose configuration was never read, which is the failure this whole
+   * boundary exists to prevent.
+   *
+   * The branded type keeps the validated `QatConfig` rather than widening it, so a caller still sees `formats` as
+   * `ReportFormat[]`, and carries the proof that this value came from a successful load.
+   */
+  readonly config: LoadedConfigurationDocument<QatConfig>;
 }
 
 export interface MissingConfiguration {

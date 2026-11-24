@@ -24,6 +24,20 @@
  * have put anything into. Where a value is worth quoting — a profile name, which this file defines the shape of — it is
  * quoted through `profileText`, which quotes only what it can recognise.
  *
+ * ## Where the defaults live, and where they stop
+ *
+ * This file owns the values of the defaulted fields, because it is the file that decides a field may be omitted at all.
+ * `output` arrives from parsing already filled, so the resolution stage never supplies it.
+ *
+ * What this file does *not* do is decide where a project is. `relativeProjectPath` settles admissibility — relative,
+ * inside the project, portable — and stops there. Turning an admissible relative path into an absolute one needs the
+ * project root, which this schema has no access to and no business knowing. That single step belongs to the resolution
+ * stage, and its containment refusal exists for documents that reached it without passing through here, not for the
+ * ordinary case.
+ *
+ * `defaultEnvironment` is the deliberate gap between the two: this file checks that a named default refers to something
+ * declared, and refuses to invent one. Choosing a target is a decision about a run, not about a file.
+ *
  * ## What is not here
  *
  * No field exists because a later command might want it. `cypress.configFile` exists because detection cannot find a
@@ -53,10 +67,18 @@ export const SUPPORTED_CONFIG_VERSION = 1;
 /**
  * The default output locations.
  *
- * Named once and used in both places that need them: on each field, so a partially written `output` block fills in the
- * rest, and on the block itself, so an absent one does too.
+ * The single authority for these two strings, exported because three places must agree and only this one may be written
+ * by hand:
+ *
+ * - each field, so a partially written `output` block fills in the rest;
+ * - the block itself, so an absent block fills in entirely;
+ * - the resolution stage's catalogue, which documents them and is compared against this constant by a test rather than
+ *   repeating the values.
+ *
+ * The paths are project-relative by construction. A default that named an absolute location would be a value no project
+ * could carry between machines, and would defeat the point of defaulting it.
  */
-const OUTPUT_DEFAULTS = {
+export const OUTPUT_DEFAULTS = {
   reports: "results/reports",
   evidence: "results/evidence",
 } as const;
@@ -90,7 +112,12 @@ function profileText(name: string): string {
     : "a profile";
 }
 
-/** Where a run's output goes, relative to the project root. */
+/**
+ * Where a run's output goes, relative to the project root.
+ *
+ * Both children are defaulted, so a block written as `{"reports": "out/runs"}` keeps its choice and receives the evidence
+ * default rather than being replaced wholesale.
+ */
 const outputSchema = z
   .object({
     reports: relativeProjectPath.default(OUTPUT_DEFAULTS.reports),
@@ -203,6 +230,10 @@ const rootSchema = z
      *
      * Checked against `environments` below, because a default that names nothing is a configuration that fails at the
      * point of use rather than the point of reading.
+     *
+     * Never defaulted here. A value could be derived — the only declared profile, say — but that is a choice about a run,
+     * made where the run is started and reported with the provenance of the choice. Written as a file default, it would be
+     * indistinguishable from something the reader asked for.
      */
     defaultEnvironment: environmentName.optional(),
     /** Named sets of variables, selected by `--environment` or by `defaultEnvironment`. */
@@ -218,6 +249,9 @@ const rootSchema = z
      * The default is the whole block rather than `{}`, because `ZodDefault` carries a value of the *output* type — an
      * object whose fields are already resolved. Substituting an output-typed default skips validation of the default
      * itself, which is safe while it is a constant this module owns.
+     *
+     * Because this block always survives parsing, the resolution stage has nothing to fill here: it joins both paths to
+     * the project root and stops. The one authority for the two strings is {@link OUTPUT_DEFAULTS}.
      */
     output: outputSchema.default(OUTPUT_DEFAULTS),
   })

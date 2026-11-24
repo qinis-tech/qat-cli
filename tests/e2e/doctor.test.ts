@@ -15,6 +15,8 @@ import {
   temporaryDirectory,
 } from "./harness.js";
 
+import { OUTPUT_DEFAULTS } from "~/config/schema/config.js";
+import { SUPPORTED_CONFIG_VERSION } from "~/config/schema/index.js";
 import { ExitCode } from "~/core/errors/index.js";
 
 /**
@@ -30,10 +32,15 @@ import { ExitCode } from "~/core/errors/index.js";
  * every project condition — and that emptiness is asserted deliberately, because it is what lets a caller distinguish
  * "this command found something to say" from "this command broke".
  *
+ * The report now has three blocks rather than two: the project summary, where a run would write, and the findings. The
+ * middle one is present only when the project has a configuration to resolve, which is why several cases below assert
+ * that it is *absent* — a project with no configuration has no output location, and a report that invented one would be
+ * worse than one that stayed quiet.
+ *
  * ## Two imports, and the split is the modules'
  *
- * Project shapes come from `./fixtures.js`; running the binary, snapshotting a tree and making a bare directory come
- * from `./harness.js`. Following the imports is the quickest way to see what a case depends on.
+ * Project shapes come from `./fixtures.js`; running the binary, snapshotting a tree and making a bare directory come from
+ * `./harness.js`. Following the imports is the quickest way to see what a case depends on.
  */
 afterAll(removeTemporaryDirectories);
 
@@ -62,6 +69,12 @@ interface DoctorDocument {
         warnings?: readonly DoctorFinding[];
       };
     };
+    configuration?: {
+      reportsDirectory?: { source?: string; absolute?: string };
+      evidenceDirectory?: { source?: string; absolute?: string };
+      frameworkConfigFile?: { absolute?: string };
+      environment?: { origin?: string; name?: string };
+    };
   };
 }
 
@@ -80,6 +93,10 @@ interface DoctorFinding {
  *
  * The trailing space in the match is load-bearing. Without it a label that is a prefix of another — `package` and a
  * hypothetical `packageMetadata` row — would match whichever came first.
+ *
+ * `find` returns the *first* matching line, which matters now that `config` appears twice: once in the summary for the
+ * framework's configuration file, and once in the output block for the anchored path of one. The summary always comes
+ * first, so asking for `config` keeps returning the summary.
  */
 function valueOf(stdout: string, label: string): string | undefined {
   const line = stdout
@@ -95,6 +112,14 @@ function parseDocument(stdout: string): DoctorDocument {
   return JSON.parse(stdout) as DoctorDocument;
 }
 
+/** A configuration requiring nothing beyond the two fields with no default. */
+function minimalConfig(): string {
+  return JSON.stringify({
+    version: SUPPORTED_CONFIG_VERSION,
+    framework: "cypress",
+  });
+}
+
 describe("doctor", () => {
   describe("the report", () => {
     it("reports a supported project and exits zero", async () => {
@@ -104,9 +129,9 @@ describe("doctor", () => {
 
       expect(result.exitCode).toBe(ExitCode.Success);
 
-      // Nine labelled lines, read by label rather than by substring. The spec directory and the package manager are
-      // deliberately not among them: they are facts about a project's shape, and the assessment carries the correctness
-      // facts this command now reports.
+      // Nine labelled lines in the summary, read by label rather than by substring. The spec directory and the package
+      // manager are deliberately not among them: they are facts about a project's shape, and the assessment carries the
+      // correctness facts this command now reports.
       expect(valueOf(result.stdout, "project")).toBe("demo");
       expect(valueOf(result.stdout, "root")).toBe(root);
       expect(valueOf(result.stdout, "package")).toBe("present");
@@ -161,6 +186,85 @@ describe("doctor", () => {
     });
   });
 
+  describe("where the run would write", () => {
+    it("prints the anchored output locations and the environment", async () => {
+      const root = await temporaryProject({
+        extra: { "qat.config.json": minimalConfig() },
+      });
+
+      const result = await qat(["doctor", root]);
+
+      expect(result.exitCode).toBe(ExitCode.Success);
+
+      // The visible consequence of defaulting and anchoring: the reader wrote nothing, and the report says where the run
+      // will land. Absolute, and inside the project — never beside the process.
+      expect(valueOf(result.stdout, "reports")).toBe(
+        join(root, OUTPUT_DEFAULTS.reports),
+      );
+      expect(valueOf(result.stdout, "evidence")).toBe(
+        join(root, OUTPUT_DEFAULTS.evidence),
+      );
+      // No environments declared, so nothing is selected, and the line says what to do about it.
+      expect(valueOf(result.stdout, "env")).toContain("none selected");
+    });
+
+    it("keeps a path the configuration chose", async () => {
+      const root = await temporaryProject({
+        extra: {
+          "qat.config.json": JSON.stringify({
+            version: SUPPORTED_CONFIG_VERSION,
+            framework: "cypress",
+            output: { reports: "artifacts/runs", evidence: "artifacts/proof" },
+          }),
+        },
+      });
+
+      const result = await qat(["doctor", root]);
+
+      expect(valueOf(result.stdout, "reports")).toBe(
+        join(root, "artifacts/runs"),
+      );
+      expect(valueOf(result.stdout, "evidence")).toBe(
+        join(root, "artifacts/proof"),
+      );
+    });
+
+    it("names the environment the configuration selected", async () => {
+      const root = await temporaryProject({
+        extra: {
+          "qat.config.json": JSON.stringify({
+            version: SUPPORTED_CONFIG_VERSION,
+            framework: "cypress",
+            defaultEnvironment: "staging",
+            environments: {
+              staging: { API_URL: "https://staging.example.test" },
+            },
+          }),
+        },
+      });
+
+      const result = await qat(["doctor", root]);
+
+      // The origin is in the sentence on purpose: an operator who never named an environment should be able to see that
+      // the tool took them at their word, rather than assuming it inferred one.
+      expect(valueOf(result.stdout, "env")).toBe(
+        "staging (from defaultEnvironment)",
+      );
+    });
+
+    it("says nothing about output when there is no configuration to resolve", async () => {
+      const root = await temporaryDirectory();
+
+      const result = await qat(["doctor", root]);
+
+      // Not "nowhere", not a placeholder. A project with no configuration has no output location, and inventing one would
+      // tell a reader their reports are going somewhere they are not.
+      expect(valueOf(result.stdout, "reports")).toBeUndefined();
+      expect(valueOf(result.stdout, "evidence")).toBeUndefined();
+      expect(result.stderr).toBe("");
+    });
+  });
+
   describe("a blocking condition", () => {
     it("names it, its file and its fix, and reports the failure on standard output", async () => {
       const root = await temporaryProject({
@@ -175,6 +279,7 @@ describe("doctor", () => {
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
       expect(valueOf(result.stdout, "result")).toBe("blocked");
       expect(result.stdout).toContain("QAT-V001 error");
+      // Detail lines hang two spaces beneath their code, so the codes stay one scannable column.
       expect(result.stdout).toContain("at:  cypress/cypress.config.ts");
       expect(result.stdout).toContain(
         "fix: Move it to the project root as cypress.config.ts.",
@@ -246,6 +351,39 @@ describe("doctor", () => {
       expect(document.assessment?.gates?.execute?.blocking).toStrictEqual([]);
     });
 
+    it("carries the resolved configuration, so a consumer need not resolve it again", async () => {
+      const root = await temporaryProject({
+        extra: { "qat.config.json": minimalConfig() },
+      });
+
+      const result = await qat(["doctor", root, "--json"]);
+
+      const document = parseDocument(result.stdout);
+
+      // A consumer reading the document gets the same anchors the command printed, from the same resolution — one read of
+      // one tree, not two.
+      expect(
+        document.assessment?.configuration?.reportsDirectory?.absolute,
+      ).toBe(join(root, OUTPUT_DEFAULTS.reports));
+      expect(document.assessment?.configuration?.reportsDirectory?.source).toBe(
+        OUTPUT_DEFAULTS.reports,
+      );
+      expect(document.assessment?.configuration?.environment?.origin).toBe(
+        "none",
+      );
+    });
+
+    it("omits the configuration when the project has none", async () => {
+      const root = await temporaryDirectory();
+
+      const result = await qat(["doctor", root, "--json"]);
+
+      const document = parseDocument(result.stdout);
+
+      // Absent, not `null` and not a defaulted object: a consumer can tell "not known" from "the usual place".
+      expect(document.assessment?.configuration).toBeUndefined();
+    });
+
     it("carries the blocking conditions, and exits two", async () => {
       const root = await temporaryProject({
         configured: false,
@@ -301,14 +439,33 @@ describe("doctor", () => {
 
   describe("what it does not do", () => {
     it("does not modify the project it inspects", async () => {
-      const root = await temporaryProject();
+      const root = await temporaryProject({
+        extra: { "qat.config.json": minimalConfig() },
+      });
       const before = await snapshot(root);
 
       await qat(["doctor", root]);
 
       // A detection command that repaired something on the way past would be a different command with a different name,
-      // and the repair would happen on the machine where nobody expected it.
+      // and the repair would happen on the machine where nobody expected it. This now also covers the output locations:
+      // they were printed, and nothing was created.
       expect(await snapshot(root)).toStrictEqual(before);
+    });
+
+    it("creates no output directory, even though it names one", async () => {
+      const root = await temporaryProject({
+        extra: { "qat.config.json": minimalConfig() },
+      });
+
+      const result = await qat(["doctor", root]);
+
+      expect(valueOf(result.stdout, "reports")).toBe(
+        join(root, OUTPUT_DEFAULTS.reports),
+      );
+
+      // Directories are created at the till, not at the door: the report says where a run *will* write, and an
+      // inspection that pre-created the directory would leave output folders in a project that never ran.
+      expect(await snapshot(root)).not.toContain("results/reports");
     });
 
     it("does not need an executable Cypress, and so cannot have run one", async () => {

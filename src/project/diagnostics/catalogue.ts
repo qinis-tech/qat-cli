@@ -8,6 +8,16 @@
  * The table is a `Record` over the code union, so a code without an entry does not compile. That is the guarantee
  * behind "every diagnostic code has an understandable explanation" — it is not a promise anybody has to remember.
  *
+ * ## "Configuration" in this file always means the framework's
+ *
+ * Every entry below is about finding and trusting a *Cypress* configuration file. That was unambiguous while the tool
+ * had no configuration of its own; it is not any more. A project now normally contains `qat.config.json`, which is
+ * required, versioned and validated separately — and a reader told that "no configuration file was found" while
+ * looking at their own perfectly good one will create a second file and be no closer to a working project.
+ *
+ * So the prose below names the file it means. This is not pedantry about wording: a remedy that sends a reader to
+ * `qat.config.json` is a remedy that fails, and the failure looks like the tool not recognising a file it just read.
+ *
  * ## Severity here answers for the project, not for an operation
  *
  * An entry's severity says how serious the condition is, not whether it stops anything. Whether it stops something
@@ -60,15 +70,19 @@ interface Guidance {
 }
 
 /**
- * What to suggest when there is no usable configuration.
+ * What to suggest when there is no usable Cypress configuration.
  *
  * A declared workspace changes the advice entirely: the reader is almost certainly one directory too high, and
  * telling them to create a configuration file would create a second project instead of finding the first. The
  * patterns are named and never expanded.
+ *
+ * The file is named in the first sentence because the alternative reading is now live: "create a configuration file"
+ * in a project that already has `qat.config.json` sounds like advice to create a second one of those, which would
+ * satisfy the instruction and change nothing about the condition being reported.
  */
 function configurationRemedy(facts: DiagnosticFacts): string {
   if (facts.workspaces.length === 0) {
-    return "Create cypress.config.ts, or run this in the right directory.";
+    return "Create cypress.config.ts for Cypress, or run this in the right directory.";
   }
 
   return `This looks like a workspace root (${facts.workspaces.join(", ")}). Run the command from the package directory.`;
@@ -90,20 +104,20 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
       // same file plus an install, or a configuration that was deleted.
       if (facts.installationVersion !== undefined) {
         return {
-          explanation: `Cypress ${facts.installationVersion} is installed in ${facts.root}, but no configuration file was found.`,
+          explanation: `Cypress ${facts.installationVersion} is installed in ${facts.root}, but no cypress.config.ts was found.`,
           remediation: configurationRemedy(facts),
         };
       }
 
       if (facts.declaration !== undefined) {
         return {
-          explanation: `Cypress is declared in ${facts.declaration.section}, but no configuration file was found in ${facts.root}.`,
+          explanation: `Cypress is declared in ${facts.declaration.section}, but there is no cypress.config.ts in ${facts.root}.`,
           remediation: configurationRemedy(facts),
         };
       }
 
       return {
-        explanation: `A cypress directory was found in ${facts.root}, but no configuration file.`,
+        explanation: `A cypress directory was found in ${facts.root}, but no Cypress configuration file.`,
         remediation: configurationRemedy(facts),
       };
     },
@@ -113,14 +127,15 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
     severity: DiagnosticSeverity.Error,
     describe: (facts) => ({
       explanation: `More than one Cypress configuration was found in ${facts.root}.`,
-      remediation: "Keep one configuration file and delete the others.",
+      remediation:
+        "Keep one cypress.config.ts and delete the others; qat.config.json is a separate file and is not the ambiguity.",
     }),
   },
 
   [DiagnosticCode.ConfigurationUnsupported]: {
     severity: DiagnosticSeverity.Error,
     describe: (facts) => ({
-      explanation: `${facts.root} uses ${facts.unsupportedConfigurations.join(", ")}, which QAT cannot read.`,
+      explanation: `${facts.root} uses ${facts.unsupportedConfigurations.join(", ")}, which this build cannot read as a Cypress configuration.`,
       remediation:
         "Upgrade to cypress.config.ts, which Cypress 10 and later use.",
       // The first one, because a project with two unusable configurations has bigger problems than this message.

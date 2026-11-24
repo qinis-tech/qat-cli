@@ -9,6 +9,7 @@ import {
   loadConfiguration,
   parseJsonDocument,
 } from "~/config/loader/index.js";
+import { isLoadedDocument } from "~/config/resolver/index.js";
 import { SUPPORTED_CONFIG_VERSION } from "~/config/schema/index.js";
 import { ConfigurationDiagnosticCode } from "~/config/validation/index.js";
 import {
@@ -25,6 +26,12 @@ import {
  *
  * The invalid cases assert *codes* rather than messages. A message is prose and changes; a code is what a caller keys on
  * and what a reader quotes, and it is the one thing the validation service adds to what the loader used to report.
+ *
+ * ## `config` is a branded wrapper, not the document
+ *
+ * A successful load returns `{ document, source }`, where the marker on the wrapper is set only by this module. That is
+ * what makes "apply defaults to a file that never loaded" a compile error rather than a review note, so the document is
+ * read as `result.config.document`. The extra hop is the price of the guarantee and is asserted here rather than assumed.
  */
 let created: string[] = [];
 
@@ -85,7 +92,7 @@ describe("a valid configuration", () => {
     if (result.kind !== ConfigurationLoad.Loaded) return;
 
     // The defaults are the schema's, applied once, in one place. A loader that also defaulted would be a second opinion.
-    expect(result.config.output).toStrictEqual({
+    expect(result.config.document.output).toStrictEqual({
       reports: "results/reports",
       evidence: "results/evidence",
     });
@@ -100,8 +107,10 @@ describe("a valid configuration", () => {
     expect(result).toMatchObject({
       kind: ConfigurationLoad.Loaded,
       config: {
-        defaultEnvironment: "staging",
-        output: { reports: "out/reports" },
+        document: {
+          defaultEnvironment: "staging",
+          output: { reports: "out/reports" },
+        },
       },
     });
   });
@@ -127,6 +136,64 @@ describe("a valid configuration", () => {
   });
 });
 
+describe("the loaded document", () => {
+  it("is branded, so defaulting cannot be reached through a failure", async () => {
+    const result = await loadConfiguration(
+      await makeFile("qat.config.json", VALID),
+    );
+
+    expect(result.kind).toBe(ConfigurationLoad.Loaded);
+    if (result.kind !== ConfigurationLoad.Loaded) return;
+
+    // The marker is what the resolution stage requires before it will fill anything in. Without this assertion the
+    // brand could be dropped in a refactor and every downstream test would still pass.
+    expect(isLoadedDocument(result.config)).toBe(true);
+  });
+
+  it("carries the file it came from", async () => {
+    const path = await makeFile("qat.config.json", VALID);
+
+    const result = await loadConfiguration(path);
+
+    if (result.kind !== ConfigurationLoad.Loaded) return;
+
+    // Asserted to equal the outcome's own path: a caller may hold the document without the outcome, and a diagnostic
+    // that quotes a different path from the one that was read is worse than one that quotes nothing.
+    expect(result.config.source).toBe(path);
+    expect(result.config.source).toBe(result.path);
+  });
+
+  it("adds a claim without copying or leaking anything", async () => {
+    const result = await loadConfiguration(
+      await makeFile("qat.config.json", FULL),
+    );
+
+    if (result.kind !== ConfigurationLoad.Loaded) return;
+
+    // Exactly two own keys. A marker that was enumerable would appear here; one that serialised would reach every log
+    // line, snapshot and `--json` document.
+    expect(Object.keys(result.config).sort()).toStrictEqual([
+      "document",
+      "source",
+    ]);
+    expect(JSON.stringify(result)).not.toContain("qat.configuration.loaded");
+  });
+
+  it("is absent from every outcome that is not a successful load", async () => {
+    const malformed = await loadConfiguration(
+      await makeFile("qat.config.json", '{ "version": '),
+    );
+    const invalid = await loadConfiguration(
+      await makeFile("qat.config.json", JSON.stringify({ version: 2 })),
+    );
+
+    // The brand is not a badge added to failures: a failure carries a reason and nothing else, which is the only reason
+    // a caller cannot accidentally default one.
+    expect("config" in malformed).toBe(false);
+    expect("config" in invalid).toBe(false);
+  });
+});
+
 describe("a file that is not there", () => {
   it("reports not-found rather than failing", async () => {
     const root = await mkdtemp(join(tmpdir(), "qat-load-"));
@@ -149,7 +216,7 @@ describe("a file with nothing in it", () => {
     ["whitespace only", "  \n\t\n "],
   ])(
     "reports an %s file as empty rather than as malformed",
-    async (_case, contents) => {
+    async (__case__, contents) => {
       const result = await loadConfiguration(
         await makeFile("qat.config.json", contents),
       );
@@ -263,7 +330,7 @@ describe("a file that is JSON but not a configuration", () => {
     ["null", "null"],
     ["a string", '"hello"'],
     ["a number", "42"],
-  ])("rejects %s at the root", async (_case, contents) => {
+  ])("rejects %s at the root", async (__case__, contents) => {
     // Valid JSON and not a document. One diagnostic with no path, because there are no fields to point at.
     const result = await loadConfiguration(
       await makeFile("qat.config.json", contents),

@@ -56,6 +56,33 @@ function reportedAt(value: unknown, field: string): boolean {
   );
 }
 
+/**
+ * Parse `count` profiles and return how long the parse took, in milliseconds.
+ *
+ * Assertions live inside the helper so every caller checks that the document was accepted: a schema that started
+ * refusing a large environment would otherwise look like an extremely fast pass.
+ */
+function parseProfiles(count: number): number {
+  const environments = Object.fromEntries(
+    Array.from({ length: count }, (_unused, index) => [
+      `profile-${String(index)}`,
+      { API_URL: "https://x.test" },
+    ]),
+  );
+
+  const started = performance.now();
+  const result = qatConfigSchema.safeParse({
+    version: 1,
+    framework: "cypress",
+    environments,
+  });
+  const elapsed = performance.now() - started;
+
+  expect(result.success).toBe(true);
+
+  return elapsed;
+}
+
 describe("a valid configuration", () => {
   it("accepts the minimal file and applies every default", () => {
     const result = qatConfigSchema.safeParse({
@@ -397,25 +424,22 @@ describe("non-functional behaviour", () => {
     ).toStrictEqual(["version", "framework"]);
   });
 
-  it("handles a large environment without recursion or quadratic cost", () => {
-    const environments = Object.fromEntries(
-      Array.from({ length: 1000 }, (_unused, index) => [
-        `profile-${String(index)}`,
-        { API_URL: "https://x.test" },
-      ]),
-    );
+  it("handles a large environment without quadratic cost", () => {
+    // Warm-up: the first parse pays module initialisation, and charging that to the measurement makes the ratio
+    // meaningless.
+    parseProfiles(100);
 
-    const started = performance.now();
-    const result = qatConfigSchema.safeParse({
-      version: 1,
-      framework: "cypress",
-      environments,
-    });
+    const small = parseProfiles(1000);
+    const large = parseProfiles(2000);
 
-    expect(result.success).toBe(true);
-    // A bound, not a benchmark: it catches a regression to something accidentally quadratic — the reserved-key walk runs
-    // over every profile and every variable, so a nested loop over the wrong thing would show here.
-    expect(performance.now() - started).toBeLessThan(250);
+    // Doubling the input should roughly double the work; quadratic behaviour would quadruple it. Three is the middle, and
+    // the floor of 25 ms keeps a fast machine from making the tolerance absurdly tight — a small measurement is mostly
+    // timer noise.
+    expect(large).toBeLessThan(Math.max(small, 25) * 3);
+
+    // A backstop for a regression that is linear but pathological. Generous on purpose: this is here to catch an
+    // order-of-magnitude blow-up, not to grade the runner.
+    expect(large).toBeLessThan(5000);
   });
 
   it("touches no filesystem", () => {
