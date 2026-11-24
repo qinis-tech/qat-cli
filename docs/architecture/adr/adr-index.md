@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0024](0024-treat-a-missing-configuration-as-a-result-rather-than-a-fail.md) | Treat a missing configuration as a result rather than a failure | Accepted | 2026-11-24 |
 | [ADR-0023](0023-read-configuration-from-one-file-at-the-project-root.md) | Read configuration from one file at the project root | Accepted | 2026-11-24 |
 | [ADR-0022](0022-reject-unknown-configuration-fields.md) | Reject unknown configuration fields | Accepted | 2026-11-24 |
 | [ADR-0021](0021-decide-a-reporting-command-s-exit-status-from-the-assessment.md) | Decide a reporting command's exit status from the assessment | Accepted | 2026-11-23 |
