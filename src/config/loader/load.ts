@@ -7,15 +7,22 @@
  * ## What this does not do
  *
  * It does not look for the file — discovery does that, and its answer is an input here. It does not decide whether the
- * project is usable — the schema does that, on the value this returns. And it does not repair: when the file exists and
- * cannot be used, the result says so and carries nothing else. A configuration assembled from defaults on top of a broken
- * file is a run nobody can explain afterwards, and it looks exactly like a correct one.
+ * project is usable — the validation service does that, on the value this returns. And it does not repair: when the file
+ * exists and cannot be used, the result says so and carries nothing else. A configuration assembled from defaults on top of
+ * a broken file is a run nobody can explain afterwards, and it looks exactly like a correct one.
  *
  * ## Why two probes rather than one read
  *
  * `stat` before `readFile` for two reasons that are worth the extra call: a directory reaching a read produces an
  * `EISDIR` message that names nothing useful, and a size check has to happen before the allocation rather than after it.
  * The cost is one filesystem call on a file that is about to be opened anyway.
+ *
+ * ## Why the boundary between reading and judging matters here
+ *
+ * Everything above the validation call answers *are these bytes JSON*. Everything from it onwards answers *is this a
+ * configuration*. They are different questions asked by different modules, which is what makes a syntax error and a schema
+ * error distinguishable by construction rather than by their wording — and what stops this file growing a second opinion
+ * about what a valid field is.
  */
 import type { Stats } from "node:fs";
 import { readFile, stat } from "node:fs/promises";
@@ -25,7 +32,7 @@ import {
   isMissingPathError,
   translateFilesystemError,
 } from "../../core/filesystem/index.js";
-import { qatConfigSchema } from "../schema/index.js";
+import { validateConfiguration } from "../validation/index.js";
 
 import {
   ConfigurationLoad,
@@ -112,25 +119,19 @@ export async function loadConfiguration(
     };
   }
 
-  // The one call into the schema, and the only place a field is judged. Everything before this answered "are these bytes
-  // JSON"; everything from here answers "is this a configuration". Keeping them apart is what stops the loader growing a
-  // second opinion about what a valid field is.
-  const validated = qatConfigSchema.safeParse(parsed.value);
+  // The one call into the validation service, and the only place a field is judged. It answers with diagnostics that carry
+  // permanent codes and never a configured value; this module contributes the path and nothing about fields.
+  const validation = validateConfiguration(parsed.value);
 
-  if (!validated.success) {
+  if (!validation.valid) {
     return {
       kind: ConfigurationLoad.Invalid,
       path,
-      issues: validated.error.issues.map((issue) => ({
-        // A dotted path, because it is what a caller renders beside a field and what a test can assert on without knowing
-        // the validation library's own shape. Empty for an issue about the document rather than a field.
-        path: issue.path.join("."),
-        message: issue.message,
-      })),
+      diagnostics: validation.diagnostics,
     };
   }
 
-  return { kind: ConfigurationLoad.Loaded, path, config: validated.data };
+  return { kind: ConfigurationLoad.Loaded, path, config: validation.config };
 }
 
 /**
