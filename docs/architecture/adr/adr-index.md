@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0022](0022-reject-unknown-configuration-fields.md) | Reject unknown configuration fields | Accepted | 2026-11-24 |
 | [ADR-0021](0021-decide-a-reporting-command-s-exit-status-from-the-assessment.md) | Decide a reporting command's exit status from the assessment | Accepted | 2026-11-23 |
 | [ADR-0020](0020-gate-each-operation-on-its-own-rules.md) | Gate each operation on its own rules | Accepted | 2026-11-22 |
 | [ADR-0019](0019-register-diagnostics-in-a-catalogue.md) | Register diagnostics in a catalogue | Accepted | 2026-11-21 |

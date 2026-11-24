@@ -36,7 +36,7 @@ Three inputs can name the directory, in this order:
 
 **An argument beats the option.** `--cwd` means "behave as though started here", and a directory named for a specific
 command is the more specific instruction. The consequence is that `qat doctor ./a --cwd ./b` describes `./a`. See
-[ADR-0016](adr/0016-prefer-the-positional-directory-over-the-working-directory-option.md).
+[ADR-0016](./adr/0016-prefer-the-positional-directory-over-the-working-directory-o.md).
 
 The option is a **fallback, not a base**. When an argument is present the option is ignored entirely, including as a
 place to resolve a relative argument from — `qat doctor ./x --cwd /repo` resolves `./x` against the process directory.
@@ -245,7 +245,7 @@ one before a second command depends on it.
 **The framework configuration is not executed or parsed.** A Cypress configuration is code. Running it during
 discovery would mean executing the user's program before deciding anything about it, and parsing it would mean
 reimplementing the configuration semantics of a tool that already has them. See
-[ADR-0008](adr/0008-do-not-evaluate-the-framework-configuration.md).
+[ADR-0008](./adr/0008-do-not-evaluate-the-framework-configuration-during-discovery.md).
 
 The manifest, by contrast, **is** read in full. The distinction is not "files versus no files" but **data versus
 program**: `package.json` is a document that describes the project, and `cypress.config.ts` is a program that

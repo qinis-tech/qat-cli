@@ -147,7 +147,7 @@ Help is **generated** from these fields, so an argument a command accepts but do
 be expressed. The indirection costs a reader one hop — to find what `qat run` does, they look in the
 registry rather than at a `.command('run')` call. It buys three things: a command can be registered in a
 test with a fake application, the disposal wrapper cannot be omitted per command, and the entry point
-never grows. See [ADR-0012](../architecture/adr/0012-register-commands-as-data.md) and
+never grows. See [ADR-0012](../architecture/adr/0012-register-commands-as-data-rather-than-as-commander-calls-in.md) and
 [cli-commands.md](cli-commands.md).
 
 ## 7. What the CLI may import

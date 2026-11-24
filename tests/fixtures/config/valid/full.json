@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "framework": "cypress",
+  "cypress": { "configFile": "config/cypress.config.ts" },
+  "defaultEnvironment": "staging",
+  "environments": {
+    "smoke": { "API_URL": "https://smoke.example.test" },
+    "staging": { "API_URL": "https://staging.example.test", "RETRIES": "2" }
+  },
+  "output": { "reports": "results/reports/nightly", "evidence": "results/evidence" }
+}
