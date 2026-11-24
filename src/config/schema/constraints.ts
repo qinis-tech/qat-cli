@@ -67,7 +67,7 @@ export const relativeProjectPath = z
   .max(MAX_PATH_LENGTH, `must be at most ${String(MAX_PATH_LENGTH)} characters`)
   .superRefine((value, ctx) => {
     const refuse = (message: string): void => {
-      ctx.addIssue({ code: z.ZodIssueCode.custom, message });
+      ctx.addIssue({ code: "custom", message });
     };
 
     if (containsControlCharacters(value)) {
