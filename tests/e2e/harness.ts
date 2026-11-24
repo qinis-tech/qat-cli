@@ -1,30 +1,30 @@
 /**
- * Shared harness for the end-to-end suite.
+ * Running the compiled binary, and cleaning up after it.
  *
  * Not a test file. The suite's include pattern is `tests/e2e/**\/*.test.ts`, so this module is imported and never
  * collected.
  *
- * ## Cleanup is explicit, not automatic
+ * ## What this file is not
  *
- * `removeTemporaryDirectories` is exported rather than registered as a hook here. A helper that registers hooks on
- * import is attributed to whichever file imported it, which works until the module is imported twice or lazily — and
- * the failure mode is a leaked temporary directory nobody looks for. Each file that creates a fixture calls
- * `afterAll(removeTemporaryDirectories)`, one line, visible at the top of the file it belongs to.
+ * It does not know what a Cypress project looks like. `./fixtures.js` does — the project shapes, one per scenario, with
+ * the reasons each exists.
  *
- * ## Four project shapes, and why they are separate functions
+ * The split is worth the extra import line in six files because the two change for different reasons. Somebody adding a
+ * scenario edits the fixtures. Somebody debugging a timeout, a Windows junction or a leaked directory edits this. A
+ * module that does both grows until a reader has to scroll past one job to find the other, and the first thing you read
+ * when either fails is the other one's code.
  *
- * Each one exists because a different assertion needs it, and a single function with a flag per variation would need a
- * reader to reconstruct which combination produces what:
+ * ## Cleanup is explicit, and verified
  *
- * - `temporaryProject` — a real single-package project: declared, installed, configured, with specs.
- * - `temporaryWarningProject` — the same, minus the manifest. Runnable, and imperfect.
- * - `temporaryWorkspaceMember` — a member inside a monorepo, with the install hoisted above it.
- * - `temporaryPackageLayout` — the compiled output beside a manifest, for testing version resolution rather than a
- *   project.
+ * `removeTemporaryDirectories` is exported rather than registered as a hook here: a helper that registers hooks on
+ * import is attributed to whichever file imported it, which works until the module is imported twice or lazily.
+ *
+ * It also **checks its own work**. Removing a directory and assuming it went is how a suite passes while leaving
+ * fourteen directories in the temp root for the next run to inherit — and the leak is invisible, because nothing the
+ * suite asserts depends on it. One `stat` per fixture turns that into a failure naming the paths.
  */
 import {
   cp,
-  mkdir,
   mkdtemp,
   readFile,
   readdir,
@@ -34,7 +34,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { runProcess } from "~/core/process/index.js";
@@ -63,6 +63,9 @@ export interface QatOptions {
  * Exit code `1` from any of these means Node died before qat decided anything — an empty build, or an installation
  * whose imports cannot resolve. The evidence is in stderr, and every assertion in this suite reads the stream as well
  * as the code for that reason.
+ *
+ * Always await it. A call left un-awaited on Windows keeps a handle on a fixture directory and defeats the removal in
+ * `removeTemporaryDirectories` — which now reports that rather than letting it pass.
  */
 export function qat(args: readonly string[], options: QatOptions = {}) {
   return runProcess({
@@ -72,7 +75,13 @@ export function qat(args: readonly string[], options: QatOptions = {}) {
   });
 }
 
-/** An empty directory, for the cases that need somewhere real that is not a project. */
+/**
+ * An empty directory, for the cases that need somewhere real that is not a project.
+ *
+ * The only directory a *test* creates directly. Everything project-shaped comes from `./fixtures.js`, which calls this
+ * — so every temporary directory in the suite passes through here and is recorded for cleanup, whichever module asked
+ * for it.
+ */
 export async function temporaryDirectory(): Promise<string> {
   const root = await mkdtemp(join(tmpdir(), "qat-e2e-"));
   created.push(root);
@@ -80,134 +89,16 @@ export async function temporaryDirectory(): Promise<string> {
   return root;
 }
 
-export interface ProjectOptions {
-  /** Whether the manifest declares Cypress. Defaults to true. */
-  readonly declared?: boolean;
-  /** Whether to write a supported configuration file. Defaults to true. */
-  readonly configured?: boolean;
-  /**
-   * Files written verbatim, relative to the root — last, so they can override any of the defaults.
-   *
-   * The escape hatch that keeps this helper from growing an option per variation. A test that needs a legacy
-   * configuration, a malformed manifest or an extra lockfile passes one entry rather than the helper learning about
-   * each.
-   */
-  readonly extra?: Readonly<Record<string, string>>;
-}
-
-/**
- * The minimum that makes a directory a runnable Cypress project.
- *
- * By default Cypress is declared in `devDependencies` *and* installed under `node_modules`, which is the shape a real
- * single-package project has. `declared: false` produces the other shape — present on disk, absent from the manifest —
- * which is what a workspace member with a hoisted install looks like.
- */
-export async function temporaryProject(
-  options: ProjectOptions = {},
-): Promise<string> {
-  const declared = options.declared ?? true;
-  const root = await temporaryDirectory();
-
-  await mkdir(join(root, "cypress", "e2e"), { recursive: true });
-  await mkdir(join(root, "node_modules", "cypress"), { recursive: true });
-
-  await writeFile(
-    join(root, "package.json"),
-    JSON.stringify({
-      name: "demo",
-      version: "1.0.0",
-      ...(declared ? { devDependencies: { cypress: "^13.15.0" } } : {}),
-    }),
-  );
-
-  if (options.configured ?? true) {
-    await writeFile(join(root, "cypress.config.ts"), "export default {};\n");
-  }
-
-  await writeFile(
-    join(root, "node_modules", "cypress", "package.json"),
-    JSON.stringify({ name: "cypress", version: "13.15.0" }),
-  );
-
-  for (const [path, contents] of Object.entries(options.extra ?? {})) {
-    const target = join(root, path);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, contents);
-  }
-
-  return root;
-}
-
-/**
- * A project that is runnable and imperfect: a configuration, an installed framework, and no manifest.
- *
- * The warning is the point of the fixture. A project with a blocker would let a report that printed only blockers pass
- * every assertion about warnings, because the warning would never be reached — and the difference between "reports
- * warnings" and "reports warnings when there is also an error" is the whole behaviour being tested.
- *
- * No manifest means the missing-manifest warning and nothing else: the dependency is installed, so `QAT-D005` does not
- * fire, and an undeclared install is not reported for a project with no manifest to have declared it.
- */
-export async function temporaryWarningProject(): Promise<string> {
-  const root = await temporaryDirectory();
-
-  await mkdir(join(root, "cypress", "e2e"), { recursive: true });
-  await mkdir(join(root, "node_modules", "cypress"), { recursive: true });
-
-  await writeFile(join(root, "cypress.config.ts"), "export default {};\n");
-  await writeFile(
-    join(root, "node_modules", "cypress", "package.json"),
-    JSON.stringify({ name: "cypress", version: "13.15.0" }),
-  );
-
-  return root;
-}
-
-/**
- * A workspace member: its own manifest and configuration, with the framework installed at the root above it.
- *
- * The root declares `workspaces`, which is what makes this a real monorepo rather than two nested directories. It also
- * proves the member is still an ordinary project — the declaration above it neither helps nor interferes, and only the
- * *install* search is expected to climb.
- */
-export async function temporaryWorkspaceMember(): Promise<{
-  readonly root: string;
-  readonly member: string;
-}> {
-  const root = await temporaryDirectory();
-
-  const member = join(root, "packages", "app");
-  await mkdir(join(member, "cypress", "e2e"), { recursive: true });
-  await mkdir(join(root, "node_modules", "cypress"), { recursive: true });
-
-  await writeFile(
-    join(root, "package.json"),
-    JSON.stringify({
-      name: "root",
-      version: "1.0.0",
-      workspaces: ["packages/*"],
-    }),
-  );
-  await writeFile(
-    join(member, "package.json"),
-    JSON.stringify({ name: "demo", version: "1.0.0" }),
-  );
-  await writeFile(join(member, "cypress.config.ts"), "export default {};\n");
-  await writeFile(
-    join(root, "node_modules", "cypress", "package.json"),
-    JSON.stringify({ name: "cypress", version: "13.15.0" }),
-  );
-
-  return { root, member };
-}
-
 /**
  * A package layout — the compiled output beside a manifest — outside the repository.
  *
+ * Not a project: this exists to test version resolution, which reads the manifest nearest the running file rather than
+ * the directory a command is pointed at.
+ *
  * The dependencies are symlinked rather than copied. Without them Node cannot resolve `commander` or `pino`, and the
- * process dies on the first import — which is what an exit code of 1 means, and is why a copied `dist/` is not a copy
- * of an installation. A junction on Windows: symlink creation there needs elevation for file links but not for
- * directory junctions, and the resolution behaviour is identical.
+ * process dies on the first import — which is what an exit code of 1 means, and is why a copied `dist/` is not a copy of
+ * an installation. A junction on Windows: symlink creation there needs elevation for file links but not for directory
+ * junctions, and the resolution behaviour is identical.
  */
 export async function temporaryPackageLayout(
   manifest?: string,
@@ -241,12 +132,12 @@ export async function packageManifest(): Promise<RepositoryManifest> {
 /**
  * Every path under `root`, with its size and modification time.
  *
- * Used to prove that running a command wrote nothing. Sizes and times are included rather than contents alone, because
- * a rewrite with identical bytes is still a write: an atomic-write helper that rewrote a configuration with the same
+ * Used to prove that running a command wrote nothing. Sizes and times are included rather than contents alone, because a
+ * rewrite with identical bytes is still a write: an atomic-write helper that rewrote a configuration with the same
  * contents would pass a content-only comparison and fail this one.
  *
- * Recursive, so a file created inside an existing directory is caught. The root itself is not included — `readdir`
- * lists its children — which is correct: the command may be given the directory without changing it.
+ * Recursive, so a file created inside an existing directory is caught. The root itself is not included — `readdir` lists
+ * its children — which is correct: the command may be given the directory without changing it.
  */
 export async function snapshot(root: string): Promise<readonly string[]> {
   const paths = (await readdir(root, { recursive: true })).sort();
@@ -259,10 +150,64 @@ export async function snapshot(root: string): Promise<readonly string[]> {
   );
 }
 
-/** Removes every directory a fixture created. Called from `afterAll` in each file that has one. */
+/** Whether a path is still on disk. `stat` rather than `access`, because a directory needs the same answer as a file. */
+async function stillExists(path: string): Promise<boolean> {
+  try {
+    await stat(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Removes every directory a fixture created, then checks that each one is gone.
+ *
+ * ## Why the retry
+ *
+ * `rm` can fail on Windows while a child process has not yet released its handle, and the failure is transient by
+ * nature — the handle closes milliseconds later. Three attempts is enough in practice and costs nothing when the first
+ * succeeds, which it almost always does.
+ *
+ * ## Why the check
+ *
+ * `force` makes `rm` succeed for a path that never existed, so a removal that did nothing looks exactly like one that
+ * worked. The directory then survives in the temp root, the next run inherits it, and nothing the suite asserts depends
+ * on either fact. One `stat` per fixture turns a silent leak into a failure that names the paths.
+ *
+ * The list is cleared **before** removal, so a throw from the check cannot leave a second hook call trying to remove
+ * directories that are already gone.
+ *
+ * The cost is honest: a throw inside `afterAll` can mask the failure that made the hook run in the first place. Worth
+ * it — a leak is the one defect this suite cannot otherwise see, and a masked failure is still a failure.
+ */
 export async function removeTemporaryDirectories(): Promise<void> {
-  await Promise.all(
-    created.map((path) => rm(path, { recursive: true, force: true })),
-  );
+  const directories = created;
   created = [];
+
+  await Promise.all(
+    directories.map((path) =>
+      rm(path, {
+        recursive: true,
+        force: true,
+        maxRetries: 3,
+        retryDelay: 100,
+      }),
+    ),
+  );
+
+  const survivors = await Promise.all(
+    directories.map(async (path) =>
+      (await stillExists(path)) ? path : undefined,
+    ),
+  );
+  const leaked = survivors.filter((path): path is string => path !== undefined);
+
+  if (leaked.length > 0) {
+    throw new Error(
+      `${String(leaked.length)} fixture director${leaked.length === 1 ? "y" : "ies"} survived cleanup:\n` +
+        `${leaked.join("\n")}\n` +
+        "On Windows this is usually a child process still holding a handle. Check that every qat() call is awaited.",
+    );
+  }
 }

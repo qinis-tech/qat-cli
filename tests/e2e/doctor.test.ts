@@ -4,13 +4,15 @@ import { join } from "node:path";
 import { afterAll, describe, expect, it } from "vitest";
 
 import {
+  temporaryProject,
+  temporaryWarningProject,
+  temporaryWorkspaceMember,
+} from "./fixtures.js";
+import {
   qat,
   removeTemporaryDirectories,
   snapshot,
   temporaryDirectory,
-  temporaryProject,
-  temporaryWarningProject,
-  temporaryWorkspaceMember,
 } from "./harness.js";
 
 import { ExitCode } from "~/core/errors/index.js";
@@ -24,9 +26,14 @@ import { ExitCode } from "~/core/errors/index.js";
  * ## What changed shape, and why the assertions look different
  *
  * The command reports a project rather than describing one, so a project condition is no longer an error. Findings are
- * printed on standard output with their codes, and the exit status carries the failure. `stderr` is therefore clean
- * for every project condition — and that emptiness is asserted deliberately, because it is what lets a caller
- * distinguish "this command found something to say" from "this command broke".
+ * printed on standard output with their codes, and the exit status carries the failure. `stderr` is therefore clean for
+ * every project condition — and that emptiness is asserted deliberately, because it is what lets a caller distinguish
+ * "this command found something to say" from "this command broke".
+ *
+ * ## Two imports, and the split is the modules'
+ *
+ * Project shapes come from `./fixtures.js`; running the binary, snapshotting a tree and making a bare directory come
+ * from `./harness.js`. Following the imports is the quickest way to see what a case depends on.
  */
 afterAll(removeTemporaryDirectories);
 
@@ -70,6 +77,9 @@ interface DoctorFinding {
  * The value begins one column past the wider of the label and the column width. Kept in step with the presenter by the
  * unit suite, which pins the format with literal strings — this file reads values rather than re-asserting spacing,
  * because a `toContain('demo')` would pass whatever column the name happened to land in.
+ *
+ * The trailing space in the match is load-bearing. Without it a label that is a prefix of another — `package` and a
+ * hypothetical `packageMetadata` row — would match whichever came first.
  */
 function valueOf(stdout: string, label: string): string | undefined {
   const line = stdout
@@ -95,8 +105,8 @@ describe("doctor", () => {
       expect(result.exitCode).toBe(ExitCode.Success);
 
       // Nine labelled lines, read by label rather than by substring. The spec directory and the package manager are
-      // deliberately not among them: they are facts about a project's shape, and the assessment carries the
-      // correctness facts this command now reports.
+      // deliberately not among them: they are facts about a project's shape, and the assessment carries the correctness
+      // facts this command now reports.
       expect(valueOf(result.stdout, "project")).toBe("demo");
       expect(valueOf(result.stdout, "root")).toBe(root);
       expect(valueOf(result.stdout, "package")).toBe("present");
@@ -251,6 +261,10 @@ describe("doctor", () => {
 
       // Two conditions, both true: no configuration was found, and one exists where Cypress does not load it. A report
       // that named only the first would send its owner looking for a file they are looking at.
+      //
+      // The order is the requirement table's, not the filesystem's: the forwarded diagnosis finding comes first, then
+      // the condition validation added. Pinned exactly, because a report whose findings moved would be a different
+      // report even though every code was present.
       expect(blocking.map((finding) => finding.code)).toStrictEqual([
         "QAT-D002",
         "QAT-V001",
@@ -278,8 +292,8 @@ describe("doctor", () => {
 
       const result = await qat(["doctor", root, "--json"]);
 
-      // A consumer parsing stdout must not have to strip a log line, and a pipeline collecting stderr must not receive
-      // a copy of what it is already reading.
+      // A consumer parsing stdout must not have to strip a log line, and a pipeline collecting stderr must not receive a
+      // copy of what it is already reading.
       expect(() => JSON.parse(result.stdout)).not.toThrow();
       expect(result.stderr).toBe("");
     });
@@ -292,8 +306,8 @@ describe("doctor", () => {
 
       await qat(["doctor", root]);
 
-      // A detection command that repaired something on the way past would be a different command with a different
-      // name, and the repair would happen on the machine where nobody expected it.
+      // A detection command that repaired something on the way past would be a different command with a different name,
+      // and the repair would happen on the machine where nobody expected it.
       expect(await snapshot(root)).toStrictEqual(before);
     });
 
@@ -314,8 +328,8 @@ describe("doctor", () => {
         join(tmpdir(), "qat-absent-directory-7f3a"),
       ]);
 
-      // The one thing the command still throws for. A directory that does not exist is not a property of a project,
-      // so it is an error rather than a finding — and it never reaches the assessment.
+      // The one thing the command still throws for. A directory that does not exist is not a property of a project, so
+      // it is an error rather than a finding — and it never reaches the assessment.
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
       expect(result.stderr).toContain("QAT1001");
       expect(result.stderr).toContain("is not a directory");

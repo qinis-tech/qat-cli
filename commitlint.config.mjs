@@ -27,6 +27,7 @@ export default {
         "config",
         "core",
         "execution",
+        "e2e",
         "cypress",
         "results",
         "reporting",
