@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
 
 import { exitCodeFor, reportLines } from "~/cli/output/diagnostics.js";
+import type {
+  ResolvedConfigurationPath,
+  ResolvedProjectConfiguration,
+} from "~/core/application/configuration.js";
 import {
   DiagnosticCode,
   DiagnosticSeverity,
@@ -34,6 +38,14 @@ import { ExitCode } from "~/core/errors/index.js";
  * `AnyDiagnosticFinding` widens that to include validation's codes, and it is what a gate holds. A diagnosis cannot
  * contain a `QAT-V` code — validation is what adds those — so the fixtures below keep the two apart rather than
  * widening everything to the union and losing the distinction the contract is making.
+ *
+ * ## Three blocks, and one of them is optional
+ *
+ * Summary, output locations, findings. The middle block exists only when a resolved configuration is available, and
+ * every test below that omits it asserts the report exactly as it was before that block existed: a project whose
+ * configuration could not be read has nowhere to write, and a report that invented a location would be worse than one
+ * that stayed quiet. That is why the parameter is optional rather than defaulted — absence here means "not known",
+ * not "the usual place".
  */
 
 /** A finding as a gate carries it: either vocabulary. */
@@ -85,6 +97,38 @@ function diagnosis(
     detection: "detected",
     compatibility: "consistent",
     findings: [],
+    ...overrides,
+  };
+}
+
+/** One anchored path: what the configuration said, and where it landed. */
+function resolvedPath(
+  source: string,
+  absolute: string,
+): ResolvedConfigurationPath {
+  return { source, absolute };
+}
+
+/**
+ * A resolved configuration, as the resolution stage produces it.
+ *
+ * The absolute paths are not derived from the sources here: they are written out, because the assertion that matters is
+ * that the report prints the absolute form and not a joined-up guess of it. A fixture that computed
+ * `"/project/" + source` would agree with an implementation that did the same, however wrong both were.
+ */
+function configuration(
+  overrides: Partial<ResolvedProjectConfiguration> = {},
+): ResolvedProjectConfiguration {
+  return {
+    reportsDirectory: resolvedPath(
+      "results/reports",
+      "/project/results/reports",
+    ),
+    evidenceDirectory: resolvedPath(
+      "results/evidence",
+      "/project/results/evidence",
+    ),
+    environment: { origin: "configured", name: "staging" },
     ...overrides,
   };
 }
@@ -216,6 +260,139 @@ describe("the summary", () => {
   });
 });
 
+describe("the output locations", () => {
+  it("says nothing at all when the configuration is unknown", () => {
+    const lines = reportLines(assessment());
+
+    // Not "nowhere", not a placeholder: a project whose configuration could not be read has no output location, and
+    // inventing one would tell a reader their reports are going somewhere they are not.
+    expect(lines).toHaveLength(9);
+    expect(
+      lines.some(
+        (line) => line.startsWith("reports") || line.startsWith("evidence"),
+      ),
+    ).toBe(false);
+  });
+
+  it("prints the anchored paths, in the order reports then evidence", () => {
+    const lines = reportLines(assessment(), configuration());
+
+    expect(lines.slice(9)).toStrictEqual([
+      "",
+      "reports    /project/results/reports",
+      "evidence   /project/results/evidence",
+      "env        staging (from defaultEnvironment)",
+    ]);
+  });
+
+  it("sits between the summary and the findings", () => {
+    const misplaced = finding({
+      code: ValidationCode.ConfigurationMisplaced,
+      explanation:
+        "A Cypress configuration was found at cypress/cypress.config.ts, where Cypress does not load it.",
+      path: "cypress/cypress.config.ts",
+      remediation: "Move it to the project root as cypress.config.ts.",
+    });
+
+    const lines = reportLines(
+      assessment({ blocking: [misplaced] }),
+      configuration(),
+    );
+
+    // Positional on purpose. A report where the locations appear after the findings would be read as one of the
+    // findings, and a report where they appear before the summary would have no subject.
+    expect(lines.slice(10, 13)).toStrictEqual([
+      "reports    /project/results/reports",
+      "evidence   /project/results/evidence",
+      "env        staging (from defaultEnvironment)",
+    ]);
+    expect(lines[9]).toBe("");
+    expect(lines[13]).toBe("");
+    expect(lines[14]).toBe("QAT-V001 error");
+  });
+
+  it("names the framework configuration file only when one is known", () => {
+    const withFile = reportLines(
+      assessment(),
+      configuration({
+        frameworkConfigFile: resolvedPath(
+          "cypress.config.ts",
+          "/project/cypress.config.ts",
+        ),
+      }),
+    );
+
+    expect(withFile).toContain("config     /project/cypress.config.ts");
+
+    // Absent means absent: no `(none)`, because the field is optional and a reader cannot tell "(none)" from "the tool
+    // did not look".
+    const without = reportLines(assessment(), configuration());
+    expect(
+      without.filter((line) => line.startsWith("config     /")).length,
+    ).toBe(0);
+  });
+
+  it("separates the block from what precedes and follows it exactly once", () => {
+    const lines = reportLines(
+      assessment({ blocking: [finding()] }),
+      configuration(),
+    );
+
+    // Two separators, as before, plus none of their own: the block is one group, not three.
+    expect(lines.filter((line) => line === "")).toHaveLength(2);
+  });
+
+  it("says which environment was chosen and how", () => {
+    const linesFor = (
+      environment: ResolvedProjectConfiguration["environment"],
+    ): string =>
+      reportLines(assessment(), configuration({ environment })).at(-1) ?? "";
+
+    // Four derivations, four sentences, because they have four different next steps. An operator who never named an
+    // environment should be able to see that the tool picked for them, and why.
+    expect(linesFor({ origin: "configured", name: "staging" })).toBe(
+      "env        staging (from defaultEnvironment)",
+    );
+    expect(linesFor({ origin: "declared", name: "production" })).toBe(
+      'env        production (the environment named "default")',
+    );
+    expect(linesFor({ origin: "sole", name: "only" })).toBe(
+      "env        only (the only one declared)",
+    );
+    expect(linesFor({ origin: "none" })).toBe(
+      "env        none selected; declare one, or set defaultEnvironment",
+    );
+  });
+
+  it("prints the environment name as written", () => {
+    // Names are constrained by the schema, so there is nothing to escape or quote — but a presenter that started
+    // "helpfully" rewording them would disagree with the file the reader is looking at.
+    const lines = reportLines(
+      assessment(),
+      configuration({ environment: { origin: "configured", name: "prod-eu" } }),
+    );
+
+    expect(lines).toContain("env        prod-eu (from defaultEnvironment)");
+  });
+
+  it("prints absolute paths, never the configured form", () => {
+    const lines = reportLines(
+      assessment(),
+      configuration({
+        reportsDirectory: resolvedPath(
+          "results/reports",
+          "/work/demo/results/reports",
+        ),
+      }),
+    );
+
+    // The source form is deliberately not repeated: a reader can see it by opening the file they just edited, and the
+    // question the report answers is where the tool decided to land.
+    expect(lines).toContain("reports    /work/demo/results/reports");
+    expect(lines).not.toContain("reports    results/reports");
+  });
+});
+
 describe("the findings", () => {
   const misplaced = finding({
     code: ValidationCode.ConfigurationMisplaced,
@@ -248,6 +425,28 @@ describe("the findings", () => {
       "QAT-D005 error",
       "  Cypress is declared in devDependencies but is not installed.",
     ]);
+  });
+
+  it("indents the detail under its code, so the codes stay one scannable column", () => {
+    const lines = reportLines(
+      assessment({
+        blocking: [misplaced],
+        warnings: [
+          finding({
+            code: DiagnosticCode.ManifestMissing,
+            severity: DiagnosticSeverity.Warning,
+          }),
+        ],
+      }),
+    );
+
+    // The header of each block is flush; everything that describes it hangs two spaces beneath. Two conditions in one
+    // report is where this stops being cosmetic.
+    const headers = lines.filter((line) => line.startsWith("QAT-"));
+    expect(headers).toStrictEqual(["QAT-V001 error", "QAT-D010 warning"]);
+    expect(
+      lines.every((line) => line.startsWith("QAT-") || !line.startsWith(" ")),
+    ).toBe(false);
   });
 
   it("prints the code and the severity on one line, code first", () => {
@@ -346,6 +545,15 @@ describe("the exit status", () => {
     );
   });
 
+  it("is unaffected by where the run would write", () => {
+    // The output locations describe the project, not the machine, and a project with a place to write is not thereby
+    // runnable. Adding the block must not have moved the status.
+    expect(exitCodeFor(assessment())).toBe(ExitCode.Success);
+    expect(exitCodeFor(assessment({ blocking: [finding()] }))).toBe(
+      ExitCode.InvalidInput,
+    );
+  });
+
   it("is decided by the execution gate and not by the inspection gate", () => {
     const value = assessment({ blocking: [finding()] });
 
@@ -369,6 +577,12 @@ describe("non-functional behaviour", () => {
         blocking: [finding()],
         warnings: [finding({ severity: DiagnosticSeverity.Warning })],
       }),
+      configuration({
+        frameworkConfigFile: resolvedPath(
+          "cypress.config.ts",
+          "/project/cypress.config.ts",
+        ),
+      }),
     );
 
     for (const line of lines) expect(line).not.toContain("undefined");
@@ -381,6 +595,7 @@ describe("non-functional behaviour", () => {
           finding({ remediation: "Install it.", path: "node_modules/cypress" }),
         ],
       }),
+      configuration(),
     );
 
     // A console on a legacy code page turns an em dash into mojibake, and the reader cannot tell whether the tool broke
@@ -390,8 +605,11 @@ describe("non-functional behaviour", () => {
 
   it("is deterministic", () => {
     const value = assessment({ blocking: [finding()] });
+    const resolved = configuration();
 
-    expect(reportLines(value)).toStrictEqual(reportLines(value));
+    expect(reportLines(value, resolved)).toStrictEqual(
+      reportLines(value, resolved),
+    );
     expect(exitCodeFor(value)).toBe(exitCodeFor(value));
   });
 
@@ -405,5 +623,21 @@ describe("non-functional behaviour", () => {
     // A presenter that sorted or spliced a gate's arrays would corrupt the value a later consumer reads — the command
     // prints and then reads the same assessment to decide its status, so the damage would change the exit code.
     expect(value).toStrictEqual(before);
+  });
+
+  it("does not modify the configuration it was given", () => {
+    const resolved = configuration({
+      frameworkConfigFile: resolvedPath(
+        "cypress.config.ts",
+        "/project/cypress.config.ts",
+      ),
+    });
+    const before = structuredClone(resolved);
+
+    reportLines(assessment(), resolved);
+
+    // The configuration is shared with whatever writes the report, which needs the same absolute paths. A presenter
+    // that "normalised" them in place would move the files.
+    expect(resolved).toStrictEqual(before);
   });
 });

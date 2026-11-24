@@ -1,10 +1,10 @@
 # CLI Output
 
-|               |                                                                                                                                                                                                                                                                                                                                                                                            |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Status**    | Normative                                                                                                                                                                                                                                                                                                                                                                                  |
-| **Module**    | `src/cli/output/`                                                                                                                                                                                                                                                                                                                                                                          |
-| **Companion** | [cli-bootstrap.md](cli-bootstrap.md), [validation.md](../architecture/validation.md), [ADR-0005](../architecture/adr/0005-separate-diagnostic-logs-from-user-facing-output.md), [ADR-0015](../architecture/adr/0015-send-every-message-to-standard-error-and-only-results-to-sta.md), [ADR-0021](../architecture/adr/0021-decide-a-reporting-command-s-exit-status-from-the-assessment.md) |
+|               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Status**    | Normative                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Module**    | `src/cli/output/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |
+| **Companion** | [cli-bootstrap.md](cli-bootstrap.md), [validation.md](../architecture/validation.md), [configuration-defaults.md](../architecture/configuration-defaults.md), [path-resolution.md](../architecture/path-resolution.md), [ADR-0005](../architecture/adr/0005-separate-diagnostic-logs-from-user-facing-output.md), [ADR-0015](../architecture/adr/0015-send-every-message-to-standard-error-and-only-results-to-sta.md), [ADR-0021](../architecture/adr/0021-decide-a-reporting-command-s-exit-status-from-the-assessment.md) |
 
 How QAT talks to the person or the program on the other end of a command.
 
@@ -93,6 +93,9 @@ A command that reports a structured result renders it through **one** presenter,
 rather than building strings in its handler. One module means one answer to "what does QAT's report look like", and a
 command stays the handful of lines that decide _when_ to print.
 
+The report has three blocks: the summary, the output locations, and the findings. The middle one is present only when the
+project has a configuration to resolve.
+
 ### The summary
 
 Nine labelled lines, in a fixed order:
@@ -116,6 +119,24 @@ result     ready
 | The verdict is last                                 | It is the conclusion the lines above argue for, and the one line a script or a reader looks for                                                                                     |
 | `result` is printed from the gate, never recomputed | The presenter lays out; it does not decide. A presenter that recomputed readiness would agree today and diverge the moment a rule changed                                           |
 
+### The output locations
+
+Where a run would write, and against which environment:
+
+```
+reports    /repo/packages/api/results/reports
+evidence   /repo/packages/api/results/evidence
+env        staging (from defaultEnvironment)
+```
+
+| Rule                                                    | Why                                                                                                                                                                                                                              |
+| ------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Absolute paths only, never the configured form          | The reader can see what they wrote by opening the file they just edited. What they cannot see is where the tool decided to land                                                                                                  |
+| The block is present only when a configuration resolved | A project with no configuration has no output location. Inventing one would tell a reader their reports are going somewhere they are not, and absence then means "not known" rather than "the usual place"                       |
+| `env` states which environment, and how it was chosen   | Four derivations, four sentences. "The only one declared" tells an operator that a second environment will stop this being automatic, and "none selected" says what to do — that sentence is the one thing here that saves a run |
+| The same label appears in two blocks                    | `config` in the summary names the framework's configuration file; `config` here gives the anchored location of one, and only when the configuration supplied it. Both answer "which file", at two different levels of detail     |
+| No `form` or containment flags                          | They describe how an anchor was decided, which is a detail for the resolver and its tests. A writer needs the path                                                                                                               |
+
 ### The findings
 
 One block per condition, blocking conditions first, then warnings:
@@ -127,12 +148,13 @@ QAT-V001 error
   fix: Move it to the project root as cypress.config.ts.
 ```
 
-| Rule                                                                             | Why                                                                                                                               |
-| -------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------- |
-| The code and the severity share the first line, code first                       | The code is what gets quoted in a bug report and grepped by a script; the severity is what tells a reader whether to keep reading |
-| `at:` and `fix:` are omitted when absent                                         | A line reading `at: (none)` is noise, and a consumer should be able to tell "no file" from "a file with an unhelpful name"        |
-| One blank line between the summary and the findings, and between severity groups | A reader who stops after the first block has still read the reason the command failed                                             |
-| No blank line when there is nothing to report                                    | A clean report is nine lines, which is what makes it recognisably clean                                                           |
+| Rule                                                        | Why                                                                                                                                    |
+| ----------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| The code and the severity share the first line, code first  | The code is what gets quoted in a bug report and grepped by a script; the severity is what tells a reader whether to keep reading      |
+| The detail lines are indented two spaces; the header is not | The codes form one scannable column while their sentences hang beneath them. With two conditions in a report this stops being cosmetic |
+| `at:` and `fix:` are omitted when absent                    | A line reading `at: (none)` is noise, and a consumer should be able to tell "no file" from "a file with an unhelpful name"             |
+| One blank line between blocks, and between severity groups  | A reader who stops after the first block has still read the reason the command failed                                                  |
+| No blank line when there is nothing to report               | A clean report is the summary plus the output block, and no findings — which is what makes it recognisably clean                       |
 
 **Plain ASCII throughout.** No em dash, no arrow, no bullet: each renders correctly in a document and as mojibake in a
 console using a legacy code page, and the reader who gets a broken character has no way to tell whether the tool is
@@ -161,13 +183,28 @@ the document envelope:
     },
     "findings": [],
     "requirements": [],
-    "gates": { "inspect": {}, "execute": {} }
+    "gates": { "inspect": {}, "execute": {} },
+    "configuration": {
+      "reportsDirectory": {
+        "source": "results/reports",
+        "absolute": "/repo/packages/api/results/reports"
+      },
+      "evidenceDirectory": {
+        "source": "results/evidence",
+        "absolute": "/repo/packages/api/results/evidence"
+      },
+      "environment": { "origin": "configured", "name": "staging" }
+    }
   }
 }
 ```
 
 A consumer parses the same shapes the command read, so a field added to the assessment appears without the document
 changing shape. A presentation would have to be kept in step by hand, and would be the copy that lagged.
+
+`configuration` is **absent** — not `null`, not an empty object — when the project has no configuration to resolve. A
+consumer can therefore tell "not known" from "the usual place", which is the same distinction the human report makes by
+omitting the block rather than printing `(none)`.
 
 Errors under `--json` are written to standard error as `{ "error": … }`. A pipeline reading standard output therefore
 sees nothing at all when a command _fails_, while a command that _reports_ a blocking condition writes its document to
@@ -185,6 +222,10 @@ The utilities cannot recognise a secret: they receive a string. Three rules sit 
 The terminal sanitiser removes control characters, not secrets. It is a defence against a forged line, and it is not a
 substitute for any of the three.
 
+One further rule now arrives from the path layer: a configured value that looks like a URL is described rather than
+repeated, because userinfo is the one place a path-shaped string routinely carries a credential. That decision is made
+where the message is authored, in `resolver/paths.ts`, so this module inherits it without doing anything.
+
 ## 8. Rendering versus writing
 
 | Function                                      | Returns                            | Tested by                                   |
@@ -193,6 +234,7 @@ substitute for any of the three.
 | `renderResult`                                | The text for standard output       | Unit tests                                  |
 | `renderError`                                 | The text for standard error        | Unit tests                                  |
 | `reportLines`                                 | The lines of a report, as an array | Unit tests                                  |
+| `configurationLines`                          | The lines of the output block      | Unit tests                                  |
 | `exitCodeFor`                                 | A status, and no text at all       | Unit tests                                  |
 | `writeMessage`, `reportResult`, `reportError` | Nothing; they write                | The end-to-end suite, by running the binary |
 
@@ -201,5 +243,18 @@ sees is a comparison of two strings.
 
 `reportLines` returns lines rather than writing them, which is what lets the report shape be pinned with literal
 expected strings in a unit test — including their spacing — and lets a future generator reuse the presentation. Its
-sibling `exitCodeFor` returns a status and belongs in the same table because it is the second pure decision a command
-makes: a command that reports does not throw, so its failure is expressed by a value rather than by an event.
+siblings are pure decisions of the same kind: `configurationLines` renders one block from one value, and `exitCodeFor`
+returns a status. A command that reports does not throw, so its failure is expressed by a value rather than by an event.
+
+## 9. Known gaps
+
+Two, both deliberate and both recorded rather than discovered later.
+
+**A configuration that exists but is invalid contributes no finding.** The assessment attaches a resolved configuration
+when the file loads, and nothing when it does not — so `qat doctor` on a project whose `qat.config.json` is malformed
+reports no output block and no finding about it. Closing that means merging the loader's diagnostics into the
+assessment's gate, which decides the exit status and therefore belongs with the validation layer.
+
+**Path refusals are therefore reachable only through validation.** An escaping or absolute output path is refused by the
+schema while the document is read, so it appears as an ordinary configuration diagnostic — and that diagnostic has no
+route into the report yet, for the same reason as the entry above.

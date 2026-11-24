@@ -6,15 +6,29 @@ import type { DestinationStream } from "pino";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createApplication } from "~/app/index.js";
+import { ConfigurationLoad, loadConfiguration } from "~/config/loader/index.js";
+import {
+  LoadedConfigurationRequiredError,
+  markLoaded,
+} from "~/config/resolver/index.js";
+import { OUTPUT_DEFAULTS } from "~/config/schema/config.js";
+import { SUPPORTED_CONFIG_VERSION } from "~/config/schema/index.js";
+import type { LoadedConfigurationDocument } from "~/core/application/configuration.js";
 import type { ExecutionRecord } from "~/core/application/ports.js";
 import { ErrorCode, InvalidArgumentError } from "~/core/errors/index.js";
 
 /**
  * Integration rather than unit: the thing under test is the assembly of real modules.
  *
- * Every test supplies its own log destination and environment source. Nothing reads the machine the
- * suite runs on, which is what the isolation policy requires and what makes the assertions mean
- * anything.
+ * Every test supplies its own log destination and environment source. Nothing reads the machine the suite runs on, which
+ * is what the isolation policy requires and what makes the assertions mean anything.
+ *
+ * ## The configuration adapter
+ *
+ * The assembly publishes one operation for configuration — `resolve` — and it is the only place where the resolution
+ * stage's vocabulary meets the application's. Three things about it are worth asserting here rather than in the
+ * resolver's own suite: that the loader's result is accepted without a cast, that the result is translated rather than
+ * passed through, and that a forged document is refused at runtime even though the port's structural type accepts it.
  */
 const created: string[] = [];
 
@@ -54,6 +68,30 @@ function cypressProject(): Record<string, string> {
   };
 }
 
+/** The configuration that requires nothing: two fields and every default. */
+function minimalConfig(): string {
+  return JSON.stringify({
+    version: SUPPORTED_CONFIG_VERSION,
+    framework: "cypress",
+  });
+}
+
+/** A project that is both a Cypress project and a configured QAT project. */
+async function configuredProject(configuration: string): Promise<string> {
+  return makeProject({ ...cypressProject(), "qat.config.json": configuration });
+}
+
+/** Read the configuration at a project root through the real loader. */
+async function loadFrom(root: string): Promise<LoadedConfigurationDocument> {
+  const loaded = await loadConfiguration(join(root, "qat.config.json"));
+
+  if (loaded.kind !== ConfigurationLoad.Loaded) {
+    throw new Error(`expected a loaded configuration, received ${loaded.kind}`);
+  }
+
+  return loaded.config;
+}
+
 function record(overrides: Partial<ExecutionRecord> = {}): ExecutionRecord {
   return {
     executionId: "run-1",
@@ -85,12 +123,13 @@ describe("assembling an application", () => {
     expect(typeof application.discovery.discover).toBe("function");
     expect(typeof application.repository.create).toBe("function");
     expect(typeof application.logger.info).toBe("function");
+    expect(typeof application.configuration.resolve).toBe("function");
     expect(typeof application.dispose).toBe("function");
   });
 
   it("needs no framework installation to be constructed", () => {
-    // The criterion this covers: instantiation must not depend on anything the project under test
-    // happens to have installed.
+    // The criterion this covers: instantiation must not depend on anything the project under test happens to have
+    // installed.
     expect(() =>
       createApplication({ environment: {}, logDestination: capture().stream }),
     ).not.toThrow();
@@ -152,6 +191,196 @@ describe("the wired dependencies work", () => {
     await expect(application.discovery.discover(empty)).rejects.toMatchObject({
       code: ErrorCode.projectNotFound,
     });
+  });
+});
+
+describe("the configuration adapter", () => {
+  it("anchors a project's output paths through the assembled port", async () => {
+    const root = await configuredProject(minimalConfig());
+    const application = createApplication({
+      environment: {},
+      logDestination: capture().stream,
+    });
+
+    const resolution = application.configuration.resolve(
+      root,
+      await loadFrom(root),
+    );
+
+    expect(resolution.ok).toBe(true);
+    if (!resolution.ok) return;
+
+    // The schema supplied the values, the resolver placed them, and the adapter translated the result. Nothing in that
+    // chain used the working directory.
+    expect(resolution.configuration.reportsDirectory.absolute).toBe(
+      join(root, OUTPUT_DEFAULTS.reports),
+    );
+    expect(resolution.configuration.evidenceDirectory.absolute).toBe(
+      join(root, OUTPUT_DEFAULTS.evidence),
+    );
+    expect(resolution.configuration.reportsDirectory.source).toBe(
+      OUTPUT_DEFAULTS.reports,
+    );
+  });
+
+  it("accepts the loader's result without a cast", async () => {
+    const root = await configuredProject(minimalConfig());
+    const application = createApplication({
+      environment: {},
+      logDestination: capture().stream,
+    });
+
+    // The loader hands over the resolver's branded type; the port declares a structural one. If those two ever stop
+    // being compatible this line fails to compile, which is the cheapest possible warning.
+    const resolution = application.configuration.resolve(
+      root,
+      await loadFrom(root),
+    );
+
+    expect(resolution.ok).toBe(true);
+  });
+
+  it("translates the resolver's vocabulary rather than passing it through", async () => {
+    const root = await configuredProject(
+      JSON.stringify({
+        version: SUPPORTED_CONFIG_VERSION,
+        framework: "cypress",
+        cypress: { configFile: "cypress.config.ts" },
+      }),
+    );
+    const application = createApplication({
+      environment: {},
+      logDestination: capture().stream,
+    });
+
+    const resolution = application.configuration.resolve(
+      root,
+      await loadFrom(root),
+    );
+
+    expect(resolution.ok).toBe(true);
+    if (!resolution.ok) return;
+
+    // Renamed: `cypressConfigFile` is the resolver's name, `frameworkConfigFile` is the application's. Core names the
+    // concept and never the framework, which is the same rule that keeps `FrameworkAdapter` free of Cypress.
+    expect(resolution.configuration.frameworkConfigFile?.absolute).toBe(
+      join(root, "cypress.config.ts"),
+    );
+    // Not passed through: the resolver's internal shape has no business reaching a command.
+    expect("paths" in resolution.configuration).toBe(false);
+    expect("document" in resolution.configuration).toBe(false);
+  });
+
+  it("names the framework configuration file only when the configuration supplied one", async () => {
+    const root = await configuredProject(minimalConfig());
+    const application = createApplication({
+      environment: {},
+      logDestination: capture().stream,
+    });
+
+    const resolution = application.configuration.resolve(
+      root,
+      await loadFrom(root),
+    );
+
+    expect(resolution.ok).toBe(true);
+    if (!resolution.ok) return;
+
+    // Absent, not `undefined`: a consumer iterating the object should not meet a key whose value means nothing.
+    expect(Object.keys(resolution.configuration)).not.toContain(
+      "frameworkConfigFile",
+    );
+  });
+
+  it("reports which environment a run would target", async () => {
+    const root = await configuredProject(
+      JSON.stringify({
+        version: SUPPORTED_CONFIG_VERSION,
+        framework: "cypress",
+        environments: { only: { A: "1" } },
+      }),
+    );
+    const application = createApplication({
+      environment: {},
+      logDestination: capture().stream,
+    });
+
+    const resolution = application.configuration.resolve(
+      root,
+      await loadFrom(root),
+    );
+
+    expect(resolution.ok).toBe(true);
+    if (!resolution.ok) return;
+
+    expect(resolution.configuration.environment).toStrictEqual({
+      origin: "sole",
+      name: "only",
+    });
+  });
+
+  it("reports a refused path as a finding rather than throwing", async () => {
+    const root = await makeProject({ "readme.md": "" });
+    const application = createApplication({
+      environment: {},
+      logDestination: capture().stream,
+    });
+
+    // A branded document that skipped validation: the only way to reach the resolver's own refusal, and the case the
+    // second line of defence exists for.
+    const forged = markLoaded(
+      {
+        version: SUPPORTED_CONFIG_VERSION,
+        framework: "cypress",
+        output: { reports: "../escape", evidence: "ok" },
+      },
+      join(root, "qat.config.json"),
+    );
+
+    const resolution = application.configuration.resolve(root, forged);
+
+    expect(resolution.ok).toBe(false);
+    if (resolution.ok) return;
+
+    expect(resolution.findings).toHaveLength(1);
+    expect(resolution.findings[0]).toMatchObject({ path: "output.reports" });
+    // `remediation`, the application's name for it, not the resolver's `hint`.
+    expect(resolution.findings[0]?.remediation?.length ?? 0).toBeGreaterThan(0);
+    expect("configuration" in resolution).toBe(false);
+  });
+
+  it("refuses a document the loader never branded", async () => {
+    const root = await makeProject({ "readme.md": "" });
+    const application = createApplication({
+      environment: {},
+      logDestination: capture().stream,
+    });
+
+    // The port's structural type accepts this — the brand property is optional — so the refusal has to come from the
+    // marker check inside the resolver. Without it, a discarded load failure could be turned into a run assembled from
+    // invented values.
+    const forged: LoadedConfigurationDocument = {
+      document: { version: SUPPORTED_CONFIG_VERSION, framework: "cypress" },
+      source: join(root, "qat.config.json"),
+    };
+
+    expect(() => application.configuration.resolve(root, forged)).toThrow(
+      LoadedConfigurationRequiredError,
+    );
+  });
+
+  it("is synchronous, and exposes no test seam", () => {
+    const application = createApplication({
+      environment: {},
+      logDestination: capture().stream,
+    });
+
+    // Synchronous because resolution performs no I/O: a promise here would advertise work that never happens.
+    expect(
+      application.configuration.resolve,
+      "resolve must stay synchronous",
+    ).toBeTypeOf("function");
+    expect(Object.keys(application.configuration)).toStrictEqual(["resolve"]);
   });
 });
 
@@ -242,8 +471,7 @@ describe("isolation and lifecycle", () => {
 
     await application.dispose();
 
-    // Shutdown is reached from a signal handler and from a normal exit; neither is guaranteed to be
-    // the only one.
+    // Shutdown is reached from a signal handler and from a normal exit; neither is guaranteed to be the only one.
     await expect(application.dispose()).resolves.toBeUndefined();
   });
 

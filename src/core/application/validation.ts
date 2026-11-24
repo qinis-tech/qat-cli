@@ -31,6 +31,7 @@
  * are "not runnable right now" and they need different sentences, so the assessment carries findings plus a
  * gate per operation, rather than a flag that discards the distinction.
  */
+import type { ResolvedProjectConfiguration } from "./configuration.js";
 import type {
   DiagnosticCode,
   DiagnosticFinding,
@@ -192,6 +193,14 @@ export interface ProjectAssessment {
   readonly requirements: readonly ValidationRequirementResult[];
   /** One gate per operation, keyed, so a caller cannot ask about an operation that was never gated. */
   readonly gates: Readonly<Record<QatOperation, OperationGate>>;
+
+  /**
+   * Where this project's run would write, and against which environment.
+   *
+   * Optional because an assessment can be produced for a project whose configuration could not be read — which is a
+   * perfectly good assessment, and exactly the case in which there is no location to report.
+   */
+  readonly configuration?: ResolvedProjectConfiguration;
 }
 
 /** Whether an execution may start. The question every mutating command asks first. */

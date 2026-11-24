@@ -12,6 +12,13 @@
  * text is used in exactly two cases, both of which are messages *this* project wrote and attached to a refinement: a path
  * rule, a name rule, and the cross-field check.
  *
+ * ## The third source: findings from the resolution stage
+ *
+ * A path rule that needs the project root cannot be decided by a schema, so it is decided later and arrives here as a
+ * `PathIssue` instead of a parse issue. That finding is *presented* rather than re-authored: the stage that produced it
+ * knows the field, the root and the specific remedy, and restating its sentence here would give the project two wordings
+ * for one problem — one of which would drift.
+ *
  * ## Why the issue type is derived rather than named
  *
  * `ZodIssue` is the obvious name and it is deprecated — the library exposes its issue union through the error type now.
@@ -32,6 +39,7 @@
  */
 import type { ZodError } from "zod";
 
+import type { PathIssue } from "../resolver/contracts.js";
 import { SUPPORTED_CONFIG_VERSION } from "../schema/index.js";
 
 import {
@@ -94,7 +102,7 @@ function isAbsent(document: unknown, path: readonly PropertyKey[]): boolean {
  * in a message is the other wording defect this avoids.
  */
 function boundText(value: number | bigint | undefined): string {
-  return value === undefined ? "" : ` (${String(value)})`;
+  return value === undefined ? "" : `(${String(value)})`;
 }
 
 /**
@@ -220,5 +228,45 @@ export function unsupportedVersionDiagnostic(
         ? `The configuration declares version ${String(found)}, and this build reads version ${String(SUPPORTED_CONFIG_VERSION)}.`
         : `The configuration declares a version that is not ${String(SUPPORTED_CONFIG_VERSION)}.`,
     remediation: `Bring the file to version ${String(SUPPORTED_CONFIG_VERSION)}, or use the build that reads the version it declares.`,
+  };
+}
+
+/**
+ * Presents a path finding from the resolution stage as a configuration diagnostic.
+ *
+ * ## Why the sentence is carried rather than authored
+ *
+ * The stage that produced this knows three things this function does not: which field it was, what the project root is,
+ * and which of eleven specific rules was broken. Its message already names the field and ends in a full stop, and its
+ * hint already says what to write instead. Re-deriving either here would mean two wordings for one problem, and a reader
+ * receiving the version that drifted from the rule it describes.
+ *
+ * ## Why the path is not prefixed onto the message
+ *
+ * `describe()` exists for parse issues, whose sentences start without a subject. A path finding's sentence already begins
+ * `Configuration field "output.reports" …`, so prefixing the path again would say it twice.
+ *
+ * ## Why the value is not carried across
+ *
+ * `PathIssue` holds the offending value for tests and for message composition; a diagnostic does not. That mirrors the
+ * rule at the top of this file: a constructor value reaches a log line, and the field could be something the reader
+ * should not have written down.
+ *
+ * ## Severity
+ *
+ * Every rule in the resolution stage is structural and therefore blocking, so this mapping is total for the only severity
+ * that exists today. When that stage gains a warning, `ConfigurationDiagnostic` needs a severity field before this
+ * function is extended — otherwise a warning would be reported as an error by being flattened here.
+ */
+export function pathIssueToDiagnostic(
+  issue: PathIssue,
+): ConfigurationDiagnostic {
+  return {
+    code: ConfigurationDiagnosticCode.RefusedValue,
+    path: issue.field,
+    message: issue.message,
+    remediation:
+      issue.hint ??
+      "Correct the path at this field, or remove it to accept the default.",
   };
 }

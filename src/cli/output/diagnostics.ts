@@ -11,18 +11,35 @@
  * line there — and the disagreement is invisible until someone compares two outputs. One module means one answer to
  * "what does QAT's report look like", and the command stays the six lines that decide *when* to print.
  *
+ * ## Why the output locations are in the report
+ *
+ * Defaults and anchoring are invisible in a configuration file: the reader wrote nothing, or wrote a relative path, and
+ * the tool chose an absolute one. A report that does not say where reports and evidence will land leaves the most
+ * consequential decision of the run undocumented — and the first time it matters is the first time it is wrong.
+ *
+ * ## Two indents, two jobs
+ *
+ * A summary row is a label and a value on one line, aligned into a column. A finding block is a header with a body: the
+ * code stays flush so the codes form one scannable column, and everything describing it hangs two spaces beneath. Both
+ * are asserted positionally in `tests/unit/cli/diagnostics.test.ts`, because whitespace that nothing checks is
+ * whitespace that drifts.
+ *
  * ## Plain ASCII
  *
- * No em dash, no arrow, no bullet. They render correctly in a document and become mojibake in a console using a
- * legacy code page, and the reader who gets a broken character has no way to tell whether the tool is broken. A
- * colon and two spaces cost nothing.
+ * No em dash, no arrow, no bullet. They render correctly in a document and become mojibake in a console using a legacy
+ * code page, and the reader who gets a broken character has no way to tell whether the tool is broken. A colon and two
+ * spaces cost nothing.
  *
  * ## What this module does not decide
  *
- * Whether the project is usable, what the findings mean, and what any of them should say. It reads a diagnosis and a
- * gate and lays them out. The only judgement it makes is the exit status, and even that is a mapping from one field
- * rather than a rule.
+ * Whether the project is usable, what the findings mean, and what any of them should say. It reads a diagnosis, a gate
+ * and a resolved configuration and lays them out. The only judgement it makes is the exit status, and even that is a
+ * mapping from one field rather than a rule.
  */
+import type {
+  ResolvedEnvironment,
+  ResolvedProjectConfiguration,
+} from "../../core/application/configuration.js";
 import {
   QatOperation,
   isExecutable,
@@ -45,6 +62,11 @@ function row(label: string, value: string): string {
  * The code comes first because it is the thing a reader quotes in a bug report and the thing a script greps for. The
  * severity is beside it rather than as a separate heading, because a reader scanning for the word `error` should find
  * it without reading a sentence first.
+ *
+ * The detail lines are indented two spaces and the header is not. That keeps the left column a scannable list of codes:
+ * a reader running an eye down the report sees `QAT-V001`, `QAT-D005`, `QAT-D010` in one straight line, while the
+ * sentences that explain them hang beneath their code instead of competing with it. With two conditions in one report
+ * the difference stops being cosmetic.
  *
  * `at:` and `fix:` are omitted when absent rather than printed empty: a line saying `at: (none)` is noise, and a
  * consumer parsing a report should be able to tell "no file" from "a file named (none)".
@@ -95,19 +117,76 @@ function summary(assessment: ProjectAssessment): readonly string[] {
 }
 
 /**
+ * Which environment a run will use, and whether the tool chose it.
+ *
+ * The four cases are worded differently on purpose. "The only one declared" tells an operator that declaring a second
+ * environment will stop this being automatic, and "none selected" tells them the run has no target at all: that
+ * sentence is the one thing this report can say that saves a failure later, so it says what to do as well as what is
+ * missing.
+ */
+function environmentText(environment: ResolvedEnvironment): string {
+  switch (environment.origin) {
+    case "configured":
+      return `${environment.name} (from defaultEnvironment)`;
+    case "declared":
+      return `${environment.name} (the environment named "default")`;
+    case "sole":
+      return `${environment.name} (the only one declared)`;
+    case "none":
+      return "none selected; declare one, or set defaultEnvironment";
+  }
+}
+
+/**
+ * Where this run will write, and against which environment.
+ *
+ * Absolute paths only. The configured form is deliberately not repeated beside them: a line reading
+ * `results/reports -> /work/proj/results/reports` is longer, harder to scan, and answers a question — "what did I
+ * write?" — that the reader can answer by opening the file they just edited. What they cannot answer alone is where the
+ * tool decided to land.
+ *
+ * These rows are label/value pairs, so they are not indented: the indent belongs to a finding's body, not to a summary.
+ */
+export function configurationLines(
+  configuration: ResolvedProjectConfiguration,
+): readonly string[] {
+  return [
+    row("reports", configuration.reportsDirectory.absolute),
+    row("evidence", configuration.evidenceDirectory.absolute),
+    // Present only when the project or its configuration supplied one. Label shortened to keep the column: `row` pads
+    // to ten characters and a longer label would shift the value beside it.
+    ...(configuration.frameworkConfigFile === undefined
+      ? []
+      : [row("config", configuration.frameworkConfigFile.absolute)]),
+    row("env", environmentText(configuration.environment)),
+  ];
+}
+
+/**
  * The whole human-readable report.
  *
- * Blocking conditions first, then warnings, separated by a blank line: the gate already orders them that way, and a
- * reader who stops after the first block has still read the reason the command failed.
+ * Summary, then where the run will write, then blocking conditions, then warnings. The configuration block sits above
+ * the findings because it describes what will happen, not what is wrong with it; the gate already orders blocking
+ * before warnings, and a reader who stops after the first finding block has still read the reason the command failed.
  *
- * An empty list of findings adds nothing at all — not a heading, not a trailing blank line. A clean report is nine
- * lines, which is what makes it recognisably clean.
+ * An empty list of findings adds nothing at all — not a heading, not a trailing blank line. A clean report is the
+ * summary, one configuration block and no findings, which is what makes it recognisably clean.
+ *
+ * The configuration argument is optional so a caller that has no resolved configuration — a run whose configuration
+ * failed to load, and therefore has nowhere to write — produces exactly the report it produced before. It is not a
+ * default: absence means "not known", and the report then says nothing rather than inventing a location.
  */
-export function reportLines(assessment: ProjectAssessment): readonly string[] {
+export function reportLines(
+  assessment: ProjectAssessment,
+  configuration?: ResolvedProjectConfiguration,
+): readonly string[] {
   const { blocking, warnings } = assessment.gates[QatOperation.Execute];
 
   return [
     ...summary(assessment),
+    ...(configuration === undefined
+      ? []
+      : ["", ...configurationLines(configuration)]),
     ...(blocking.length === 0 ? [] : ["", ...blocking.flatMap(findingBlock)]),
     ...(warnings.length === 0 ? [] : ["", ...warnings.flatMap(findingBlock)]),
   ];

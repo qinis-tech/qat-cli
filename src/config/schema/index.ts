@@ -27,6 +27,7 @@
 export {
   CONFIG_FIELD_PATHS,
   qatConfigSchema,
+  OUTPUT_DEFAULTS,
   SUPPORTED_CONFIG_VERSION,
   type QatConfig,
   type QatConfigInput,
