@@ -47,6 +47,18 @@ import { ExitCode } from "~/core/errors/index.js";
  * target, no secret source. Naming the environment is enough for an operator, and a report that dumped a profile would
  * put the contents of a committed file into a log line by default.
  *
+ * ## The runtime question, and why there is no unsupported-runtime case here
+ *
+ * `doctor` reports the runtime checks alongside everything else, and a **passing check contributes no finding** — so on
+ * a supported interpreter this file's assertions are unchanged and the runtime work is invisible from the outside. That
+ * is the correct observable behaviour, and it is load-bearing: a check that warned on a supported runtime would make
+ * every clean project's report noisy in every pipeline. The cases at the end of this file are what would catch it.
+ *
+ * There is deliberately no case that *forces* an unsupported runtime. That needs a second interpreter, and adding an
+ * override to arrange it would create exactly the bypass the policy exists to prevent — an environment variable that
+ * lets CI fake compatibility. The unsupported paths are covered where they can be driven honestly: `run.test.ts` for
+ * the report, and the compatibility suites for the comparison itself.
+ *
  * ## Two imports, and the split is the modules'
  *
  * Project shapes come from `./fixtures.js`; running the binary, snapshotting a tree and making a bare directory come from
@@ -481,6 +493,53 @@ describe("doctor", () => {
       // copy of what it is already reading.
       expect(() => JSON.parse(result.stdout)).not.toThrow();
       expect(result.stderr).toBe("");
+    });
+  });
+
+  describe("the runtime it is running on", () => {
+    it("adds nothing to a clean report on a supported interpreter", async () => {
+      const root = await temporaryProject();
+
+      const result = await qat(["doctor", root]);
+
+      // A passing check produces no finding, so a healthy project's report is exactly what it was before the runtime
+      // work existed. The absence assertions below are the load-bearing ones: if the runtime check ever warned on a
+      // runtime this build supports, every clean project in every pipeline would start reporting noise, and this is the
+      // only case in the suite that would notice.
+      expect(result.exitCode).toBe(ExitCode.Success);
+      expect(valueOf(result.stdout, "result")).toBe("ready");
+      expect(result.stdout).not.toContain("QAT-H001");
+      expect(result.stdout).not.toContain("QAT-H008");
+      expect(result.stderr).toBe("");
+    });
+
+    it("adds nothing to the structured document either", async () => {
+      const root = await temporaryProject();
+
+      const result = await qat(["doctor", root, "--json"]);
+
+      const document = parseDocument(result.stdout);
+
+      // The gate the document exposes is the assessment's. A runtime finding would have to reach that gate to change an
+      // exit status, and on a supported interpreter there is none to reach it — so a consumer sees the same document it
+      // saw before the check existed.
+      expect(document.assessment?.gates?.execute?.blocking).toStrictEqual([]);
+      expect(JSON.stringify(document)).not.toContain("QAT-H");
+    });
+
+    it("leaves the exit status of a failing project untouched", async () => {
+      const root = await temporaryProject({
+        configured: false,
+        extra: { "cypress/cypress.config.ts": "export default {};\n" },
+      });
+
+      const result = await qat(["doctor", root]);
+
+      // One condition, one status. Adding a second possible blocker must not change what a caller sees for the first,
+      // and the code stays `InvalidInput` rather than becoming something runtime-specific — the exit-code contract is
+      // `core/errors`'s to own, and the runtime work adds no entry to it.
+      expect(result.exitCode).toBe(ExitCode.InvalidInput);
+      expect(result.stdout).not.toContain("QAT-H001");
     });
   });
 

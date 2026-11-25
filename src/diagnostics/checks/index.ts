@@ -20,9 +20,11 @@
  *
  * ## Why the fact shapes are exported
  *
- * `CheckFacts` is an argument type, so a caller needs it. The four groups are exported beside it because the caller is
- * the gatherer, and a function returning `OutputFacts` is clearer than one returning an anonymous object literal that
- * happens to match. They are inputs, not decisions: nothing here reads them.
+ * `CheckFacts` is an argument type, so a caller needs it. The groups are exported beside it because the caller is the
+ * gatherer, and a function returning `OutputFacts` is clearer than one returning an anonymous object literal that
+ * happens to match. `RuntimeRequirementFact` belongs in that list for the same reason: the gatherer is the one that
+ * reads the declared range and has to produce the value the check compares against. They are inputs, not decisions:
+ * nothing here reads them.
  *
  * ## Why `FactGroup` and `FACT_KEYS` are not
  *
@@ -30,10 +32,25 @@
  * naming it. `FACT_KEYS` maps a label to a property, and it exists for the runner — a consumer indexing the facts
  * object itself wants a group it declared, not a map it found.
  *
+ * ## Why the runtime rules are not exported
+ *
+ * `CHECKS` is the register, and a definition reachable a second way is a definition that can be registered twice or
+ * registered in the wrong order. The two runtime definitions live in `./rules/node-runtime.js`, are pulled in by
+ * `./rules.js`, and surface here only as entries in the table.
+ *
+ * ## What is no longer exported, and why
+ *
+ * `MINIMUM_NODE_MAJOR` used to be re-exported from this barrel. It restated the supported Node floor so prose could
+ * name a version without opening a manifest, and it was kept honest by a test comparing it to `engines.node`. The range
+ * now travels as evidence in `RuntimeFacts.required`, so there is no restatement left to export — and a barrel that
+ * kept exporting the old constant would have been the last place a stale copy survived, quoted by exactly the code
+ * that was supposed to stop quoting it.
+ *
  * ## No logic in this file, ever
  *
- * `src/**\/index.ts` is excluded from coverage on the grounds that a barrel contains nothing to measure. A helper placed
- * here would be invisible to the coverage report without anyone noticing. Logic belongs in a sibling module.
+ * A barrel is excluded from coverage on the grounds that it contains nothing to measure. A helper placed here would be
+ * invisible to the coverage report without anyone noticing. Logic belongs in a sibling module — and the siblings import
+ * each other directly rather than through this file, so the barrel can never become part of an import cycle.
  */
 export { runChecks } from "./run.js";
 
@@ -45,7 +62,7 @@ export { runChecks } from "./run.js";
  */
 export { CHECKS } from "./rules.js";
 
-export { HEALTH_GUIDANCE, MINIMUM_NODE_MAJOR } from "./guidance.js";
+export { HEALTH_GUIDANCE } from "./guidance.js";
 
 export type {
   CheckDefinition,
@@ -55,4 +72,5 @@ export type {
   OutputTarget,
   PackageManagerFacts,
   RuntimeFacts,
+  RuntimeRequirementFact,
 } from "./contracts.js";

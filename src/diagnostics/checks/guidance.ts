@@ -16,6 +16,26 @@
  * malformed file is described by line and column rather than by an excerpt. The excerpt is available on the loader's
  * outcome and it stays there, for a human reading a terminal; it does not travel into a finding that may be logged,
  * pasted into an issue, or rendered by something that has not read the disclosure rule.
+ *
+ * ## Why this file no longer states a Node.js version
+ *
+ * It used to hold the supported floor as a constant, restated from `engines.node` because a module of pure functions
+ * cannot open a manifest. The restatement was defended by a test asserting the number matched the manifest — which is a
+ * good guard, and the wrong shape: it made every release that changed the supported runtime a two-place edit, and the
+ * failure mode when someone forgot the second place was a message confidently quoting a requirement QAT no longer had.
+ *
+ * The range now arrives as evidence. `RuntimeFacts.required` carries the declared range and its provenance, the check
+ * compares against exactly that value, and these entries quote it back verbatim. There is nothing left to keep in
+ * step, so there is nothing left to drift — and a test that used to compare two copies now asserts that the sentence
+ * quotes the range it was given.
+ *
+ * ## Guarding evidence: extract the value, then test the parent
+ *
+ * Every runtime entry below starts by lifting the value it needs through an optional chain and then testing both the
+ * value and the object it came from. That looks like one test too many, and it is not: `facts.runtime?.nodeVersion
+ * === undefined` cannot tell the compiler *why* the value was missing, so the parent stays unnarrowed and the good
+ * branch cannot read `facts.runtime.required`. Two separate facts, two separate tests, each of which also reads as a
+ * single question.
  */
 import {
   HealthCode,
@@ -24,15 +44,6 @@ import {
 import { DiagnosticSeverity } from "../../core/application/diagnostics.js";
 
 import type { CheckFacts, OutputTarget } from "./contracts.js";
-
-/**
- * The lowest Node major QAT supports.
- *
- * The `engines.node` floor, restated rather than read: a module of pure functions cannot open `package.json`, and a
- * check that did would no longer be testable from a value. A test asserts this number equals the manifest's, so the
- * restatement cannot drift from the declaration it restates.
- */
-export const MINIMUM_NODE_MAJOR = 24;
 
 interface HealthText {
   readonly explanation: string;
@@ -54,22 +65,125 @@ function fileOf(facts: CheckFacts): string {
 const PROFILE_NAME = /^[a-z][a-z0-9-]*$/;
 
 export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
+  /**
+   * The runtime is readable and outside the declared range.
+   *
+   * Both numbers are printed — what is running and what is required — because a reader can act on a pair and cannot
+   * act on "unsupported". The provenance is printed too: it turns a disagreement with QAT into a file the reader can
+   * open, and it is the honest answer to "says who?" when the range has changed under them.
+   *
+   * The detected version is shown as the process reports it — `v18.19.0`, leading `v` and all — because that is the
+   * string the reader will compare against `node --version`, and trimming it here would make the message and their
+   * terminal disagree about the same runtime.
+   */
   [HealthCode.RuntimeUnsupported]: {
     severity: DiagnosticSeverity.Error,
-    describe: (facts) =>
-      facts.runtime === undefined
-        ? {
-            explanation:
-              "The running Node version was not available, so it could not be checked.",
-            remediation: `Run the command on Node ${String(MINIMUM_NODE_MAJOR)} or later.`,
-          }
-        : {
-            // The version is printed as the process reports it — `v20.20.2`, leading `v` and all — because that is the
-            // string the reader will compare against `node --version`, and trimming it here would make the message and
-            // their terminal disagree about the same runtime.
-            explanation: `Node ${facts.runtime.nodeVersion} is running, and QAT requires Node ${String(MINIMUM_NODE_MAJOR)} or later.`,
-            remediation: `Install Node ${String(MINIMUM_NODE_MAJOR)} or later, then run the command again.`,
-          },
+    describe: (facts) => {
+      const runtime = facts.runtime;
+      // Lifted through the optional chain, then tested on its own line. `runtime === undefined ||
+      // runtime.nodeVersion === undefined` says the same thing, but the second half is unreachable once the first
+      // fires — a reader has to work that out, and the lint rules refuse the shape outright.
+      const version = runtime?.nodeVersion;
+
+      // Reachable only when a caller renders this code without the evidence it needs — a mistake in a check rather
+      // than a condition of the project. Say the honest minimum instead of composing a sentence around a value that
+      // is not there, and never print an empty range as though it were a requirement.
+      if (runtime === undefined || version === undefined) {
+        return {
+          explanation:
+            "The running Node version does not satisfy QAT's declared requirement.",
+          remediation:
+            "Run the command again on a supported Node release; if this repeats, report it.",
+        };
+      }
+
+      return {
+        explanation: `Node ${version} is running, and QAT supports ${runtime.required.range} (declared in ${runtime.required.origin}).`,
+        remediation: `Install a Node release inside ${runtime.required.range}, confirm it with \`node --version\`, then run the command again. A newer major is not automatically compatible: support is only claimed for versions that have been tested.`,
+      };
+    },
+  },
+
+  /**
+   * The condition could not be established.
+   *
+   * Warning, not Error, and not silence. A question we failed to answer must not block work we can still perform, and
+   * it must not be counted as clean either — which is exactly what a warning is for.
+   *
+   * The three cases share an entry because they share a remedy: get a readable interpreter and a readable requirement,
+   * then ask again. They are not distinguished by a code of their own because the distinction lives on the verdict the
+   * check already produced; if a future report needs to render it, it arrives as its own code rather than being
+   * re-derived here by re-inspecting strings.
+   *
+   * The two guards are separate statements rather than one chain, because they lead to different sentences. Merging
+   * them would force one message to cover an assembly defect and a runtime defect at once, which is how a diagnostic
+   * ends up saying nothing specific about either.
+   */
+  [HealthCode.RuntimeUnknown]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const runtime = facts.runtime;
+      const version = runtime?.nodeVersion;
+
+      if (runtime === undefined) {
+        return {
+          explanation:
+            "The running Node version was not available, so it could not be checked against QAT's requirement.",
+          remediation: "Run the command again; if this repeats, reinstall QAT.",
+        };
+      }
+
+      if (version === undefined) {
+        return {
+          explanation:
+            "QAT could not read the running Node version, so compatibility with its requirement could not be confirmed.",
+          remediation:
+            "Run the command on a released Node interpreter — `node --version` should print a plain major.minor.patch value — and report the result if this repeats.",
+        };
+      }
+
+      return {
+        explanation: `QAT could not confirm that Node ${version} satisfies ${runtime.required.range} (declared in ${runtime.required.origin}).`,
+        remediation:
+          "Check that `node --version` prints a released major.minor.patch value, then reinstall QAT if the declared requirement cannot be read.",
+      };
+    },
+  },
+
+  /**
+   * The project's framework release needs a runtime QAT's own requirement does not describe.
+   *
+   * Its own code, on purpose. The two requirements have different owners — one is fixed by moving QAT, the other by
+   * moving the project — and a finding that merged them would name a problem without naming whose it is. QAT's own
+   * range is repeated here so the reader can see whether the two overlap before deciding anything.
+   */
+  [HealthCode.FrameworkRuntimeUnsupported]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const runtime = facts.runtime;
+      const version = runtime?.nodeVersion;
+      const framework = runtime?.frameworkRequired;
+
+      // Three facts, one guard, no member access inside the condition — so each operand is a name whose meaning is
+      // visible on the line above, and the compiler narrows all three for the branch below.
+      if (
+        runtime === undefined ||
+        version === undefined ||
+        framework === undefined
+      ) {
+        return {
+          explanation:
+            "The project's framework release declares a Node.js requirement that could not be checked.",
+          remediation: "Run the command again once the project is resolvable.",
+        };
+      }
+
+      return {
+        explanation: `Node ${version} is running. This project's framework release requires ${framework.range} (declared in ${framework.origin}), while QAT itself supports ${runtime.required.range}.`,
+        remediation:
+          "Install a Node release that satisfies both requirements, or move the project's framework to a release that supports the runtime you are on.",
+      };
+    },
   },
 
   [HealthCode.PackageManagerUnknown]: {
@@ -177,7 +291,9 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
         explanation:
           selected === undefined
             ? "A command selected an environment, and the configuration declares none."
-            : `The environment ${PROFILE_NAME.test(selected) ? `"${selected}"` : "selected on the command line"} is not declared in the configuration.`,
+            : PROFILE_NAME.test(selected)
+              ? `The environment "${selected}" is not declared in the configuration.`
+              : "The environment selected on the command line is not declared in the configuration.",
         remediation:
           declared.length === 0
             ? "Declare the environment in the configuration, or remove the selection."
@@ -222,7 +338,7 @@ export function healthFinding(
  * The finding for an output directory that cannot be written.
  *
  * A second renderer for one code, because the shape it needs — the target, and nothing else — is narrower than the
- * fact set the other six entries read. It exists so the path is exact rather than guessed: the check knows which
+ * fact set the other entries read. It exists so the path is exact rather than guessed: the check knows which
  * directory it probed, and a message that named the wrong one would send a reader to fix a directory that is fine.
  */
 export function unwritableFinding(target: OutputTarget): CheckFinding {

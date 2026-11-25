@@ -166,11 +166,42 @@ const ABSENT: ConfigurationLoadResult = {
 };
 
 /**
+ * The range this build declares, as a fixture.
+ *
+ * Shared by every runtime case, so a scenario varies exactly one thing. The shape mirrors what the manifest produces;
+ * nothing here is read from disk, and nothing here is parsed by the test — the check does that, once, in one place.
+ *
+ * Both bounds are complete `MAJOR.MINOR.PATCH` tuples, and that is a requirement rather than a preference: the range
+ * grammar refuses partial versions instead of completing them, so a fixture written `>=24.0.0 <25` is an *unreadable*
+ * policy. Every runtime case would then report `QAT-H008` — indeterminate — without ever comparing a version, which
+ * looks like a broken check and is actually a broken fixture.
+ */
+const DECLARED = {
+  range: ">=24.0.0 <25.0.0",
+  origin: "package.json#engines.node",
+} as const;
+
+/**
+ * Runtime evidence with the requirement always present.
+ *
+ * A constructor rather than object literals, because `required` is the field whose omission produced
+ * `Cannot read properties of undefined (reading 'range')` from inside the comparison: each case replaced the whole
+ * `runtime` group in a spread and silently dropped it, and nothing caught it because a spread's result is never
+ * checked field-by-field against the type it satisfies.
+ *
+ * One function means one place that can be wrong — and this one cannot be, because `required` comes first and can be
+ * replaced but never omitted.
+ */
+function runtimeFacts(overrides: Partial<RuntimeFacts> = {}): RuntimeFacts {
+  return { nodeVersion: "v24.4.0", required: DECLARED, ...overrides };
+}
+
+/**
  * Each fact group named once, and non-optional, so a fact set that omits one can be written without setting a property
  * to `undefined` — which `exactOptionalPropertyTypes` forbids and rightly so: absent and present-and-undefined are
  * different states.
  */
-const RUNTIME: RuntimeFacts = { nodeVersion: "v24.4.0" };
+const RUNTIME: RuntimeFacts = runtimeFacts();
 const MANAGER: PackageManagerFacts = {
   selected: { name: "npm", declared: true },
 };
@@ -286,7 +317,9 @@ describe("a healthy project", () => {
 });
 
 describe("every declared scenario", () => {
-  it.each(Object.entries(CASES))("%s", (scenario, expectation) => {
+  // The scenario name reaches the title through `%s`, so the parameter is unused inside the body. Named with the `_`
+  // prefix the lint rules require rather than consumed by a tautological assertion.
+  it.each(Object.entries(CASES))("%s", (_scenario, expectation) => {
     const outcome = outcomeOf(runChecks(expectation.facts), expectation.check);
 
     // One comparison per case, carrying the status and the code together. `QAT-V002` reaching the wrong check would
@@ -294,9 +327,6 @@ describe("every declared scenario", () => {
     expect(fingerprint(outcome)).toBe(
       expected(expectation.status, expectation.code),
     );
-
-    // Named so a failure reads as the scenario it belongs to rather than as two opaque strings.
-    expect(scenario).toBe(scenario);
   });
 });
 
@@ -380,38 +410,61 @@ describe("skipping", () => {
 });
 
 describe("boundaries", () => {
-  it("accepts the minimum Node major and refuses the one below it", () => {
-    const atMinimum = runChecks({
+  it("accepts the inclusive floor and refuses the version below it", () => {
+    // A pair, because one case at the floor cannot tell `>=` from `>`. The version arrives as `process.version` reports
+    // it, with a leading `v`, which is also what the parser has to tolerate.
+    const atFloor = runChecks({
       ...HEALTHY,
-      runtime: { nodeVersion: "v24.0.0" },
+      runtime: runtimeFacts({ nodeVersion: "v24.0.0" }),
     });
-    const below = runChecks({
+    const belowFloor = runChecks({
       ...HEALTHY,
-      runtime: { nodeVersion: "v23.11.0" },
+      runtime: runtimeFacts({ nodeVersion: "v23.11.0" }),
     });
 
-    // The version arrives as `process.version` reports it, with a leading `v`. Parsing it without trimming is the
-    // mistake that makes this check fail on every runtime, and the floor itself is inclusive.
     expect([
-      fingerprint(outcomeOf(atMinimum, CheckId.NodeVersion)),
-      fingerprint(outcomeOf(below, CheckId.NodeVersion)),
+      fingerprint(outcomeOf(atFloor, CheckId.NodeVersion)),
+      fingerprint(outcomeOf(belowFloor, CheckId.NodeVersion)),
     ]).toStrictEqual([
       CheckStatus.Passed,
       `${CheckStatus.Failed} ${HealthCode.RuntimeUnsupported}`,
     ]);
   });
 
-  it("refuses a runtime version it cannot read rather than assuming it is fine", () => {
-    const report = runChecks({
+  it("accepts the top of the range and refuses the exclusive ceiling", () => {
+    const atTop = runChecks({
       ...HEALTHY,
-      runtime: { nodeVersion: "v-next" },
+      runtime: runtimeFacts({ nodeVersion: "v24.999.999" }),
+    });
+    const atCeiling = runChecks({
+      ...HEALTHY,
+      runtime: runtimeFacts({ nodeVersion: "v25.0.0" }),
     });
 
-    // Treating "I cannot tell" as "supported" is how a report blesses a runtime it never measured.
-    expect(outcomeOf(report, CheckId.NodeVersion)).toMatchObject({
-      status: CheckStatus.Failed,
-      finding: { code: HealthCode.RuntimeUnsupported },
+    expect([
+      fingerprint(outcomeOf(atTop, CheckId.NodeVersion)),
+      fingerprint(outcomeOf(atCeiling, CheckId.NodeVersion)),
+    ]).toStrictEqual([
+      CheckStatus.Passed,
+      `${CheckStatus.Failed} ${HealthCode.RuntimeUnsupported}`,
+    ]);
+  });
+
+  it("warns on a runtime it cannot read, rather than assuming it is fine", () => {
+    const report = runChecks({
+      ...HEALTHY,
+      runtime: runtimeFacts({ nodeVersion: "v-next" }),
     });
+
+    // "I could not read the version" is neither a pass nor a failure. Treating it as supported blesses a runtime we
+    // never measured; treating it as unsupported refuses work on the strength of an unanswered question. It warns,
+    // which is visible and does not block — and it carries its own code, because the reader's next step differs from
+    // the step for a measured mismatch.
+    expect(outcomeOf(report, CheckId.NodeVersion)).toMatchObject({
+      status: CheckStatus.Warned,
+      finding: { code: HealthCode.RuntimeUnknown },
+    });
+    expect(isBlocked(report)).toBe(false);
   });
 
   it("distinguishes one unwritable directory from both", () => {
@@ -442,19 +495,19 @@ describe("the severity rule", () => {
       (check) =>
         check.scenarios.map((scenario) => [scenario, check.id] as const),
     ),
-  )("%s never fails a run", (scenario, check) => {
+  )("%s never fails a run", (_scenario, check) => {
     // The invariant the runner relies on: `failed` is reserved for error-severity checks. Driven from the same
     // fixtures the inventory uses, so an advisory check that grew a `fail` branch is caught by the case that already
     // exists for it rather than by a new one nobody writes.
     expect(
-      fingerprint(outcomeOf(runChecks(caseOf(scenario).facts), check)),
+      fingerprint(outcomeOf(runChecks(caseOf(_scenario).facts), check)),
     ).not.toBe(CheckStatus.Failed);
   });
 
   it("blocks on a failed error check, and lists it once", () => {
     const report = runChecks({
       ...HEALTHY,
-      runtime: { nodeVersion: "v20.20.2" },
+      runtime: runtimeFacts({ nodeVersion: "v23.11.0" }),
     });
 
     expect(isBlocked(report)).toBe(true);
@@ -496,7 +549,7 @@ interface Case {
  * following a reference.
  */
 const CASES: Record<string, Case> = {
-  // runtime compatibility
+  // runtime compatibility — what QAT itself requires
   "runtime.node-version.supported": {
     check: CheckId.NodeVersion,
     facts: HEALTHY,
@@ -504,15 +557,112 @@ const CASES: Record<string, Case> = {
   },
   "runtime.node-version.below-floor": {
     check: CheckId.NodeVersion,
-    facts: { ...HEALTHY, runtime: { nodeVersion: "v20.20.2" } },
+    facts: { ...HEALTHY, runtime: runtimeFacts({ nodeVersion: "v23.11.0" }) },
     status: CheckStatus.Failed,
     code: HealthCode.RuntimeUnsupported,
   },
-  "runtime.node-version.unreadable": {
+  "runtime.node-version.above-ceiling": {
     check: CheckId.NodeVersion,
-    facts: { ...HEALTHY, runtime: { nodeVersion: "v-next" } },
+    facts: { ...HEALTHY, runtime: runtimeFacts({ nodeVersion: "v25.0.0" }) },
     status: CheckStatus.Failed,
     code: HealthCode.RuntimeUnsupported,
+  },
+  "runtime.node-version.between-lines": {
+    check: CheckId.NodeVersion,
+    // A declared policy with a gap: 24.4.0 is inside the span but matches neither alternative. Distinct from "too old"
+    // and "too new" because neither upgrade nor downgrade is the answer — the reader has to move onto a supported line.
+    facts: {
+      ...HEALTHY,
+      runtime: runtimeFacts({
+        required: {
+          range: "<24.0.0 || >=26.0.0",
+          origin: "package.json#engines.node",
+        },
+      }),
+    },
+    status: CheckStatus.Failed,
+    code: HealthCode.RuntimeUnsupported,
+  },
+  "runtime.node-version.pre-release": {
+    check: CheckId.NodeVersion,
+    // A release candidate does not inherit the stable line's support: no comparator names a pre-release of 24.0.0.
+    facts: {
+      ...HEALTHY,
+      runtime: runtimeFacts({ nodeVersion: "v24.0.0-rc.1" }),
+    },
+    status: CheckStatus.Failed,
+    code: HealthCode.RuntimeUnsupported,
+  },
+  "runtime.node-version.version-unreadable": {
+    check: CheckId.NodeVersion,
+    facts: { ...HEALTHY, runtime: runtimeFacts({ nodeVersion: "v-next" }) },
+    status: CheckStatus.Warned,
+    code: HealthCode.RuntimeUnknown,
+  },
+  "runtime.node-version.policy-unreadable": {
+    check: CheckId.NodeVersion,
+    // The empty range is exactly what a broken installation produces. Reported, never replaced with a default.
+    facts: {
+      ...HEALTHY,
+      runtime: runtimeFacts({
+        required: { range: "", origin: "package.json#engines.node" },
+      }),
+    },
+    status: CheckStatus.Warned,
+    code: HealthCode.RuntimeUnknown,
+  },
+
+  // runtime compatibility — what the project's framework requires
+  "cypress.runtime-supported.satisfied": {
+    check: CheckId.CypressRuntimeSupported,
+    facts: {
+      ...HEALTHY,
+      runtime: runtimeFacts({
+        frameworkRequired: {
+          range: ">=22.0.0 <25.0.0",
+          origin: "cypress runtime requirement",
+        },
+      }),
+    },
+    status: CheckStatus.Passed,
+  },
+  "cypress.runtime-supported.unsatisfied": {
+    check: CheckId.CypressRuntimeSupported,
+    facts: {
+      ...HEALTHY,
+      runtime: runtimeFacts({
+        frameworkRequired: {
+          range: ">=22.0.0 <24.0.0",
+          origin: "cypress runtime requirement",
+        },
+      }),
+    },
+    // Advisory, so `warned` and not `failed`: the runner reserves `failed` for error-severity checks, and a
+    // dependency's metadata must not veto a run over a bound QAT neither controls nor verifies.
+    status: CheckStatus.Warned,
+    code: HealthCode.FrameworkRuntimeUnsupported,
+  },
+  "cypress.runtime-supported.not-declared": {
+    check: CheckId.CypressRuntimeSupported,
+    facts: HEALTHY,
+    // Nothing declared means nothing to violate. A warning here would fabricate an advisory from an absence, which is
+    // how people learn to ignore advisories.
+    status: CheckStatus.Passed,
+  },
+  "cypress.runtime-supported.version-unreadable": {
+    check: CheckId.CypressRuntimeSupported,
+    facts: {
+      ...HEALTHY,
+      runtime: runtimeFacts({
+        nodeVersion: "v-next",
+        frameworkRequired: {
+          range: ">=22.0.0 <25.0.0",
+          origin: "cypress runtime requirement",
+        },
+      }),
+    },
+    status: CheckStatus.Warned,
+    code: HealthCode.FrameworkRuntimeUnsupported,
   },
 
   // package-manager availability

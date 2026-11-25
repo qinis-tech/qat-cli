@@ -54,7 +54,13 @@ import type { ValidationCode } from "./validation.js";
  * category is a decision about how the report is grouped rather than a label a check may choose for itself.
  */
 export const CheckCategory = {
-  /** The Node runtime QAT is running on. */
+  /**
+   * The Node.js runtime QAT is running on, and what a framework requires of that runtime.
+   *
+   * One group rather than two because a reader looking at a report cares about one thing — whether this machine can run
+   * the work — and splitting "the runtime" from "the runtime something else needs" would ask them to compare two
+   * sections to answer it.
+   */
   Runtime: "runtime",
   /** Whether a package manager can be named, so remedies can name one. */
   PackageManager: "package-manager",
@@ -75,7 +81,7 @@ export const CheckCategory = {
 export type CheckCategory = (typeof CheckCategory)[keyof typeof CheckCategory];
 
 /**
- * The twelve health checks.
+ * The thirteen health checks.
  *
  * An identifier is a dotted slug rather than a code, because it names a *question* and is quoted in documentation and
  * in the identifier of the scenario that verifies it. The diagnostic *code* is attached to the finding a check
@@ -89,7 +95,12 @@ export type CheckCategory = (typeof CheckCategory)[keyof typeof CheckCategory];
  * an identifier quoted in a bug report keeps the meaning it had when it was quoted.
  */
 export const CheckId = {
-  /** Is the running Node major one QAT supports? */
+  /**
+   * Is the running Node.js version inside the range QAT declares?
+   *
+   * "Version", not "major": the declared requirement is a range, and a check that reduced it to a major number would
+   * accept every patch above a floor and every pre-release of the next line that happened to share the digit.
+   */
   NodeVersion: "runtime.node-version",
   /** Can a package manager be named for this project? */
   PackageManager: "environment.package-manager",
@@ -105,6 +116,14 @@ export const CheckId = {
   CypressInstalled: "cypress.installed",
   /** Is the installed major inside the range QAT will drive? */
   CypressVersionSupported: "cypress.version-supported",
+  /**
+   * Does the running Node.js version satisfy what the project's framework requires of it?
+   *
+   * A second runtime question with a different owner: `runtime.node-version` asks what *QAT* needs, this asks what the
+   * project's framework needs. The subject segment keeps the framework's questions together; the category keeps the
+   * answer in the Runtime group of the report, where a reader is already looking.
+   */
+  CypressRuntimeSupported: "cypress.runtime-supported",
   /** Can the QAT configuration file be read? */
   QatConfigurationLoadable: "qat.configuration-loadable",
   /** Does the environment a command selected exist in the configuration? */
@@ -171,9 +190,16 @@ export type CheckSkipReason =
  *
  * `QAT-H003` covers both output directories. One condition, one code: which directory is in the finding's `path`, which
  * is the same arrangement validation uses for two shapes of a misplaced configuration.
+ *
+ * The runtime is three codes rather than one, and the split is the split between *observed* and *unobtainable*: a
+ * mismatch QAT could measure blocks, an answer QAT could not get warns, and a requirement owned by the project's
+ * framework is reported on its own so the remedy names the right owner. One code could say "unsupported" for all
+ * three; it could not tell a reader which of three different things to do.
+ *
+ * New codes are appended, never inserted, so a number quoted in a report keeps its meaning.
  */
 export const HealthCode = {
-  /** The running Node major is older than QAT supports, or could not be read as a version at all. */
+  /** The running Node.js version was read and lies outside the range QAT declares. */
   RuntimeUnsupported: "QAT-H001",
   /** Neither a manifest declaration nor a lockfile names a package manager. */
   PackageManagerUnknown: "QAT-H002",
@@ -187,6 +213,23 @@ export const HealthCode = {
   ConfigurationTooLarge: "QAT-H006",
   /** The environment a command selected is not declared in the configuration. */
   EnvironmentUndeclared: "QAT-H007",
+  /**
+   * The running Node.js version could not be compared with the declared range.
+   *
+   * Covers the three ways that happens — the host reported no version, reported something that is not a version, or the
+   * declared requirement itself could not be read. One code because the reader's next step is the same for all three,
+   * and because a code per cause would put QAT's own installation defects in the same list as the project's.
+   *
+   * Warning, never a pass: an unverified runtime is not a compatible one, and silence would read as consent.
+   */
+  RuntimeUnknown: "QAT-H008",
+  /**
+   * The project's framework release declares a Node.js range the running version does not satisfy.
+   *
+   * Separate from `QAT-H001` because the owner is different and so is the remedy: one is fixed by moving QAT, the other
+   * by moving the project's framework — or the runtime the project builds against.
+   */
+  FrameworkRuntimeUnsupported: "QAT-H009",
 } as const;
 
 export type HealthCode = (typeof HealthCode)[keyof typeof HealthCode];

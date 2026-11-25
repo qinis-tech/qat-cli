@@ -10,9 +10,14 @@
  *
  * Error contract, uniform across every port: a port **rejects** with an `ApplicationError` when a condition prevents
  * it from doing its job, and **resolves** otherwise. Returning `undefined` means "not found", which is not an error.
- * Nothing here throws a bare `string` or a framework-specific error object. The one exception to the *asynchrony*
- * is `ConfigurationResolver.resolve`, which is synchronous because it performs no I/O — a promise there would
- * announce work that never happens.
+ * Nothing here throws a bare `string` or a framework-specific error object.
+ *
+ * The rule for *asynchrony* is that it follows from I/O, not from habit. A member is synchronous only when it
+ * performs no I/O — in which case a promise would announce work that never happens, and every caller would begin
+ * handling a failure that cannot occur. Two members qualify, and both say so in their own documentation:
+ * `ConfigurationResolver.resolve`, which is a pure function of a validated document and an absolute root, and
+ * `RuntimeProbe.readNodeVersion`, which reads a value already in memory. Asynchrony is never dropped for convenience,
+ * and it is never added to make an interface look uniform.
  *
  * Path convention: a **live request** carries absolute paths, resolved once at the composition boundary. **Stored and
  * returned data** carries paths relative to a declared root, so records stay portable. The asymmetry is deliberate —
@@ -32,7 +37,12 @@
  * Inlining any of them would put four vocabularies in one namespace, and a reader checking "what can a finding say"
  * would find it a hundred lines below the interface that mentions it. The rule as this file grows is that a group
  * moves out when its *vocabulary* is independent, not when the file gets long.
+ *
+ * The runtime probe below stays here for the opposite reason: it is one interface with no vocabulary of its own — it
+ * borrows nothing, not even a domain type; a `string` and an optional are all it needs — so a fifth sibling file
+ * would be ceremony around four lines.
  */
+import type { RuntimeRequirement } from "../compatibility/index.js";
 import type {
   ConfigurationInput,
   ConfigurationResult,
@@ -449,6 +459,50 @@ export interface ReportGenerator {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Runtime environment
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Reading the identity of the runtime that is executing QAT.
+ *
+ * One question, one answer: which version is running us. Deliberately narrow — a probe that also reported platform,
+ * architecture and executable path would force every implementation and every fake to supply four facts in order to
+ * answer one, and would blur the only fact a compatibility decision depends on. If a second question is ever needed,
+ * it belongs on a second port, not on a wider version of this one.
+ *
+ * The port exists at all because the application layer must not reach for `process`. Detection belongs to the machine
+ * (`core/environment`), comparison belongs to `core/compatibility`, and the diagnostic that consumes the answer must
+ * be constructible without either — which is what makes the whole supported/unsupported boundary matrix testable with
+ * literals instead of real interpreters.
+ *
+ * ## Synchronous, on purpose
+ *
+ * The answer is already in memory: the running interpreter's version is a property read, with no file to open and no
+ * process to wait for. A promise here would announce I/O that does not happen, and every caller would begin handling
+ * a failure that cannot occur — the same argument that makes `ConfigurationResolver.resolve` synchronous. An
+ * implementation that genuinely needed I/O would need a different port; "make it async in case" is how an interface
+ * loses the ability to say what it does.
+ *
+ * ## Answer contract
+ *
+ * - **Returns** the version exactly as the host reports it (`20.11.1`), unparsed and unnormalised. Parsing and
+ *   ordering are one decision made in one place; a probe that normalised would be a second opinion about what a
+ *   version looks like, and the two would eventually disagree.
+ * - **Returns `undefined`** when the host reports no version at all. That is "not found", not a failure. The caller
+ *   turns it into an indeterminate compatibility result, which is reported — and never counted as a pass.
+ * - **Throws** `ApplicationError` only when the probe cannot answer at all. A port that threw for an absent version
+ *   would make an ordinary environmental condition look like a defect, and the diagnostic that exists to explain the
+ *   environment would be the thing that crashes.
+ *
+ * `undefined` rather than an empty string because absence and malformation are different findings with different
+ * messages: "no version was reported" describes the environment, while "reported something unreadable" describes a
+ * value worth quoting back to the user.
+ */
+export interface RuntimeProbe {
+  readNodeVersion(): string | undefined;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Cross-cutting capabilities
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -510,11 +564,46 @@ export interface IdGenerator {
  *
  * `logger` is the port, not the concrete logger service: a handler reports, it does not derive correlated children.
  * Anything that needs a run-scoped logger receives one as a parameter later.
+ *
+ * Two of these members are *evidence*, not services: `runtime` and `nodeRequirement`. They are exposed because the
+ * health checks consume gathered facts rather than dependencies, and the gatherer is a command-level workflow — so
+ * the two halves of the runtime question have to be reachable from outside without any command resolving them for
+ * itself. Neither is a second source: both come from the assembly, once.
  */
 export interface Application {
   readonly logger: Logger;
   readonly repository: ExecutionRepository;
   readonly discovery: ProjectDiscovery;
+
+  /**
+   * Reads the running interpreter.
+   *
+   * Here rather than inside the discovery port because it answers a question about the *machine*, not about the
+   * project: `discover`, `diagnose` and `assess` all describe a directory, and a runtime version describes the process
+   * asking about it. Folding it in would make "what is this project" and "what am I running on" arrive as one answer
+   * that a caller has to take apart.
+   *
+   * Returning the port rather than a version string is the same choice made elsewhere in this file: the gatherer
+   * pairs this with `nodeRequirement`, and a bare string would lose the `undefined` case that means "no version was
+   * reported".
+   */
+  readonly runtime: RuntimeProbe;
+
+  /**
+   * The Node.js range this build declares, read once from its own manifest.
+   *
+   * A value, not a resolver: a second read would be a second answer, and a report that quoted one range while
+   * comparing against another would be wrong in the one place it must not be.
+   *
+   * `range` is carried **verbatim**, including when it is empty. An installation that declares nothing must be
+   * reported as declaring nothing; correcting it here — with a default, or by omitting the member — would replace a
+   * visible warning with a silent assumption.
+   *
+   * Deliberately not the type a check consumes. The range reaches a check through the runtime facts the gatherer
+   * builds, so no checks-layer type appears in this file: a port may say what a caller can ask for, never how a
+   * particular consumer shapes the answer.
+   */
+  readonly nodeRequirement: RuntimeRequirement;
 
   /**
    * The configuration a project supplied, defaulted and anchored.
@@ -524,12 +613,12 @@ export interface Application {
    * project's output goes and returns findings, rather than throwing, for a path it refused.
    *
    * Deliberately not folded into `ConfigurationLoader`: that port answers "may I trust this file", and this one
-   * answers "where does this file point". Merging them would force a caller that only wants to read a configuration to
-   * acquire an opinion about the project root as well.
+   * answers "where does this file point". Merging them would force a caller that only wants to read a configuration
+   * to acquire an opinion about the project root as well.
    *
-   * The one synchronous member in this file. Resolution is a pure function of a validated document and an absolute
-   * root — no file is read, no clock is consulted, and the working directory is never involved — so a promise here
-   * would advertise I/O that does not happen and every caller would begin handling a failure that cannot occur.
+   * One of the two synchronous members in this file, for the reason given on the interface itself: resolution is a
+   * pure function of a validated document and an absolute root, so a promise would advertise I/O that does not
+   * happen.
    */
   readonly configuration: ConfigurationResolver;
 

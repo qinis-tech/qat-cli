@@ -16,6 +16,22 @@
  * rather than the group itself being optional: "no package manager could be identified" is a finding, and a check that
  * skipped on it would have nothing to say about exactly the case it exists for.
  *
+ * `RuntimeFacts.nodeVersion` follows the same rule for the same reason: a host that reports no version is not a group
+ * nobody gathered, it is an answer — and one worth reporting. Leaving it required would have forced the assembly to
+ * invent a string or throw, and both of those hide the condition the check exists to describe.
+ *
+ * ## Why the runtime group carries a requirement as well as a version
+ *
+ * A check is data with one input: `evaluate(facts)`. It has no constructor, no injected dependency bag, no second
+ * channel. So the supported range must arrive as evidence or not at all — and "not at all" would mean the rule
+ * importing a constant, which is precisely how the same range ends up written in a check, a README and a CI matrix,
+ * with three different values after the first release that forgets two of them.
+ *
+ * Treating the policy as evidence is honest rather than convenient: the range is *gathered* from the package's own
+ * declaration, exactly as the version is gathered from the running process. Both are things the check is told and
+ * must not assume. The two are kept in the same group because they are answered by the same question — "what is the
+ * runtime situation here?" — and splitting them would add a group that no other check will ever read.
+ *
  * Every field below is read by at least one check or by the sentence it produces. A fact nothing reads is a fact the
  * next person will assume is load-bearing.
  */
@@ -27,6 +43,7 @@ import type {
   CheckSeverity,
 } from "../../core/application/checks.js";
 import type { ProjectAssessment } from "../../core/application/validation.js";
+import type { RuntimeRequirement } from "../../core/compatibility/index.js";
 
 /**
  * The evidence a check may declare that it needs.
@@ -46,10 +63,62 @@ export const FactGroup = {
 
 export type FactGroup = (typeof FactGroup)[keyof typeof FactGroup];
 
-/** The Node runtime is running on. One value, because the only question asked of it is which major it starts with. */
+/**
+ * A runtime requirement, as a check needs it: range and provenance only.
+ *
+ * Narrowed from core's `RuntimeRequirement` by `Pick`, so the two cannot drift about what a range is — and so the
+ * fields that are deliberately *not* here stay visibly not-here rather than being quietly present and unused.
+ *
+ * `severityWhenUnsatisfied` is the field that is dropped, and dropping it is the point. How badly a failed requirement
+ * matters is declared once, on the check's `severity`, decided with every other check in one catalogue. Carrying it
+ * here too would give the same decision two homes and leave a reader guessing which one wins.
+ */
+export type RuntimeRequirementFact = Pick<
+  RuntimeRequirement,
+  "range" | "origin"
+>;
+
+/**
+ * The Node runtime situation: what the host reports, and what is required of it.
+ *
+ * Both halves are needed to produce a finding a reader can act on. `detected` without `required` is a number with no
+ * context; `required` without `detected` is a rule with no subject. A finding needs the pair, which is why the group
+ * holds the pair rather than leaving the caller to join them.
+ */
 export interface RuntimeFacts {
-  /** As the process reports it, e.g. `v24.4.0`. Unparsed here: the check compares majors, not strings. */
-  readonly nodeVersion: string;
+  /**
+   * The version as the host reports it, e.g. `v24.4.0`.
+   *
+   * Unparsed here, on purpose: parsing happens once, inside the comparison, so there is exactly one opinion about what
+   * a version is. A layer that pre-parsed would be a second opinion, and the two would eventually disagree about
+   * something like a pre-release suffix.
+   *
+   * Absent when the host reported nothing — reported as a warning finding rather than as a pass, because "I could not
+   * read the runtime" must never be mistaken for "the runtime is fine" (see the note at the top of this file).
+   */
+  readonly nodeVersion?: string;
+
+  /**
+   * What QAT itself requires.
+   *
+   * Required, not optional, because every run has an authority even when that authority declared nothing: an absent
+   * `engines` field arrives here as an empty `range`, which the check reports as unreadable policy. Modelling it as
+   * optional would make "no policy" indistinguishable from "policy not gathered", and the check would then skip on the
+   * one condition it most needs to speak about.
+   */
+  readonly required: RuntimeRequirementFact;
+
+  /**
+   * An additional runtime bound declared by the project's framework release.
+   *
+   * Absent when nothing declares one, and absence emits nothing — an advisory invented from a missing declaration is
+   * worse than no advisory. Named for the concept rather than for the framework, which is the same rule that keeps
+   * this layer free of framework names: the next adapter supplies the same shape.
+   *
+   * Reported separately from `required`, never merged into its finding, because the two have different owners and
+   * different urgency. A file that said only "unsupported runtime" would not tell a reader whose requirement failed.
+   */
+  readonly frameworkRequired?: RuntimeRequirementFact;
 }
 
 export interface PackageManagerFacts {
@@ -130,6 +199,10 @@ export const FACT_KEYS: Readonly<Record<FactGroup, keyof CheckFacts>> = {
  *
  * Three values, not four: whether a `fail` stops the run is the check's declared severity, decided once in the
  * catalogue, rather than something the check gets to choose at the point of failure.
+ *
+ * `warn` is also where "could not establish" belongs. A condition that could not be evaluated is not a pass — silence
+ * must not read as consent — and it is not a `fail`, because a question we failed to answer must not block work we can
+ * still perform. The finding then says which of the two it was, in words the reader can act on.
  */
 export type CheckVerdict =
   | { readonly verdict: "pass" }
@@ -188,4 +261,28 @@ export function present<T>(group: T | undefined): T {
   }
 
   return group;
+}
+
+/**
+ * A fact the type says must be present.
+ *
+ * `present()` guards a whole group and its message is about `requires`. This guards a *field* inside a group, which is
+ * a different defect with a different fix: the gatherer declared the group and then omitted the part that makes it
+ * useful.
+ *
+ * Both are loud, for the same reason. Reporting an absent field as a finding would put a programmer's mistake into a
+ * user's terminal — "QAT could not confirm that Node 20.11.1 satisfies  (declared in )" — and passing on it would let a
+ * check claim something it never examined. The only remaining option is a message that names the omission.
+ *
+ * The parameter is optional on purpose even though the property is not: the guard exists for the case where the type
+ * was satisfied by a hand-built object that never went through the type, which is exactly how this was first found.
+ */
+export function requireFact<T>(fact: T | undefined, what: string): T {
+  if (fact === undefined) {
+    throw new Error(
+      `A check required ${what}, which the facts did not carry. The gatherer must supply it; a check cannot invent one.`,
+    );
+  }
+
+  return fact;
 }

@@ -24,6 +24,32 @@
  * depends on what the caller was about to do: a project with no configuration is blocked for a run and perfectly
  * reportable by an inspection, and one severity field cannot say both. The per-operation verdict belongs to the
  * validation layer's gate, which reads these severities rather than re-deciding them.
+ *
+ * ## Why this catalogue holds no runtime entry
+ *
+ * The Node.js runtime conditions are `QAT-H` codes owned by `src/diagnostics/checks`. They are properties of the
+ * machine a command happens to be running on, not of the project being inspected, and nothing here could describe them
+ * without borrowing the wrong vocabulary: every entry below is a statement about a tree of files, and "your Node is too
+ * old" is not one.
+ *
+ * The near-miss case is a *project-declared* runtime bound — the range a project's framework release says it needs.
+ * That genuinely is a property of the project, and it still does not belong here: it is compared against the running
+ * interpreter, so its finding is a runtime finding, and it must name the framework's requirement separately from
+ * QAT's. It is reported under `HealthCode.FrameworkRuntimeUnsupported`, from the same pair of checks that report the
+ * blocking one.
+ *
+ * ## Why this file keeps a Cypress major while a sibling file deleted a Node major
+ *
+ * `MINIMUM_CYPRESS_MAJOR` is a fact about a file format. Cypress 10 introduced `cypress.config.*`, so an installation
+ * older than that cannot read the file whose presence is what identified the project. It is not a support policy, it
+ * is not restated from any manifest, and it changes only if Cypress changes its format again.
+ *
+ * The Node floor that used to live in the checks layer's guidance was the opposite kind of number: a support policy,
+ * derived from the package manifest, and therefore available as evidence. It was deleted, and the check now compares
+ * against whatever the manifest declares.
+ *
+ * Both constants were integers and only one of them was a duplicate. That is why the rule is not "delete every version
+ * constant" — it is "state no policy twice", and a format fact is not a policy.
  */
 import {
   DiagnosticCode,
@@ -42,6 +68,9 @@ import type { FrameworkDeclaration } from "../../core/domain/index.js";
  * two coincide today and are deliberately not the same constant: one is a fact about a file, the other a choice
  * about support, and a single value serving both would make the next change to either look like a change to the
  * other.
+ *
+ * This is also why it survived the removal of the Node floor that used to sit in the checks layer. That number was a
+ * support policy restated from `engines.node`; this one is not restated from anything, because nothing declares it.
  */
 export const MINIMUM_CYPRESS_MAJOR = 10;
 
