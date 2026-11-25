@@ -8,6 +8,7 @@
  */
 import type { EvidenceReference } from "./evidence.js";
 import type { EnvironmentId, ExecutionId, IsoTimestamp } from "./primitives.js";
+import type { ResolvedSecrets } from "./secret-values.js";
 
 // Identifier and timestamp aliases live in ./primitives.js, so that no domain module
 // has to import another merely to name a value. Their documentation is there, and they
@@ -83,6 +84,72 @@ export interface ExecutionOptions {
   readonly collectEvidence: boolean;
 }
 
+/* -------------------------------------------------------------------------- */
+/* The environment a run targets                                              */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Which level supplied the target a run addresses.
+ *
+ * Carried because "why is it talking to staging?" is the first question asked when a run
+ * looks wrong, and the answer is not derivable after the fact: the profile value, an
+ * exported variable and a flag all produce the same string.
+ */
+export const BaseUrlSource = {
+  /** An explicit command-line override. */
+  Flag: "flag",
+  /** An approved environment variable. */
+  Environment: "environment",
+  /** The selected environment profile. */
+  Configuration: "configuration",
+  /** Nothing supplied one. */
+  None: "none",
+} as const;
+
+export type BaseUrlSource = (typeof BaseUrlSource)[keyof typeof BaseUrlSource];
+
+/**
+ * What the selected environment resolves to: values, not identity.
+ *
+ * ## Why the name is not here
+ *
+ * `ExecutionRequest.environment` already carries it. A second field holding the same
+ * string is two places to read one fact, and the failure mode is silent: a run recorded
+ * under `staging` whose target came from `production` looks entirely ordinary in a report.
+ * Identity is a primitive on the request; values are this object; neither repeats the
+ * other.
+ *
+ * ## Why this is separate from `ExecutionRequest.environment` at all
+ *
+ * Because naming a run and resolving its target are different acts with different costs.
+ * A caller can mint an execution id and log "starting run 4f2a against staging" before any
+ * secret has been looked up — and must be able to, because resolution can fail. Folding
+ * identity into the resolution would make a secret lookup a precondition for naming a run,
+ * and the log line that would have explained the failure could not be written.
+ */
+export interface ResolvedExecutionEnvironment {
+  /** The target this run addresses, after every approved source has been consulted. */
+  readonly baseUrl?: string;
+  /** Which level supplied `baseUrl`; `none` when nothing did. */
+  readonly baseUrlSource: BaseUrlSource;
+  /**
+   * Non-sensitive variables, exactly as the profile wrote them.
+   *
+   * Passed through untouched. Nothing here infers that a value "looks like a path" and
+   * rewrites it: a variable is opaque text handed to the framework, and a heuristic that
+   * rewrote some of them would break the one it guessed wrong about, silently.
+   */
+  readonly variables: Readonly<Record<string, string>>;
+  /**
+   * Resolved secret values, in a container that redacts itself when serialised or
+   * inspected.
+   *
+   * The framework adapter reads them; every other consumer receives `[redacted]`, which is
+   * what makes it safe for this object to sit on a request that ends up in a log line.
+   */
+  readonly secrets: ResolvedSecrets;
+}
+
 /**
  * A request to execute tests.
  *
@@ -92,7 +159,23 @@ export interface ExecutionOptions {
  */
 export interface ExecutionRequest {
   readonly executionId: ExecutionId;
+  /**
+   * Which environment this run is recorded against.
+   *
+   * An identifier, not a resolution. It is what appears in storage, in artefact paths and
+   * in every log line, and it is known before anything about the environment has been
+   * resolved.
+   */
   readonly environment: EnvironmentId;
+  /**
+   * What that environment resolves to, when a profile was selected.
+   *
+   * Omitted when the project declares no environments and none was required — a run
+   * against the framework's own ambient configuration. Optional rather than nullable so a
+   * caller that has nothing to add says nothing, and a consumer that needs a target treats
+   * absence as a refusal rather than as an empty one.
+   */
+  readonly resolvedEnvironment?: ResolvedExecutionEnvironment;
   readonly specSelection: SpecSelection;
   readonly mode: ExecutionMode;
   readonly options: ExecutionOptions;
@@ -160,6 +243,11 @@ export interface ExecutionErrorInfo {
  * Persisted results outlive the code that wrote them, so a reader must be able to
  * recognise a shape it does not understand. Bump this whenever a field changes meaning,
  * and read it before trusting anything else in the record.
+ *
+ * Adding `resolvedEnvironment` to the *request* did not bump this: a request is live code
+ * and is never persisted, and a stored result still records the environment as an
+ * identifier. A secret value belongs in a child process's environment, never in a result
+ * file, so the result shape is unchanged by design rather than by omission.
  */
 export const EXECUTION_RESULT_SCHEMA_VERSION = 1;
 
@@ -178,6 +266,13 @@ export interface ExecutionResult {
   readonly startedAt: IsoTimestamp;
   readonly completedAt: IsoTimestamp;
   readonly durationMs: number;
+  /**
+   * The environment identifier, not its resolution.
+   *
+   * A stored record must be readable years later, by code whose profile schema has moved
+   * on. The identifier survives that; a resolved target would not, and a resolved secret
+   * must never be written down at all.
+   */
   readonly environment: EnvironmentId;
   /** Absolute, resolved once at discovery so nothing downstream re-derives it. */
   readonly projectRoot: string;

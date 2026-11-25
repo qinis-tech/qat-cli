@@ -2,15 +2,24 @@
  * Contracts for the configuration resolution stage.
  *
  * The resolver sits between loading (bytes -> document) and validation
- * (document -> verdict), and does exactly two things: it fills the values a
- * user omitted, and it anchors every path to the project root.
+ * (document -> verdict), and does two things: it fills the values a user
+ * omitted, anchors every path to the project root, and resolves the environment
+ * a run targets into one protected value.
  *
  * Design constraints that shape this file:
  *
- * - No imports. This module is the leaf of the resolver's dependency graph, so
- *   every other module in the stage can depend on it without risking a cycle.
- *   Consequently nothing here may touch the filesystem, the clock, or the
- *   process working directory.
+ * - **No runtime imports.** This module is the leaf of the resolver's runtime
+ *   graph, so every other module in the stage can depend on it without risking a
+ *   cycle. Concretely: nothing here may reach the filesystem, the clock or the
+ *   process working directory at run time.
+ *
+ *   It does have three *type-only* imports, and they are the deliberate
+ *   exception: the environment vocabulary needs the schema's profile type and the
+ *   domain's resolved-environment type. `import type` is erased at build time, so
+ *   the runtime graph stays a leaf, while the compiler still checks the hand-off
+ *   between the three modules. Introducing a *value* import here would undo the
+ *   property this file exists to have.
+ *
  * - Runtime-checkable invariants, not just compile-time ones. A type-only brand
  *   disappears at runtime; the brand below is a module-private symbol, so a
  *   document can only claim to be "loaded" by passing through {@link markLoaded}.
@@ -22,6 +31,8 @@
  *   indifference is what lets a fully validated document be accepted without a
  *   cast, whichever way its own module chose to declare it.
  */
+import type { ResolvedExecutionEnvironment } from "../../core/domain/execution.js";
+import type { EnvironmentProfiles } from "../schema/index.js";
 
 /* -------------------------------------------------------------------------- */
 /* Paths                                                                      */
@@ -101,7 +112,7 @@ export type IssueSeverity = "error" | "warning";
 export interface PathIssue {
   readonly code: PathIssueCode;
   readonly severity: IssueSeverity;
-  /** Dotted location inside the configuration document, e.g. "reports.directory". */
+  /** Dotted location inside the configuration document, e.g. "output.reports". */
   readonly field: string;
   /** The offending value as supplied, so the message can echo it back. */
   readonly value: unknown;
@@ -274,6 +285,12 @@ type OptionalFields<TFields> = {
  * names an invented field is worse than no view at all: defaults would introduce
  * that field into every document, and validation would then reject every project
  * for a field the user never wrote.
+ *
+ * `environments` stays `unknown` for the same reason, and with one consequence
+ * worth knowing: the environment resolution stage does not read it from here. It
+ * receives the *validated* profiles from its caller — see
+ * {@link ResolveEnvironmentInput} — because profile selection needs fields this
+ * view deliberately does not interpret.
  */
 export type DefaultableConfiguration = OptionalFields<{
   readonly version: unknown;
@@ -321,7 +338,7 @@ export interface LoadedConfigurationDocument<
   TDocument extends DefaultableConfiguration = DefaultableConfiguration,
 > {
   readonly document: TDocument;
-  /** Absolute path of the file the document came from, for diagnostics. */
+  /** Absolute path of the document came from, for diagnostics. */
   readonly source: string;
   /** Present at runtime so the invariant is checkable, not merely declared. */
   readonly [LOADED_DOCUMENT_BRAND]?: true;
@@ -449,6 +466,10 @@ export function assertLoadedDocument(
  * `origin` is carried because the three cases are operationally different: an
  * operator who never named an environment should be able to see that QAT chose
  * the only one available, rather than assuming it was configured.
+ *
+ * This is the *default* the configuration declares. What a run actually targets
+ * is {@link ResolvedExecutionEnvironment}, which also accounts for a request and
+ * for approved overrides.
  */
 export type DefaultEnvironmentResolution =
   | {
@@ -518,3 +539,137 @@ export type ConfigurationResolution =
       readonly ok: false;
       readonly issues: readonly PathIssue[];
     };
+
+/* -------------------------------------------------------------------------- */
+/* Environment resolution                                                     */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Every way selecting an environment can fail.
+ *
+ * Three of them are about the *name* — malformed, unknown, or none chosen — and
+ * one is about a value the project asked for and the machine does not have. They
+ * are distinct because they have four different fixes: correct the spelling,
+ * choose from the list, declare an environment, or set a variable.
+ */
+export const ENVIRONMENT_ISSUE_CODES = [
+  "ENVIRONMENT_NAME_INVALID",
+  "ENVIRONMENT_UNKNOWN",
+  "ENVIRONMENT_NONE_SELECTED",
+  "SECRET_UNRESOLVED",
+] as const;
+
+export type EnvironmentIssueCode = (typeof ENVIRONMENT_ISSUE_CODES)[number];
+
+/**
+ * A reason an environment could not be resolved.
+ *
+ * Not a {@link PathIssue}: this stage has no field paths to anchor and no values
+ * to quote, and a secret's *absence* is all it can report — the value was never
+ * present to print. Carrying a separate shape keeps the path vocabulary from
+ * acquiring members that mean nothing to a path.
+ */
+export interface EnvironmentIssue {
+  readonly code: EnvironmentIssueCode;
+  readonly severity: IssueSeverity;
+  /**
+   * One sentence naming the environment or the variable, never a value.
+   *
+   * An unresolved secret names the variable the operator must set; it cannot name
+   * the secret, because there is nothing to name.
+   */
+  readonly message: string;
+  /** What to do next. Every code here has a concrete answer, so this is required. */
+  readonly remediation: string;
+}
+
+/**
+ * The properties an approved source may override.
+ *
+ * One field, and that is the policy rather than an unfinished list. A variable is
+ * written down per environment precisely so that what a run uses is reviewable;
+ * allowing one to be overridden out of band makes the file a lie about what ran.
+ * A secret's *name* is configuration, and letting it be swapped at run time is how
+ * a run authenticates as something nobody reviewed.
+ *
+ * Adding a member is a decision with a constraint attached, not a merge of
+ * arbitrary keys: this type is the surface, and a shape with one field cannot
+ * express an override for anything else.
+ */
+export interface EnvironmentOverrides {
+  /** The target this run addresses. Validated with the same constraint the file is. */
+  readonly baseUrl?: string;
+}
+
+export interface ResolveEnvironmentInput {
+  /**
+   * The profiles the project declared, already validated by the schema.
+   *
+   * Taken from the validated document rather than from
+   * {@link DefaultableConfiguration}, which types the field `unknown` on purpose:
+   * selecting a profile means reading `baseUrl`, `variables` and `secrets`, and a
+   * view that never interprets a value cannot offer those. The caller is the
+   * composition root, which holds the validated document.
+   */
+  readonly profiles: EnvironmentProfiles | undefined;
+  /**
+   * The default the configuration stage derived.
+   *
+   * Passed in rather than re-derived, so this stage cannot disagree with what
+   * `qat doctor` reported a moment earlier.
+   */
+  readonly defaultEnvironment: DefaultEnvironmentResolution;
+  /** The environment a command asked for, if any. */
+  readonly requested?: string;
+  /** The approved explicit override, if one was supplied. Highest precedence. */
+  readonly fromFlag?: EnvironmentOverrides;
+  /**
+   * The ambient environment, read for the approved override variable.
+   *
+   * Typed structurally rather than importing `EnvironmentSource`, so this file
+   * needs no dependency on the environment module to describe what it reads: any
+   * record of strings will do, and the precedence resolver treats a missing entry
+   * and an empty one alike.
+   */
+  readonly environment: Readonly<Record<string, string | undefined>>;
+  /**
+   * Resolves a secret's variable name to its value.
+   *
+   * Injected, so this stage stays free of `process.env` and a test can supply a
+   * map. It returns `undefined` rather than throwing for absence, because "this
+   * machine does not have it" is an expected answer the caller renders.
+   */
+  readonly readSecret: (name: string) => string | undefined;
+  /**
+   * Whether a run needs a target at all.
+   *
+   * True for execution, where running against "no environment" means running
+   * against whatever the framework happens to default to — a result nobody can
+   * explain. False for inspection, which can describe a project that declares no
+   * environments.
+   */
+  readonly requireEnvironment?: boolean;
+}
+
+/**
+ * Outcome of resolving an environment.
+ *
+ * The success branch carries the domain's own type, because that value goes
+ * straight onto an execution request — see `ResolvedExecutionEnvironment` in
+ * `core/domain/execution.ts`. Defining a second shape here would mean a mapping
+ * function whose only job is to rename fields, and a mapping function is where a
+ * field gets forgotten.
+ *
+ * The failure branch carries no environment, for the same reason a failed
+ * configuration resolution carries no paths: a run assembled from a partly
+ * resolved environment would authenticate as nobody and target nowhere.
+ */
+export type EnvironmentResolution =
+  | {
+      readonly ok: true;
+      /** Which environment was selected. `undefined` only when none was required and none exists. */
+      readonly name: string | undefined;
+      readonly origin: "requested" | "default" | "none";
+      readonly environment: ResolvedExecutionEnvironment;
+    }
+  | { readonly ok: false; readonly issues: readonly EnvironmentIssue[] };

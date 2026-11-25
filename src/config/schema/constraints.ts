@@ -4,6 +4,18 @@
  * Five of them, and each exists because it is used more than once or because the rule behind it is not obvious from the
  * call site. A constraint written inline at one field is a constraint the next field will not have.
  *
+ * ## What belongs here, and what does not
+ *
+ * This file holds **string** primitives: one value in, one verdict out. Rules about *shapes* — a profile that must declare
+ * something, a map that must not be empty — live beside the shape itself, in `profiles.ts`, because they are refinements
+ * over objects rather than over values, and a reader looking for "why was my environment refused" should not have to check
+ * two files to find out which kind of rule fired.
+ *
+ * Two of the constraints below are also used outside the configuration document: `environmentName` validates the name a
+ * command was asked for, before it is looked up, and `profileBaseUrl` validates an approved override, so an environment
+ * variable or a flag cannot introduce a target the file would have refused. A rule with a bypass is not a rule, which is
+ * why the same function is called rather than an equivalent one.
+ *
  * ## One issue per value, always
  *
  * Every constraint here is a single `superRefine` that checks its rules in order and **returns after the first one
@@ -50,6 +62,14 @@ const ENVIRONMENT_NAME = /^[a-z][a-z0-9-]*$/;
 const ENVIRONMENT_VARIABLE_NAME = /^[A-Z][A-Z0-9_]*$/;
 
 /**
+ * The shape a value has when somebody has tried to write a secret reference into a variable.
+ *
+ * Narrow on purpose. A broad pattern would refuse innocent values that happen to contain a colon; this one matches only
+ * the prefix people actually reach for when they are trying to point at a secret from the wrong map.
+ */
+const SECRET_REFERENCE_SHAPE = /^env:/iu;
+
+/**
  * Names a path segment may not use.
  *
  * Not a style rule. A `..` segment is how a path leaves the project root, and a write outside the project is a
@@ -62,8 +82,11 @@ const FORBIDDEN_SEGMENTS = new Set([".", ".."]);
 /**
  * Names refused wherever a user-supplied key would become a property.
  *
- * Exported because the check has to run twice: once on the raw input, where the key still exists, and once as a
- * refinement on each key schema, where it costs nothing and catches a caller that reached a record directly.
+ * Exported because the check has to run in three places, and each catches a case the others cannot: on the raw input,
+ * where a `__proto__` key still exists as a key (assigning it changes a prototype rather than adding a property, so a
+ * record schema never sees it); as a refinement on each key schema, where it costs nothing and catches a caller that
+ * reached a record directly; and by the walking check in `config.ts`, which descends into a profile's `variables` and
+ * `secrets` maps because those keys are the user's too.
  */
 export const RESERVED_NAMES = new Set([
   "__proto__",
@@ -95,6 +118,9 @@ function containsControlCharacters(value: string): boolean {
  * Six rules, and **the first one broken is the one reported**, because they overlap: an absolute path with a backslash is
  * one mistake, not two, and an empty path would otherwise be refused once for being empty and again for having an empty
  * segment.
+ *
+ * Used by the two output paths and by a framework configuration file. A profile contributes no paths: an environment
+ * describes a target and a set of values, not a second place to write reports.
  */
 export const relativeProjectPath = z.string().superRefine((value, ctx) => {
   const refuse = (message: string): void => {
@@ -157,6 +183,10 @@ export const relativeProjectPath = z.string().superRefine((value, ctx) => {
  *
  * Four rules in one refinement, so a name that is both too long and wrongly cased produces one message: the length first,
  * because that is the fix a reader can make without thinking about the rest.
+ *
+ * Called twice in a run's life, with the same rules both times: once by the schema, for a name declared in the file, and
+ * once by the environment resolver, for the name a command was asked for — before the lookup, so a typo is reported as a
+ * typo rather than as an environment the project does not have.
  */
 export const environmentName = z.string().superRefine((value, ctx) => {
   const refuse = (message: string): void => {
@@ -190,9 +220,9 @@ export const environmentName = z.string().superRefine((value, ctx) => {
  * Upper case because these values are also passed to a child process, where a lowercase name is legal and a surprise.
  * One spelling, applied here, is what stops a configuration working on one platform and not another.
  *
- * The reserved-name check lowercases before comparing: `Constructor` is not a property name a prototype cares about, but
- * it is one character away from being spelled differently by whoever reads the file next, and refusing one casing of a
- * reserved word is a distinction nobody wants to explain.
+ * The reserved-name check lowercases before comparing, which matters for the one casing the pattern above still accepts:
+ * `CONSTRUCTOR` passes the upper-case rule and must still be refused, because a name that differs from a reserved one
+ * only by case is one rename away from being read as it.
  */
 export const environmentVariableName = z.string().superRefine((value, ctx) => {
   const refuse = (message: string): void => {
@@ -228,6 +258,17 @@ export const environmentVariableName = z.string().superRefine((value, ctx) => {
  *
  * No minimum: an empty value is a legitimate variable. `NAME=` in a shell is a value somebody set to nothing, and a
  * schema that refused it would be refusing a case people use deliberately.
+ *
+ * ## The one shape refused outright
+ *
+ * A value beginning `env:` is almost always somebody trying to point at a secret from the variable map — the exact
+ * confusion the profile format prevents by giving secrets their own field. Accepting it would produce a run that hands the
+ * literal text `env:TOKEN` to the framework, which fails at the far end with a message about authentication and no mention
+ * of the configuration at all. Refusing it here names the field and the map to move it to.
+ *
+ * This is a heuristic and it is narrow on purpose: a value that merely *contains* a colon is fine, and an empty value is
+ * fine. If it ever refuses something legitimate, the fix is to widen the profile's `secrets` documentation, not the
+ * pattern.
  */
 export const environmentVariableValue = z.string().superRefine((value, ctx) => {
   const refuse = (message: string): void => {
@@ -243,12 +284,18 @@ export const environmentVariableValue = z.string().superRefine((value, ctx) => {
   if (containsControlCharacters(value)) {
     return refuse("must be a single line without control characters");
   }
+
+  if (SECRET_REFERENCE_SHAPE.test(value)) {
+    return refuse(
+      'looks like a reference to a secret; declare it under "secrets" instead, where the value is read from the environment at run time rather than stored in this file',
+    );
+  }
 });
 
 /**
  * The target address an environment points at.
  *
- * Four rules, reported one at a time, in the order that produces the most useful first message.
+ * Five rules, reported one at a time, in the order that produces the most useful first message.
  *
  * - **Length, first.** A paste accident is the most likely mistake and the cheapest to state.
  * - **No control characters, before the parse.** `new URL` strips tabs and newlines as part of parsing, so a value with
@@ -261,6 +308,9 @@ export const environmentVariableValue = z.string().superRefine((value, ctx) => {
  *   committed file, appear in every log line that mentions the target, and keep working until the day the password is
  *   rotated, when it would fail with a message about the host. Secrets have a field of their own; this rule is what stops
  *   this field being used as one.
+ *
+ * Also applied to an approved override — the `QAT_BASE_URL` variable and the corresponding flag — so the constraint cannot
+ * be bypassed by supplying the same bad URL from a source the file's reader never sees.
  */
 export const profileBaseUrl = z.string().superRefine((value, ctx) => {
   const refuse = (message: string): void => {
