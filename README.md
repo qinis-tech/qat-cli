@@ -50,6 +50,19 @@ $ echo $?
 Once a project has a `qat.config.json`, the report gains a block saying where a run would write and which environment it
 would use — the decisions that are otherwise invisible in a file the reader deliberately left empty.
 
+```console
+$ qat doctor
+…
+result       ready
+
+reports      /repo/packages/api/results/reports
+evidence     /repo/packages/api/results/evidence
+env          staging (from defaultEnvironment)
+```
+
+Those three lines are the whole of the configuration's visible effect, and each one can be absent: a project with no
+configuration prints none of them, and one that declares no environments says so in words rather than guessing.
+
 When something blocks a run, the reason is printed with a code, the file it concerns, and what to do about it — and the
 exit status carries the failure.
 
@@ -84,7 +97,8 @@ Nothing was changed. Delete the file first if you want a fresh one.
 ```
 
 Both exit `0`, and the second one changed nothing — a provisioning script that runs twice must not fail on the second
-pass.
+pass. The file it writes is two fields: the configuration version, and the framework. Everything else has a documented
+default, and copying a default into the file would turn today's value into tomorrow's decision.
 
 > `qat doctor` and `qat init` are real. `qat run` is next and is not written yet — see [Status](#status).
 
@@ -111,23 +125,26 @@ into a fix.
 **Pre-alpha.** The engineering foundation is in place and the first two user-facing commands work; the product is not
 finished, and the package is not published.
 
-| Area                                                                 | State       |
-| -------------------------------------------------------------------- | ----------- |
-| Domain contracts, error model, exit-code mapping                     | Built       |
-| Structured logging, safe filesystem utilities                        | Built       |
-| Package metadata and Cypress project detection                       | Built       |
-| Diagnostics, validation and per-operation readiness                  | Built       |
-| Configuration schema, defaults and path resolution                   | Built       |
-| Environment profiles, including secret references                    | Built       |
-| CLI entry point, `qat doctor`, `qat init`, exit-status contract      | Built       |
-| Safe configuration writing — create-only, backed up if ever replaced | Built       |
-| Lint, format, type, test and decision-record gates                   | Built       |
-| Continuous integration, git hooks, publication safeguards            | Built       |
-| Architecture decision records                                        | 30 accepted |
-| Cypress adapter and `qat run`                                        | Not started |
-| Reports, history, diff and `qat diagnose`                            | Not started |
+| Area                                                                 | State                  |
+| -------------------------------------------------------------------- | ---------------------- |
+| Domain contracts, error model, exit-code mapping                     | Built                  |
+| Structured logging, safe filesystem utilities                        | Built                  |
+| Package metadata and Cypress project detection                       | Built                  |
+| Diagnostics, validation and per-operation readiness                  | Built                  |
+| Configuration schema, defaults and path resolution                   | Built                  |
+| Environment profiles, including secret references                    | Built                  |
+| Environment selection, approved overrides, secret resolution         | Built — no command yet |
+| CLI entry point, `qat doctor`, `qat init`, exit-status contract      | Built                  |
+| Safe configuration writing — create-only, backed up if ever replaced | Built                  |
+| Lint, format, type, test and decision-record gates                   | Built                  |
+| Continuous integration, git hooks, publication safeguards            | Built                  |
+| Architecture decision records                                        | 35 accepted            |
+| Cypress adapter and `qat run`                                        | Not started            |
+| Reports, history, diff and `qat diagnose`                            | Not started            |
 
-This table is updated as work lands. If it says "Built", there is code and a test behind it.
+This table is updated as work lands. If it says "Built", there is code and a test behind it. One row says "no command
+yet", and means exactly that: the service is specified by its tests, and the command that will call it is the next piece
+of work.
 
 ---
 
@@ -150,10 +167,10 @@ Most CLIs spend `1` on every failure, which makes a configuration typo indisting
 cannot tell "your change is bad" from "our tool is bad", so a human has to read the log — which is where the time goes.
 QAT refuses that trade, and a test asserts that no application error can ever produce `1`.
 
-Both commands already honour it in the direction that matters most: a project that cannot be run exits `2`, and a
-configuration that cannot be written exits `2`, and both write **nothing to standard error**, because the report _is_
-the failure message. A pipeline can therefore separate "this command found something to say" from "this command broke"
-without parsing prose.
+Both commands already honour it in the direction that matters most: a project that cannot be run exits `2`, a
+configuration that cannot be written exits `2`, and a configuration that is already there exits `0` because the
+postcondition holds — and all of them write **nothing to standard error**, because the report _is_ the failure message. A
+pipeline can therefore separate "this command found something to say" from "this command broke" without parsing prose.
 
 Full contract and rationale: [error model](docs/architecture/error-model.md).
 
@@ -212,26 +229,29 @@ Full matrix, prohibited edges, and what is enforced by lint versus by review:
 
 Every one of these is a real document with a real job, not a placeholder.
 
-| Document                                                              | Covers                                                                   |
-| --------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| [Module boundaries](docs/architecture/module-boundaries.md)           | Layers, permitted and prohibited dependencies, the composition root      |
-| [Error model](docs/architecture/error-model.md)                       | Codes, categories, recoverability, exit-code mapping                     |
-| [Project discovery](docs/architecture/project-discovery.md)           | Which project a command is working on, and when a condition blocks a run |
-| [Validation](docs/architecture/validation.md)                         | Per-operation readiness, the rule table, the supported-layout policy     |
-| [Configuration format](docs/architecture/configuration-format.md)     | The file a project commits: fields, paths, and what to keep out of it    |
-| [Environment profiles](docs/architecture/environment-profiles.md)     | A named environment, and why a secret is a reference rather than a value |
-| [Configuration defaults](docs/architecture/configuration-defaults.md) | Every optional field, its default or its explicit refusal to have one    |
-| [Decision records](docs/architecture/adr/adr-index.md)                | Why the architecture looks the way it does                               |
-| [Code standards](docs/development/code-standards.md)                  | Lint rules, severity policy, suppression rules, formatting               |
-| [Testing standards](docs/development/testing-standards.md)            | Layout, naming, coverage rules, and why no threshold is enforced yet     |
-| [CLI commands](docs/development/cli-commands.md)                      | The command contract, argument conventions, how help is generated        |
-| [CLI output](docs/development/cli-output.md)                          | Streams, the report shape, and what a `--json` consumer receives         |
-| [Logging](docs/development/logging.md)                                | Levels, correlation, redaction, and the output/log split                 |
-| [Continuous integration](docs/development/continuous-integration.md)  | Jobs, required checks, the Node policy                                   |
-| [Git hooks](docs/development/git-hooks.md)                            | What runs locally, and why it is a courtesy rather than a gate           |
-| [Repository hygiene](docs/development/repository-hygiene.md)          | What enters git, what ships to npm, secret protection                    |
-| [Commit convention](docs/engineering/commit-convention.md)            | Message format, types, scopes, release mapping                           |
-| [Manual end-to-end testing](docs/quality/manual-e2e-testing.md)       | What a human checks that the suite cannot, and how to check it twice     |
+| Document                                                                  | Covers                                                                     |
+| ------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| [Module boundaries](docs/architecture/module-boundaries.md)               | Layers, permitted and prohibited dependencies, the composition root        |
+| [Error model](docs/architecture/error-model.md)                           | Codes, categories, recoverability, exit-code mapping                       |
+| [Project discovery](docs/architecture/project-discovery.md)               | Which project a command is working on, and when a condition blocks a run   |
+| [Validation](docs/architecture/validation.md)                             | Per-operation readiness, the rule table, the supported-layout policy       |
+| [Configuration format](docs/architecture/configuration-format.md)         | The file a project commits: fields, paths, and what to keep out of it      |
+| [Configuration precedence](docs/architecture/configuration-precedence.md) | The five levels a value can arrive from, and which one wins                |
+| [Environment profiles](docs/architecture/environment-profiles.md)         | A named environment, and why a secret is a reference rather than a value   |
+| [Environment resolution](docs/architecture/environment-resolution.md)     | Selecting an environment, the one approved override, and secret redaction  |
+| [Configuration defaults](docs/architecture/configuration-defaults.md)     | Every optional field, its default or its explicit refusal to have one      |
+| [Path resolution](docs/architecture/path-resolution.md)                   | Why a configured path is anchored, never resolved, and what that rules out |
+| [Decision records](docs/architecture/adr/adr-index.md)                    | Why the architecture looks the way it does                                 |
+| [Code standards](docs/development/code-standards.md)                      | Lint rules, severity policy, suppression rules, formatting                 |
+| [Testing standards](docs/development/testing-standards.md)                | Layout, naming, coverage rules, and why no threshold is enforced yet       |
+| [CLI commands](docs/development/cli-commands.md)                          | The command contract, argument conventions, how help is generated          |
+| [CLI output](docs/development/cli-output.md)                              | Streams, the report shape, and what a `--json` consumer receives           |
+| [Logging](docs/development/logging.md)                                    | Levels, correlation, redaction, and the output/log split                   |
+| [Continuous integration](docs/development/continuous-integration.md)      | Jobs, required checks, the Node policy                                     |
+| [Git hooks](docs/development/git-hooks.md)                                | What runs locally, and why it is a courtesy rather than a gate             |
+| [Repository hygiene](docs/development/repository-hygiene.md)              | What enters git, what ships to npm, secret protection                      |
+| [Commit convention](docs/engineering/commit-convention.md)                | Message format, types, scopes, release mapping                             |
+| [Manual end-to-end testing](docs/quality/manual-e2e-testing.md)           | What a human checks that the suite cannot, and how to check it twice       |
 
 A recurring theme in all of them: a rule that nothing checks is a suggestion. Where a rule can be a lint error, it is
 one.
@@ -263,13 +283,14 @@ index check and the test suite, in that order.
 | Command                           | Purpose                                    |
 | --------------------------------- | ------------------------------------------ |
 | `npm run verify`                  | Everything CI runs, locally                |
-| `npm test`                        | Unit and integration tests                 |
+| `npm test`                        | Unit, integration and contract tests       |
 | `npm run test:e2e`                | The compiled binary, against real fixtures |
 | `npm run test:coverage`           | Tests with a coverage report               |
 | `npm run test:watch`              | Watch mode                                 |
 | `npm run build`                   | Compile to `dist/`                         |
 | `npm run lint` / `npm run format` | ESLint, Prettier                           |
 | `npm run adr:new -- "…"`          | Start a decision record                    |
+| `npm run adr:index`               | Regenerate the decision-record index       |
 
 Contribution workflow, review expectations and merge strategy: [CONTRIBUTING.md](CONTRIBUTING.md).
 
@@ -289,6 +310,15 @@ check before the write is advice; the write itself is the guarantee.
 
 **Defaults fill blanks, and never close a gap somebody filled.** `false`, `0` and `""` are values a person typed. Every
 default has one authority and one published reason, and a field with no default says so out loud.
+
+**Anchor, never resolve.** A configured path is measured from the project root, never from the working directory. The
+difference is one function call and it is the difference between a run that can be reproduced and one that cannot.
+
+**One approved override, not a merge.** Exactly one setting may arrive from outside the committed file, and the type
+that describes it has one field. A general merge would decide, per run and unreviewed, which keys matter.
+
+**Secrets are named, never stored.** An environment profile says which variable holds a credential. The schema refuses a
+`value` beside that name, and the resolved value is carried in a container that redacts itself when serialised.
 
 **One decision, one record.** Architectural choices go in an ADR at the moment they are made. Records are immutable once
 accepted; a reversal supersedes rather than edits, so the reasoning survives.
@@ -311,9 +341,11 @@ Report vulnerabilities privately via the process in [SECURITY.md](SECURITY.md). 
 Two things worth knowing: log context accepts primitives only, so a caller cannot accidentally log a whole response body;
 and the published package is controlled by an allowlist, verified before every release.
 
-A project's configuration is a committed file, so it is published the moment it is pushed — which is why an environment
-profile names the variable a secret comes from rather than holding the secret, and why writing a `value` beside that name
-is refused by the schema instead of reviewed by a person.
+A project's configuration is a committed file, so it is published the moment it is pushed. Three consequences are built
+into the schema rather than left to review: an environment profile names the variable a secret comes from instead of
+holding the secret, a secret reference that carries a `value` is refused rather than committed, and a profile's target
+URL may not contain a username or password — because a credential in a URL that is committed, logged and quoted in
+reports keeps working until somebody rotates it, and then fails with a message about the host.
 
 ---
 

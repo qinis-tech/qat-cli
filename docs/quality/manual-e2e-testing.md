@@ -1,10 +1,10 @@
 # Manual end-to-end testing
 
-|                |                                                                                                                                                                                                                   |
-| -------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Status**     | Normative                                                                                                                                                                                                         |
-| **Applies to** | The compiled binary, `dist/cli/index.js`                                                                                                                                                                          |
-| **Companion**  | [testing-architecture.md](testing-architecture.md), [cli-output.md](../development/cli-output.md), [cli-commands.md](../development/cli-commands.md), [testing-standards.md](../development/testing-standards.md) |
+|                |                                                                                                                                                                                                                                                                                                                                                               |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Status**     | Normative                                                                                                                                                                                                                                                                                                                                                     |
+| **Applies to** | The compiled binary, `dist/cli/index.js`                                                                                                                                                                                                                                                                                                                      |
+| **Companion**  | [testing-architecture.md](testing-architecture.md), [cli-output.md](../development/cli-output.md), [cli-commands.md](../development/cli-commands.md), [testing-standards.md](../development/testing-standards.md), [environment-profiles.md](../architecture/environment-profiles.md), [environment-resolution.md](../architecture/environment-resolution.md) |
 
 What a human checks that the automated suite cannot, and how to check it the same way twice.
 
@@ -32,15 +32,20 @@ mangles before the tool ever sees it.
 | Trigger                                                     | Scope                                                                           |
 | ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
 | A release candidate                                         | The whole procedure, on at least Windows and Linux                              |
-| Any change to the report's wording, labels or ordering      | Sections 4.3 to 4.7 — the reading checks                                        |
+| Any change to the report's wording, labels or ordering      | Sections 4.3 to 4.7 and 4.11 — the reading checks                               |
 | Any change to the exit-status mapping                       | Sections 4.7 and 4.8                                                            |
 | Any change to defaults, path resolution or the output block | Sections 4.3, 4.4 and 4.7                                                       |
+| Any change to environment profiles, or to the `env` line    | Sections 4.4 and 4.11                                                           |
 | Any change to initialisation or the safe writer             | Sections 4.4, 4.9 and the `init` rows in §6                                     |
 | A CI platform failure you cannot reproduce                  | The platform section for that OS                                                |
 | Before quoting the README's example output                  | Section 4.3, because a README example that no longer matches is worse than none |
 
 Not on every pull request. The suite already runs there, and a manual checklist applied to every diff stops being applied
 to any.
+
+**One gap, recorded rather than papered over.** Environment _selection_ — an explicit `--environment`, an approved
+`--base-url` — has no manual step, because no command exposes either. The resolution service exists and is specified by
+its tests; the first command that selects an environment is what makes this section grow.
 
 ## 3. Preconditions
 
@@ -120,7 +125,7 @@ printf '{"name":"cypress","version":"13.15.0"}' > node_modules/cypress/package.j
 ```
 
 It deliberately has **no `qat.config.json`**. That is the state a new project is in, and 4.3 checks the report a reader
-sees there; 4.4 is where one is created.
+sees there; 4.4 is where one is created, and 4.11 is where it gains an environment.
 
 **A real Cypress project**, if you have one. A fabricated tree cannot surprise you, and the surprises are the point.
 Nothing in QAT should invoke Cypress, so the check is cheap: it either returns in under a second or it is doing something
@@ -207,7 +212,8 @@ env        none selected; declare one, or set defaultEnvironment
 **Read for:** three things the suite cannot judge.
 
 1. Does the file look like something a person wrote? Two fields and a trailing newline. A scaffold that filled in every
-   default would freeze today's values into a decision nobody made.
+   default would freeze today's values into a decision nobody made — and one that scaffolded an example environment would
+   be inventing a target nobody chose.
 2. Does `env none selected; declare one, or set defaultEnvironment` read as guidance or as a complaint? It is the one line
    in the report that prevents a failed run six steps later, and it has to be worth reading.
 3. Are the output paths obviously _inside the project_? A reader should not have to compare prefixes to work that out.
@@ -315,16 +321,97 @@ node "$QAT" init | cat -v
 and a sequence that clears the screen can make a reader believe output came from this tool. `cat -v` renders an escape as
 `^[`, so a clean run has none.
 
+### 4.11 A project that declares environments
+
+The `env` line is one short sentence that decides whether a run has a target. Four wordings exist, and only a person can
+say whether they help. Rewrite the configuration between runs; it is a scratch project.
+
+**A default named by the configuration:**
+
+```bash
+cat > qat.config.json <<'JSON'
+{
+  "version": 1,
+  "framework": "cypress",
+  "defaultEnvironment": "staging",
+  "environments": {
+    "staging": {
+      "baseUrl": "https://staging.example.test",
+      "variables": { "API_URL": "https://api.staging.example.test" }
+    },
+    "production": { "baseUrl": "https://example.test" }
+  }
+}
+JSON
+node "$QAT" doctor | grep '^env'
+```
+
+**Expect** `env        staging (from defaultEnvironment)`. Exit `0`.
+
+**The only environment declared:**
+
+```bash
+cat > qat.config.json <<'JSON'
+{ "version": 1, "framework": "cypress", "environments": { "only": { "baseUrl": "https://only.example.test" } } }
+JSON
+node "$QAT" doctor | grep '^env'
+```
+
+**Expect** `env        only (the only one declared)`.
+
+**Two environments and no default:**
+
+```bash
+cat > qat.config.json <<'JSON'
+{
+  "version": 1,
+  "framework": "cypress",
+  "environments": {
+    "staging": { "baseUrl": "https://staging.example.test" },
+    "production": { "baseUrl": "https://example.test" }
+  }
+}
+JSON
+node "$QAT" doctor | grep '^env'
+```
+
+**Expect** `env        none selected; declare one, or set defaultEnvironment`. Exit `0`, and **no** finding about the
+ambiguity — the file is valid, the _run_ is what has no answer.
+
+**Read for:** whether each sentence says what happened and what to do. "The only one declared" should tell an operator
+that declaring a second environment will stop this being automatic. "None selected" should read as an instruction, not as
+a failure, because the project is fine.
+
+**An unusable configuration is invisible here**, deliberately and for now:
+
+```bash
+cat > qat.config.json <<'JSON'
+{ "version": 1, "framework": "cypress", "environments": { "staging": {} } }
+JSON
+node "$QAT" doctor ; echo "exit=$?"
+```
+
+**Expect** a report with **no** output block and **no** finding — the empty profile is refused by the schema at load, and
+a file that cannot be read produces no attachment. Exit `0` if the rest of the project is healthy. That is §6's known
+gap, and this step exists so you see it rather than file it.
+
+Restore the disposable state when done:
+
+```bash
+rm qat.config.json
+```
+
 ## 5. Platform checks
 
 ### Windows
 
-| Check                                                                             | Why                                                                                                                                     |
-| --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
-| Run in `cmd.exe` with the default code page (check with `chcp`, often 850 or 437) | A tick, an em dash or an arrow renders as mojibake there. The output is ASCII by design, and this is how you confirm it stayed that way |
-| A project under `C:\Users\…\My Projects\demo`                                     | A path with a space is the oldest quoting bug there is, and it fails on Windows before it fails anywhere else                           |
-| `qat doctor` and `qat init` from a Git Bash shell as well as `cmd.exe`            | Two shells, two quoting rules, one argument — and `init` writes a file, so a mangled argument is a file in the wrong place              |
-| Redirect with `>` and confirm the file has no stray carriage returns              | Output written with `\r\n` in one place and `\n` in another produces a file that looks right and diffs badly                            |
+| Check                                                                             | Why                                                                                                                                               |
+| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run in `cmd.exe` with the default code page (check with `chcp`, often 850 or 437) | A tick, an em dash or an arrow renders as mojibake there. The output is ASCII by design, and this is how you confirm it stayed that way           |
+| A project under `C:\Users\…\My Projects\demo`                                     | A path with a space is the oldest quoting bug there is, and it fails on Windows before it fails anywhere else                                     |
+| `qat doctor` and `qat init` from a Git Bash shell as well as `cmd.exe`            | Two shells, two quoting rules, one argument — and `init` writes a file, so a mangled argument is a file in the wrong place                        |
+| Redirect with `>` and confirm the file has no stray carriage returns              | Output written with `\r\n` in one place and `\n` in another produces a file that looks right and diffs badly                                      |
+| Open the file `init` wrote in Notepad                                             | One field per line, two-space indentation, and a trailing newline. A JSON file written with `\n` opens correctly; one with mixed endings does not |
 
 ### Linux
 
@@ -349,7 +436,16 @@ Read this before filing anything. Each of these is deliberate, and each has a re
 | `qat init` on an initialised project exits `0`                               | The postcondition — a project with a usable configuration — already holds. A non-zero status would fail every provisioning script that runs twice                               |
 | `qat init` leaves an unreadable `qat.config.json` byte-identical             | It never repairs and never replaces. The file is named in the message, and the remedy is to fix or delete it                                                                    |
 | `qat init --replace` is an unknown option                                    | The safe writer implements replacement with a declared intent; no command exposes it, so no command line can destroy a configuration by accident                                |
+| `qat init` writes two fields and no example environment                      | The document contains only what has no default. An environment scaffolded by default would be a target nobody chose                                                             |
 | `qat doctor` says nothing about a `qat.config.json` it cannot read           | A known gap: an unusable configuration produces no finding and no output block. Closing it decides the exit status, so it is a separate decision                                |
+| `env none selected; declare one, or set defaultEnvironment` with exit `0`    | The project is valid; the _run_ has no target. Choosing one would be a guess, and the refusal is worth more than a plausible default                                            |
+| A profile written as `{}` is refused                                         | It declares nothing and looks configured. The message names the field, and the fix is to add a target, variables or secrets, or to delete the environment                       |
+| A variable whose value begins `env:` is refused                              | It is almost always a secret written into the wrong map. The remedy says to declare it under `secrets`, where the value is read at run time                                     |
+| A secret reference carrying a `value` is refused                             | Secret values are never stored in the file. The property is unknown, and the message names it rather than committing a credential                                               |
+| A profile `baseUrl` with a username or password is refused                   | A credential in a committed URL is a leaked secret that keeps working until somebody rotates it, then fails with a message about the host                                       |
+| A duplicate key in the JSON is silently the last one                         | `JSON.parse` cannot report it. A duplicated field is a defect nothing notices, and no validator can see it                                                                      |
+| `qat doctor` has no `--environment`                                          | The `env` line reports the environment the configuration _names_, not one this invocation chose. There is no flag yet                                                           |
+| The environment resolver exists but no command uses it                       | The run command is the consumer. Until it lands, that service is specified by its tests                                                                                         |
 | A `.tmp` file beside the configuration after a killed `init`                 | The writer writes to a temporary name and links it into place. A crash leaves the temporary, which is inert, identifiable and safe to delete                                    |
 | A component-testing project is blocked with `QAT-V002`                       | QAT has no component-test execution path, so refusing is more useful than starting a run that collects the wrong directory                                                      |
 | A pre-10 project _with_ component tests is refused                           | The classifier prefers component evidence over the legacy folder, because the alternative error — treating every component project as runnable — is worse                       |
@@ -383,6 +479,16 @@ Second run:
 Notes: sha256sum identical across the second run. reports/evidence named by doctor, results/ not created.
 ```
 
+```
+4.11 environments — PASS on the same host, all three wordings.
+Output:
+  env        staging (from defaultEnvironment)
+  env        only (the only one declared)
+  env        none selected; declare one, or set defaultEnvironment
+Notes: the third reads as an instruction rather than a failure, which is right for a valid project.
+The unusable-profile case produced no output block and no finding, as §6 records.
+```
+
 A `PASS` with no output is a claim, not evidence — the same argument this whole tool makes about a green build.
 
 Never paste a real customer path, a repository name you do not own, or a project directory from a machine that is not
@@ -396,6 +502,8 @@ A manual finding is worth filing when it meets one of these:
   disagrees with the exit code, a `created` line for a file that is not there.
 - **The output says something unreadable.** Not "I would have phrased it differently" — a sentence you cannot act on, or a
   block you cannot scan.
+- **A refusal names the wrong thing.** A profile refused for its `variables` map when the mistake was an empty profile, or
+  a path refused without naming the field.
 - **A platform renders it wrong.** Include the terminal, the code page, and a screenshot if the problem is visual.
 - **It contradicts a document.** `docs/` is normative; a behavioural difference between it and the binary is a defect in
   whichever is newer.
@@ -407,7 +515,9 @@ reader would do next. Those belong in a discussion, and filing them as defects t
 
 **A manual pass run against a stale build tests nothing.** `npm run build` before every pass; the binary is not the source
 and nothing warns you when the two disagree. This matters more now that `init` writes a file: a stale binary writes a
-configuration in the previous format, and every step after it reports something true about the wrong document.
+configuration in the previous format, and every step after it reports something true about the wrong document. The same
+trap applies to the profile shape — a binary from before environments became objects will reject a document that the
+current one accepts, and the message will be about an unknown field.
 
 **An install failure that leaves a working build.** `npm ci` runs `prepare` _after_ installing dependencies, so a failure
 there exits non-zero with a tree that is entirely usable except for the git hooks. The trap works both ways: an
@@ -429,6 +539,15 @@ the test.
 **Doing 4.4 out of order makes 4.3 meaningless.** The report gained a third block, and it appears only when a
 configuration resolves. If you run `init` first, the "nine lines" expectation in 4.3 will not be met and you will spend
 ten minutes deciding whether the block is a defect. Delete `qat.config.json` and start again.
+
+**An unusable configuration is invisible, so do not teach people to debug one with `doctor`.** A malformed or invalid
+`qat.config.json` produces no finding and no output block, and the report stays green. That is a recorded gap, and until
+it closes, a colleague who breaks a profile will look at a clean report and conclude the file is fine. Send them to the
+file, or to `qat init`'s refusal message, not to `doctor`.
+
+**The `env` line is not a selection.** It reports what the configuration names as the default, and nothing about the
+command being run. Reading it as "this is what `qat run` will use" is the natural mistake — and it will be correct only
+once a command exists that can choose differently.
 
 **Section 6 grows.** Every entry is a deliberate decision somebody will be tempted to file again. When you add one, say
 what the reason is and where it is recorded, or the next reader will assume it was an oversight and "fix" it.
