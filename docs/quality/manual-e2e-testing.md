@@ -11,27 +11,33 @@ What a human checks that the automated suite cannot, and how to check it the sam
 ## 1. Why this exists when there is an end-to-end suite
 
 The suite asserts **facts**: exit statuses, which stream a line went to, which finding codes appear, whether the tree
-changed. It runs the same binary a person runs, and it would catch a command that stopped failing or a report that lost
-a finding.
+changed. It runs the same binary a person runs, and it would catch a command that stopped failing or a report that lost a
+finding.
 
-It cannot judge whether the report **reads well**. It cannot tell you whether `A directory occupies cypress.config.ts,
-so no configuration file can exist under that name.` is a sentence somebody can act on at 2am, whether a remedy names a
+It cannot judge whether the report **reads well**. It cannot tell you whether `A directory occupies cypress.config.ts, so
+no configuration file can exist under that name.` is a sentence somebody can act on at 2am, whether a remedy names a
 command that exists, or whether the whole block is legible in a real terminal rather than in a captured string. Those are
 the questions this procedure answers, and they are the ones that decide whether the tool is useful.
 
-It also catches a class of defect the suite is blind to by construction: **anything platform-specific that the CI matrix
+It also cannot judge a reassurance. `already-initialised`, `nothing was changed`, `env none selected; declare one, or set
+defaultEnvironment` — each is a sentence whose job is to stop somebody worrying, and whether it does that is not a
+property a string comparison can express.
+
+And it catches a class of defect the suite is blind to by construction: **anything platform-specific that the CI matrix
 does not run.** A legacy Windows code page, a terminal that wraps at 80 columns, a path with a space in it that a shell
 mangles before the tool ever sees it.
 
 ## 2. When to run this
 
-| Trigger                                                | Scope                                                                           |
-| ------------------------------------------------------ | ------------------------------------------------------------------------------- |
-| A release candidate                                    | The whole procedure, on at least Windows and Linux                              |
-| Any change to the report's wording, labels or ordering | Sections 4.3 to 4.6 — the reading checks                                        |
-| Any change to the exit-status mapping                  | Sections 4.5 and 4.7                                                            |
-| A CI platform failure you cannot reproduce             | The platform section for that OS                                                |
-| Before quoting the README's example output             | Section 4.3, because a README example that no longer matches is worse than none |
+| Trigger                                                     | Scope                                                                           |
+| ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| A release candidate                                         | The whole procedure, on at least Windows and Linux                              |
+| Any change to the report's wording, labels or ordering      | Sections 4.3 to 4.7 — the reading checks                                        |
+| Any change to the exit-status mapping                       | Sections 4.7 and 4.8                                                            |
+| Any change to defaults, path resolution or the output block | Sections 4.3, 4.4 and 4.7                                                       |
+| Any change to initialisation or the safe writer             | Sections 4.4, 4.9 and the `init` rows in §6                                     |
+| A CI platform failure you cannot reproduce                  | The platform section for that OS                                                |
+| Before quoting the README's example output                  | Section 4.3, because a README example that no longer matches is worse than none |
 
 Not on every pull request. The suite already runs there, and a manual checklist applied to every diff stops being applied
 to any.
@@ -61,8 +67,8 @@ The last command must print the version in `package.json`. If it prints a stack,
 the failure is a build rather than a behaviour.
 
 **`npm ci` once per clone**, or after a lockfile change. For a pass against an existing checkout — the usual case, since
-most passes follow a change to the report — `npm run build` is enough. A reinstall costs a minute and can fail for
-reasons that have nothing to do with the tool.
+most passes follow a change to the report — `npm run build` is enough. A reinstall costs a minute and can fail for reasons
+that have nothing to do with the tool.
 
 ### 3.3 When the install fails on the hooks
 
@@ -95,8 +101,8 @@ findmnt -no OPTIONS --target "$(df --output=target node_modules | tail -1)"
 ```
 
 If that prints `noexec`, hooks cannot run from this checkout and the correct response is to accept it: hooks are a
-courtesy in this project, and `npm run verify` covers what they would have run. Record it in the pass notes, because it
-is the first thing to suspect if a later command behaves oddly.
+courtesy in this project, and `npm run verify` covers what they would have run. Record it in the pass notes, because it is
+the first thing to suspect if a later command behaves oddly.
 
 ### 3.4 The projects to test against
 
@@ -113,7 +119,10 @@ printf 'export default {};\n' > cypress.config.ts
 printf '{"name":"cypress","version":"13.15.0"}' > node_modules/cypress/package.json
 ```
 
-**A real Cypress project**, if you have one. A fabricated tree cannot surprise you, and the surpares are the point.
+It deliberately has **no `qat.config.json`**. That is the state a new project is in, and 4.3 checks the report a reader
+sees there; 4.4 is where one is created.
+
+**A real Cypress project**, if you have one. A fabricated tree cannot surprise you, and the surprises are the point.
 Nothing in QAT should invoke Cypress, so the check is cheap: it either returns in under a second or it is doing something
 it promised not to.
 
@@ -139,10 +148,11 @@ works. `$OLDPWD` is the obvious shortcut and breaks the second time a step chang
 ```bash
 node "$QAT" --help
 node "$QAT" doctor --help
+node "$QAT" init --help
 ```
 
-**Expect:** the command list with `doctor` and its summary; then usage, the `[directory]` argument, and an `Examples:`
-block. Exit `0` for both.
+**Expect:** the command list with `doctor` **and** `init`, each with a summary; then usage, the `[directory]` argument and
+an `Examples:` block for each command. Exit `0` for all three.
 
 **Read for:** does the command list tell you which command you want? Is the example one you could paste and run? Help
 that lists names without saying what they do is help that sends the reader to `man`.
@@ -153,16 +163,17 @@ that lists names without saying what they do is help that sends the reader to `m
 node "$QAT" --version
 node "$QAT" docter
 node "$QAT" --nope
+node "$QAT" init --replace
 ```
 
 **Expect:** the version on its own line. Then, for `docter`, `QAT1001: Unknown command 'docter'` with
-`Did you mean 'doctor'?` and exit `2`. For `--nope`, `unknown option` and exit `2`.
+`Did you mean 'doctor'?` and exit `2`. For `--nope` and for `init --replace`, `unknown option` and exit `2`.
 
-**Read for:** the suggestion. A typo that produces "unknown command" and nothing else costs the reader a lookup; a
-suggestion costs the tool an edit distance and turns a dead end into a fix. Check it corrects the mistakes people
-actually make — a transposition, a missing letter — not only a prefix.
+**Read for:** the suggestion, and the absence of a replacement flag. The last command is deliberate: the safe writer
+implements replacement, and no command exposes it. If `init --replace` is accepted, something shipped a destructive
+option without the semantics it needs.
 
-### 4.3 A supported project
+### 4.3 A supported project, before initialisation
 
 ```bash
 cd /tmp/qat-manual
@@ -170,12 +181,50 @@ node "$QAT" doctor ; echo "exit=$?"
 ```
 
 **Expect** nine lines — `project`, `root`, `package`, `framework`, `declared`, `config`, `detection`, `compatibility`,
-`result` — with `result     ready` last, exit `0`, and **nothing on standard error**.
+`result` — with `result     ready` last, exit `0`, **nothing on standard error**, and **no `reports` or `evidence` line**.
 
 **Read for:** alignment. The values should sit in one column whatever the label's length; `compatibility` is the longest
 and takes a single space. A column that steps in by one is the kind of defect nobody reports and everybody notices.
 
-### 4.4 A project with warnings
+### 4.4 Initialising that project
+
+```bash
+node "$QAT" init ; echo "exit=$?"
+cat qat.config.json
+node "$QAT" doctor ; echo "exit=$?"
+```
+
+**Expect:** on the first command, a `created` line naming the absolute path, exit `0`, and an empty standard error. The
+file contains exactly two fields — `version` and `framework` — and nothing else. The second `doctor` now prints an output
+block between the summary and the verdict:
+
+```
+reports    /tmp/qat-manual/results/reports
+evidence   /tmp/qat-manual/results/evidence
+env        none selected; declare one, or set defaultEnvironment
+```
+
+**Read for:** three things the suite cannot judge.
+
+1. Does the file look like something a person wrote? Two fields and a trailing newline. A scaffold that filled in every
+   default would freeze today's values into a decision nobody made.
+2. Does `env none selected; declare one, or set defaultEnvironment` read as guidance or as a complaint? It is the one line
+   in the report that prevents a failed run six steps later, and it has to be worth reading.
+3. Are the output paths obviously _inside the project_? A reader should not have to compare prefixes to work that out.
+
+Then run `init` again:
+
+```bash
+node "$QAT" init ; echo "exit=$?"
+```
+
+**Expect** an `exists` line, exit `0`, and a file whose bytes are unchanged — `sha256sum qat.config.json` before and
+after, if you want the evidence rather than the claim.
+
+**Read for:** whether "nothing was changed" reads as success. Exit `0` is deliberate — a provisioning script that runs
+twice must not fail — but the wording has to carry that, because the exit status is silent in a terminal.
+
+### 4.5 A project with warnings
 
 Delete the manifest, run, restore:
 
@@ -190,7 +239,7 @@ mv package.json.bak package.json
 **Read for:** whether the warning reads as advice rather than as an error. If you would not read past it, the wording is
 wrong — and the exit status is deliberately `0`, so the wording is the only thing telling the reader it is survivable.
 
-### 4.5 A project that is blocked
+### 4.6 A project that is blocked
 
 Move the configuration where Cypress will not load it, run, restore:
 
@@ -207,33 +256,36 @@ line, exit `2`, **and an empty standard error**.
 one-line fix; `Check your configuration.` is not. Then follow the fix and confirm the report clears — a remedy that does
 not work is worse than no remedy, because it has been trusted.
 
-### 4.6 The structured document
+### 4.7 The structured document
 
 ```bash
 node "$QAT" doctor --json | jq .assessment.diagnosis.identity
+node "$QAT" doctor --json | jq '.assessment.configuration'
 node "$QAT" doctor --json > /tmp/out.json 2>/tmp/err.txt
 wc -c /tmp/err.txt
 ```
 
-**Expect** one JSON document per invocation, parseable by `jq` with no preprocessing, and an empty `/tmp/err.txt`.
+**Expect** one JSON document per invocation, parseable by `jq` with no preprocessing, a populated
+`assessment.configuration` because 4.4 created the file, and an empty `/tmp/err.txt`.
 
 **Read for:** whether the document is the thing you would actually consume. Pipe it through `jq '.assessment.gates'` and
 ask whether the shape answers a question you have. If you have to join two fields to learn whether the project can run,
 the shape is wrong.
 
-### 4.7 Exit statuses, as a pipeline sees them
+### 4.8 Exit statuses, as a pipeline sees them
 
-With the scratch project in its healthy state from 4.5, and then against a path that does not exist:
+With the scratch project healthy, and then against a path that does not exist:
 
 ```bash
 node "$QAT" doctor /tmp/qat-manual >/dev/null 2>&1 ; echo "healthy: $?"
 node "$QAT" doctor /nonexistent >/dev/null 2>&1 ; echo "bad argument: $?"
+node "$QAT" init /tmp/qat-manual >/dev/null 2>&1 ; echo "already initialised: $?"
 ```
 
-**Expect** `0` then `2`, and — importantly — `1` for neither. `1` is reserved for a failing test, and a tool that spends
-it on a missing directory makes a pipeline unable to tell a bad change from a bad command.
+**Expect** `0`, `2`, then `0`. And — importantly — `1` for none of them. `1` is reserved for a failing test, and a tool
+that spends it on a missing directory makes a pipeline unable to tell a bad change from a bad command.
 
-### 4.8 Nothing new appeared
+### 4.9 Nothing new appeared
 
 ```bash
 ls -A /tmp/qat-manual
@@ -241,22 +293,27 @@ node "$QAT" doctor >/dev/null
 ls -A /tmp/qat-manual
 ```
 
-**Expect** two identical listings. A detection command that wrote a cache, a results directory or a repaired
-configuration on the way past would be a different command with a different name, and the write happens on whatever
-machine runs it.
+**Expect** two identical listings — and note that `qat.config.json` is in both, because 4.4 created it. A detection
+command that wrote a cache, a results directory or a repaired configuration on the way past would be a different command
+with a different name, and the write happens on whatever machine runs it.
 
-This catches an added entry, not an edit in place. The automated suite asserts both, byte for byte, including
-modification times — so if this step passes and you suspect a write anyway, that is the assertion to run.
+**No `results/` yet.** The report names the directory; nothing creates it. That distinction is the whole of the
+lazy-creation policy and it is visible only here:
 
-### 4.9 No terminal control in the output
+```bash
+test -d results && echo "WRONG: doctor created the output directory" || echo "ok: named but not created"
+```
+
+### 4.10 No terminal control in the output
 
 ```bash
 node "$QAT" doctor | cat -v
+node "$QAT" init | cat -v
 ```
 
-**Expect** no `^[` sequences anywhere. Paths and messages can carry text from a file or a subprocess, and a sequence that
-clears the screen can make a reader believe output came from this tool. `cat -v` renders an escape as `^[`, so a clean
-run has none.
+**Expect** no `^[` sequences anywhere, in either command. Paths and messages can carry text from a file or a subprocess,
+and a sequence that clears the screen can make a reader believe output came from this tool. `cat -v` renders an escape as
+`^[`, so a clean run has none.
 
 ## 5. Platform checks
 
@@ -266,7 +323,7 @@ run has none.
 | --------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------- |
 | Run in `cmd.exe` with the default code page (check with `chcp`, often 850 or 437) | A tick, an em dash or an arrow renders as mojibake there. The output is ASCII by design, and this is how you confirm it stayed that way |
 | A project under `C:\Users\…\My Projects\demo`                                     | A path with a space is the oldest quoting bug there is, and it fails on Windows before it fails anywhere else                           |
-| `qat doctor` from a Git Bash shell as well as `cmd.exe`                           | Two shells, two quoting rules, one argument                                                                                             |
+| `qat doctor` and `qat init` from a Git Bash shell as well as `cmd.exe`            | Two shells, two quoting rules, one argument — and `init` writes a file, so a mangled argument is a file in the wrong place              |
 | Redirect with `>` and confirm the file has no stray carriage returns              | Output written with `\r\n` in one place and `\n` in another produces a file that looks right and diffs badly                            |
 
 ### Linux
@@ -289,6 +346,11 @@ Read this before filing anything. Each of these is deliberate, and each has a re
 | You will see                                                                 | Why it is not a bug                                                                                                                                                             |
 | ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | No `specs` or `manager` line in the report                                   | Two facts about a project's _shape_ left the report when it moved to the assessment, which carries _correctness_ facts. Restoring them is a contract change, not a one-line fix |
+| `qat init` on an initialised project exits `0`                               | The postcondition — a project with a usable configuration — already holds. A non-zero status would fail every provisioning script that runs twice                               |
+| `qat init` leaves an unreadable `qat.config.json` byte-identical             | It never repairs and never replaces. The file is named in the message, and the remedy is to fix or delete it                                                                    |
+| `qat init --replace` is an unknown option                                    | The safe writer implements replacement with a declared intent; no command exposes it, so no command line can destroy a configuration by accident                                |
+| `qat doctor` says nothing about a `qat.config.json` it cannot read           | A known gap: an unusable configuration produces no finding and no output block. Closing it decides the exit status, so it is a separate decision                                |
+| A `.tmp` file beside the configuration after a killed `init`                 | The writer writes to a temporary name and links it into place. A crash leaves the temporary, which is inert, identifiable and safe to delete                                    |
 | A component-testing project is blocked with `QAT-V002`                       | QAT has no component-test execution path, so refusing is more useful than starting a run that collects the wrong directory                                                      |
 | A pre-10 project _with_ component tests is refused                           | The classifier prefers component evidence over the legacy folder, because the alternative error — treating every component project as runnable — is worse                       |
 | A configuration at `cypress/nested/cypress.config.ts` is invisible           | The tool lists no directory, by design. The misplaced-configuration probe is a fixed list at one depth                                                                          |
@@ -302,7 +364,7 @@ Read this before filing anything. Each of these is deliberate, and each has a re
 A manual pass is evidence only if somebody else can read it. For each section, record:
 
 ```
-4.5 blocked project — PASS on Windows 11 24H2, Node 24.4.0, Windows Terminal, code page 850.
+4.6 blocked project — PASS on Windows 11 24H2, Node 24.4.0, Windows Terminal, code page 850.
 Output:
   result     blocked
   QAT-V001 error
@@ -310,6 +372,15 @@ Output:
     at:  cypress/cypress.config.ts
     fix: Move it to the project root as cypress.config.ts.
 Notes: the remediation worked as written; the report cleared.
+```
+
+```
+4.4 initialisation — PASS on the same host.
+Output:
+  created    /tmp/qat-manual/qat.config.json
+Second run:
+  exists     /tmp/qat-manual/qat.config.json
+Notes: sha256sum identical across the second run. reports/evidence named by doctor, results/ not created.
 ```
 
 A `PASS` with no output is a claim, not evidence — the same argument this whole tool makes about a green build.
@@ -322,7 +393,7 @@ yours. Fabricate the fixture instead; section 3.4 exists for exactly that.
 A manual finding is worth filing when it meets one of these:
 
 - **The output says something untrue.** A remedy that does not work, a path that is not the one used, a status that
-  disagrees with the exit code.
+  disagrees with the exit code, a `created` line for a file that is not there.
 - **The output says something unreadable.** Not "I would have phrased it differently" — a sentence you cannot act on, or a
   block you cannot scan.
 - **A platform renders it wrong.** Include the terminal, the code page, and a screenshot if the problem is visual.
@@ -335,12 +406,14 @@ reader would do next. Those belong in a discussion, and filing them as defects t
 ## 9. Things that will bite
 
 **A manual pass run against a stale build tests nothing.** `npm run build` before every pass; the binary is not the source
-and nothing warns you when the two disagree.
+and nothing warns you when the two disagree. This matters more now that `init` writes a file: a stale binary writes a
+configuration in the previous format, and every step after it reports something true about the wrong document.
 
 **An install failure that leaves a working build.** `npm ci` runs `prepare` _after_ installing dependencies, so a failure
-there exits non-zero with a tree that is entirely usable except for the git hooks. The trap works both ways: an `npm error
-code 127` looks catastrophic and is not, and a successful `npm run build` afterwards looks like proof the install
-succeeded when one step of it did not. Read the exit code and the last script name, not the presence of a working binary.
+there exits non-zero with a tree that is entirely usable except for the git hooks. The trap works both ways: an
+`npm error code 127` looks catastrophic and is not, and a successful `npm run build` afterwards looks like proof the
+install succeeded when one step of it did not. Read the exit code and the last script name, not the presence of a working
+binary.
 
 **`engines` is a warning, not a gate.** Node 20 satisfies `npm ci` and produces a warning nobody reads, so a pass can run
 on a runtime the project does not support and look green. Section 3.1 exists because that happened.
@@ -352,6 +425,10 @@ imagine.
 **A rendering defect is invisible in a captured string.** The suite compares arrays of strings; you are comparing what a
 terminal drew. If the output looks wrong but the assertions pass, the defect is real and belongs in the presenter — not in
 the test.
+
+**Doing 4.4 out of order makes 4.3 meaningless.** The report gained a third block, and it appears only when a
+configuration resolves. If you run `init` first, the "nine lines" expectation in 4.3 will not be met and you will spend
+ten minutes deciding whether the block is a defect. Delete `qat.config.json` and start again.
 
 **Section 6 grows.** Every entry is a deliberate decision somebody will be tempted to file again. When you add one, say
 what the reason is and where it is recorded, or the next reader will assume it was an oversight and "fix" it.

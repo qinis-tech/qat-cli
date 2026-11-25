@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "framework": "cypress",
+  "environments": {
+    "staging": {
+      "baseUrl": "https://staging.example.test",
+      "timeoutMs": 30000
+    }
+  }
+}

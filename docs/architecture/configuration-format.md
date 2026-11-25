@@ -1,11 +1,11 @@
 # Configuration file format
 
-|               |                                                                                                                                                                                                                                                                                                  |
-| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| **Status**    | Normative                                                                                                                                                                                                                                                                                        |
-| **File**      | `qat.config.json`, at the project root                                                                                                                                                                                                                                                           |
-| **Contract**  | [`qatConfigSchema`](../../src/config/schema/config.ts)                                                                                                                                                                                                                                           |
-| **Companion** | [configuration-schema.md](configuration-schema.md), [configuration-defaults.md](configuration-defaults.md), [configuration-precedence.md](configuration-precedence.md), [path-resolution.md](path-resolution.md), [ADR-0023](./adr/0023-read-configuration-from-one-file-at-the-project-root.md) |
+|               |                                                                                                                                                                                                                                                                                                                                                      |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Status**    | Normative                                                                                                                                                                                                                                                                                                                                            |
+| **File**      | `qat.config.json`, at the project root                                                                                                                                                                                                                                                                                                               |
+| **Contract**  | [`qatConfigSchema`](../../src/config/schema/config.ts)                                                                                                                                                                                                                                                                                               |
+| **Companion** | [configuration-schema.md](configuration-schema.md), [environment-profiles.md](environment-profiles.md), [configuration-defaults.md](configuration-defaults.md), [configuration-precedence.md](configuration-precedence.md), [path-resolution.md](path-resolution.md), [ADR-0023](./adr/0023-read-configuration-from-one-file-at-the-project-root.md) |
 
 What a QAT configuration file is called, where it lives, what may go in it, and what to keep out of it.
 
@@ -43,17 +43,17 @@ copied. The options are documented; the file records only what has no default.
 
 ## 3. Fields
 
-| Field                | Type                                     | Required | Default              | What it is for                                                      |
-| -------------------- | ---------------------------------------- | -------- | -------------------- | ------------------------------------------------------------------- |
-| `version`            | literal `1`                              | yes      | —                    | Which version of this format the file was written against           |
-| `framework`          | `"cypress"`                              | yes      | —                    | The framework to drive                                              |
-| `cypress`            | object                                   | no       | —                    | Cypress-specific settings; absent when none are needed              |
-| `cypress.configFile` | path                                     | no       | detection            | An explicit configuration file, for a project detection cannot find |
-| `defaultEnvironment` | profile name                             | no       | —                    | The profile to use when a command does not name one                 |
-| `environments`       | map of profile → map of variable → value | no       | —                    | Named sets of variables                                             |
-| `output`             | object                                   | no       | both paths defaulted | Where a run's output goes                                           |
-| `output.reports`     | path                                     | no       | `results/reports`    | Rendered reports                                                    |
-| `output.evidence`    | path                                     | no       | `results/evidence`   | Screenshots, video, traces                                          |
+| Field                | Type                                 | Required | Default              | What it is for                                                         |
+| -------------------- | ------------------------------------ | -------- | -------------------- | ---------------------------------------------------------------------- |
+| `version`            | literal `1`                          | yes      | —                    | Which version of this format the file was written against              |
+| `framework`          | `"cypress"`                          | yes      | —                    | The framework to drive                                                 |
+| `cypress`            | object                               | no       | —                    | Cypress-specific settings; absent when none are needed                 |
+| `cypress.configFile` | path                                 | no       | detection            | An explicit configuration file, for a project detection cannot find    |
+| `defaultEnvironment` | profile name                         | no       | —                    | The profile to use when a command does not name one                    |
+| `environments`       | map of profile name → profile object | no       | —                    | Named environments: a target, variables and references to secrets (§4) |
+| `output`             | object                               | no       | both paths defaulted | Where a run's output goes                                              |
+| `output.reports`     | path                                 | no       | `results/reports`    | Rendered reports                                                       |
+| `output.evidence`    | path                                 | no       | `results/evidence`   | Screenshots, video, traces                                             |
 
 `environments` holds keys the project chooses, so its contents are not listed here — §4 describes their structure.
 
@@ -70,10 +70,39 @@ documented rule, or a rule left behind after a field is removed, fails the build
   "framework": "cypress",
   "defaultEnvironment": "staging",
   "environments": {
-    "staging": { "API_URL": "https://staging.example.test", "RETRIES": "2" }
+    "staging": {
+      "baseUrl": "https://staging.example.test",
+      "variables": {
+        "API_URL": "https://staging.example.test/api",
+        "RETRIES": "2"
+      },
+      "secrets": {
+        "API_TOKEN": { "from": "environment", "name": "QAT_STAGING_API_TOKEN" }
+      }
+    }
   }
 }
 ```
+
+A profile is an object, not a bare map of variables. That is what gives it somewhere to put a target, and what lets a
+secret be a different _kind_ of entry rather than a variable whose name happens to start with `SECRET_`.
+
+An environment may carry three things, and every one of them is optional:
+
+| Part      | Field       | Rule                                                                                    |
+| --------- | ----------- | --------------------------------------------------------------------------------------- |
+| Target    | `baseUrl`   | Absolute `http` or `https`, at most 2048 characters, no username or password in the URL |
+| Variables | `variables` | Map of variable name → value, non-sensitive, non-empty when present                     |
+| Secrets   | `secrets`   | Map of variable name → reference, non-empty when present. Never a value                 |
+
+A secret reference has two parts, both required:
+
+| Part            | Field  | Rule                                          |
+| --------------- | ------ | --------------------------------------------- |
+| Source          | `from` | The literal `"environment"`                   |
+| Source variable | `name` | The environment variable that holds the value |
+
+Names and values obey the same rules every environment value does:
 
 | Part          | Rule                                                                               |
 | ------------- | ---------------------------------------------------------------------------------- |
@@ -81,11 +110,24 @@ documented rule, or a rule left behind after a field is removed, fails the build
 | Variable name | Uppercase with digits and underscores, at most 128 characters: `^[A-Z][A-Z0-9_]*$` |
 | Value         | At most 4096 characters, one line, no control characters                           |
 
-A profile selected by `--environment` or by `defaultEnvironment`. A default that names an undeclared profile is an error
-at `defaultEnvironment`, because the alternative is a run that fails where nothing in the file explains it.
+Five refusals worth knowing, because each one looks like a file somebody wrote on purpose:
 
-`__proto__`, `prototype` and `constructor` are refused as profile names and as variable names: assigning `__proto__` on an
-object changes its prototype rather than adding a key, and a configuration file is not an acceptable place to learn that.
+- **A profile that declares nothing.** `{}` validates as an object, can be selected as the default, and applies nothing —
+  so the first symptom is a run against whatever the previous command left behind. Refused at the profile.
+- **A present but empty map.** `"variables": {}` says _these apply_ and applies none of them. Refused at the field.
+- **An unknown property.** Profiles are strict, like every other object here. A `timeout` key is a named error rather
+  than a field quietly ignored.
+- **A secret that carries a value.** A `value` beside `name` is refused as an unknown key. This is a security rule: the
+  message names the line the reader typed instead of the file publishing a credential.
+- **A credential in a URL.** `https://user:password@host` is a valid URL and a leaked secret, so the target check refuses
+  it. Secrets have a field of their own.
+
+A profile is selected by `--environment` or by `defaultEnvironment`. A default that names an undeclared profile is an
+error at `defaultEnvironment`, because the alternative is a run that fails where nothing in the file explains it.
+
+`__proto__`, `prototype` and `constructor` are refused as profile names, variable names and secret names: assigning
+`__proto__` on an object changes its prototype rather than adding a key, and a configuration file is not an acceptable
+place to learn that.
 
 An absent `environments` means the project declares no profiles — a legitimate state, not an unfinished file. Nothing is
 derived from an absence: a run that needs a profile and has none says so rather than choosing the first one it finds.
@@ -93,6 +135,9 @@ derived from an absence: a run that needs a profile and has none says so rather 
 ## 5. Paths
 
 Every path — `cypress.configFile`, `output.reports`, `output.evidence` — is **relative to the project root**.
+
+A profile's `baseUrl` is not a path and is not covered here: it is an address a run points at, checked as a URL, and it is
+never joined to anything.
 
 What the schema refuses, per field:
 
@@ -125,7 +170,7 @@ A configuration is written by hand, so a misspelled key is the most common defec
 that behaves as though the reader had not written it, and nothing says anything is wrong. See
 [ADR-0022](./adr/0022-reject-unknown-configuration-fields.md).
 
-Strictness applies at every level, so a key inside `output` or `cypress` is refused too.
+Strictness applies at every level, so a key inside `output`, `cypress` or a profile is refused too.
 
 ## 7. Unsupported versions
 
@@ -146,15 +191,29 @@ than partly honoured, because a build that silently ignores half a configuration
 **The configuration file is committed, so anything in it is published.** It is in the repository history, in every clone,
 in every fork, and in every CI log that prints it. Deleting the line later does not remove it from the history.
 
-So: `environments` holds **defaults, not credentials**. A base URL, a retry count, a feature flag, a region — values that
-are the same for everybody working on the branch and are useful in review. A token, a password, a private key, a session
-cookie — those belong in the environment the process runs in, which is where a per-machine or per-CI-job value already
-lives.
+Which is why a profile has a `secrets` map. An entry there names the environment variable holding the value; the value
+itself never appears:
+
+```text
+"secrets": { "API_TOKEN": { "from": "environment", "name": "QAT_STAGING_API_TOKEN" } }
+```
+
+That fence is `text` rather than `json` because this is a fragment, and a test parses every `json` block in this document
+as a whole configuration. Complete documents elsewhere in the file are fenced `json`; a fragment never is.
+
+`API_TOKEN` is what the framework will receive; `QAT_STAGING_API_TOKEN` is where to read it from. Different profiles
+naming different source variables is exactly the case the two fields exist for, and the schema refuses a `value` written
+beside them.
+
+So: `environments` holds **targets, defaults and references — not credentials**. A base URL, a retry count, a feature
+flag, a region, and a list of names for the secrets a run needs: values that are the same for everybody working on the
+branch and are useful in review. A token, a password, a private key, a session cookie — those belong in the environment
+the process runs in, which is where a per-machine or per-CI-job value already lives.
 
 Three rules follow:
 
-- **Nothing reads a configuration value into a log line, an error message or a report.** The values are the user's, some
-  of them will be sensitive despite this section, and the terminal is not redacted.
+- **Nothing reads a configuration value into a log line, an error message or a report.** The values are the user's, some of
+  them will be sensitive despite this section, and the terminal is not redacted.
 - **A URL is described rather than repeated by a diagnostic**, because userinfo is the one place a path-shaped value
   routinely carries a credential. That is a courtesy, not a licence: a credential in a committed file is already
   published.
@@ -167,8 +226,11 @@ would arrive with its own gitignore rule and its own decision record.
 
 Nothing below is a setting, and a file containing one is refused rather than ignored:
 
-- a framework's own configuration — `baseUrl`, `specPattern`, `supportFile`, `retries`, `timeout`, `browser`. Those belong
-  in the framework's configuration, which QAT does not evaluate. A project that needs one sets it there.
+- a framework's own configuration — `specPattern`, `supportFile`, `retries`, `timeout`, `browser`. Those belong in the
+  framework's configuration, which QAT does not evaluate. A project that needs one sets it there.
+- **a base URL for the project as a whole.** A profile's `baseUrl` selects the target for one run; it does not replace the
+  framework's own, and QAT never writes it back. A project that wants a default target sets one where its framework reads
+  it.
 - a log level, a colour mode, an output format. Those come from a flag or an environment variable; a value with two
   sources needs a precedence rule, not a second file.
 - a storage location for the execution database.
@@ -178,15 +240,22 @@ Nothing below is a setting, and a file containing one is refused rather than ign
 
 A reader who hits a refusal should be able to tell which module produced it, because the remedy differs.
 
-| Refusal                                          | Reported by                   | Code                               | Remedy                                         |
+| Refusal                                          | Reported by                   | Reported as                        | Remedy                                         |
 | ------------------------------------------------ | ----------------------------- | ---------------------------------- | ---------------------------------------------- |
-| The file is not JSON                             | The loader                    | `QAT-C001`… (parse location)       | Fix the syntax at the line named               |
+| The file is not JSON                             | The loader                    | `malformed`, with line and column  | Fix the syntax at the place named              |
+| The file is JSON but not an object               | Validation                    | `QAT-C001`                         | Make the document an object                    |
 | A field is missing, mistyped or unknown          | Validation                    | `QAT-C003`, `QAT-C004`, `QAT-C007` | Fix the field named                            |
 | A value is not one the schema allows             | Validation                    | `QAT-C005`                         | Use one of the values listed                   |
+| A profile declares nothing, or an empty map      | Validation                    | `QAT-C006`                         | Add a field, or remove the profile or the map  |
+| A secret carries a value                         | Validation                    | `QAT-C007`                         | Remove it; name the variable that holds it     |
 | An output path is absolute or leaves the project | Validation                    | `QAT-C006`                         | Write it relative to the project root          |
 | The version is not one this build reads          | The loader, before validation | `QAT-C002`                         | Bring the file to the supported version        |
 | A path cannot be anchored                        | The resolver                  | `PATH_*`                           | Rewrite the value as a relative, portable path |
 | The configuration file cannot be used at all     | `qat init`                    | `QAT-INIT-EXISTING-*`              | Fix or delete the file                         |
+
+Two rows deserve a second look. **A syntax error has no code** — it is a load outcome carrying a position, because a file
+that will not parse has no fields for a code to name. And **`QAT-C001` is not the syntax row**: it is what a document that
+parses to an array, a number or a string produces, which is why its path is empty.
 
 In practice the last two rows are rare: a document that reaches the resolver has already had its paths judged, and the
 resolver's check is a second line of defence. They are listed because a reader who sees one deserves to know it came from
@@ -203,3 +272,11 @@ a different layer than the field diagnostics they have been reading.
 5. Add it to the table in §3, to `examples/configuration/qat.config.json`, and — if it belongs in a template — say why.
 6. Run the suite. The field-table check, the defaults-coverage check and the example check will all fail until the
    document, the catalogue and the schema agree, which is the reason they exist.
+
+A field added _inside a profile_ is a different case: it is a property of a value rather than a path through the document,
+so it needs no row in §3 and no catalogue entry. It needs a row in §4, a paragraph in
+[environment-profiles.md](environment-profiles.md), and — if it can be absent in a way that would let a profile declare
+nothing — a moment's thought about whether the profile's "declares nothing" rule still holds.
+
+When you add a **complete document** to this file, fence it `json` so the specification check parses it. When you add a
+fragment, fence it `text`: a test parses every `json` block as a whole configuration, and a fragment is not one.

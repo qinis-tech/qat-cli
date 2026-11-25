@@ -1,0 +1,9 @@
+{
+  "version": 1,
+  "framework": "cypress",
+  "environments": {
+    "staging": {
+      "variables": {}
+    }
+  }
+}

@@ -2,11 +2,13 @@
  * Loading and resolving a configuration, against a real filesystem.
  *
  * The unit suites cover each stage against literals. This one covers the seam between them: a file on disk becomes a
- * document, the document becomes anchored paths, and the two things that only appear when both stages are real are
+ * document, the document becomes anchored paths, and the three things that only appear when both stages are real are
  * asserted here —
  *
  * - a configured path that the schema refuses **never reaches resolution**, and a path the schema accepts is anchored
- *   without being second-guessed; and
+ *   without being second-guessed;
+ * - a profile reaches resolution exactly as the reader wrote it, because this stage carries environments and does not
+ *   interpret them; and
  * - nothing is created on disk by loading or resolving, which is the policy that keeps `qat init` from leaving empty
  *   output directories behind.
  *
@@ -20,11 +22,12 @@ import { basename, dirname, join, sep } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { ConfigurationLoad, loadConfiguration } from "~/config/loader/index.js";
-import { markLoaded } from "~/config/resolver/contracts.js";
 import {
   LoadedConfigurationRequiredError,
+  markLoaded,
   type ConfigurationResolution,
   type LoadedConfigurationDocument,
+  type ResolvedConfiguration,
 } from "~/config/resolver/contracts.js";
 import {
   outputDirectories,
@@ -33,6 +36,7 @@ import {
 import {
   OUTPUT_DEFAULTS,
   SUPPORTED_CONFIG_VERSION,
+  SecretSource,
 } from "~/config/schema/index.js";
 import { ConfigurationDiagnosticCode } from "~/config/validation/index.js";
 
@@ -72,6 +76,33 @@ function withOutput(output: Record<string, unknown>): string {
   });
 }
 
+function withEnvironments(
+  environments: Record<string, unknown>,
+  defaultEnvironment?: string,
+): string {
+  return JSON.stringify({
+    version: SUPPORTED_CONFIG_VERSION,
+    framework: "cypress",
+    ...(defaultEnvironment === undefined ? {} : { defaultEnvironment }),
+    environments,
+  });
+}
+
+/** A profile with every approved field, as a reader would write it. */
+const STAGING_PROFILE = {
+  baseUrl: "https://staging.example.test",
+  variables: {
+    API_URL: "https://staging.example.test/api",
+    RETRIES: "2",
+  },
+  secrets: {
+    API_TOKEN: {
+      from: SecretSource.Environment,
+      name: "QAT_STAGING_API_TOKEN",
+    },
+  },
+};
+
 /**
  * Load the configuration at the project root and resolve it.
  *
@@ -89,7 +120,9 @@ async function resolveIn(root: string): Promise<ConfigurationResolution> {
 }
 
 /** The resolved half of a successful resolution, or a failure naming what was reported instead. */
-function resolvedOrFail(resolution: ConfigurationResolution) {
+function resolvedOrFail(
+  resolution: ConfigurationResolution,
+): ResolvedConfiguration {
   if (!resolution.ok) {
     throw new Error(
       `expected a resolution, received ${resolution.issues.map((issue) => issue.code).join(", ")}`,
@@ -115,8 +148,8 @@ describe("a project with a minimal configuration", () => {
 
     const resolved = resolvedOrFail(await resolveIn(root));
 
-    // The schema supplied the values; the resolver placed them. Neither stage guessed, and the anchor is the root
-    // rather than the working directory.
+    // The schema supplied the values; the resolver placed them. Neither stage guessed, and the anchor is the root rather
+    // than the working directory.
     expect(resolved.paths.reportsDirectory.source).toBe(
       OUTPUT_DEFAULTS.reports,
     );
@@ -136,8 +169,8 @@ describe("a project with a minimal configuration", () => {
 
     const resolved = resolvedOrFail(await resolveIn(root));
 
-    // A supplied group is filled, never replaced: losing `evidence` here would surface much later as a report written
-    // to `undefined`.
+    // A supplied group is filled, never replaced: losing `evidence` here would surface much later as a report written to
+    // `undefined`.
     expect(resolved.paths.reportsDirectory.absolute).toBe(
       join(root, "artifacts/runs"),
     );
@@ -156,8 +189,8 @@ describe("a project with a minimal configuration", () => {
 
     const resolved = resolvedOrFail(await resolveIn(root));
 
-    // Diagnostics quote `source`; writers use `absolute`. A resolved path that had lost its source form could not
-    // explain which line of the reader's file produced it.
+    // Diagnostics quote `source`; writers use `absolute`. A resolved path that had lost its source form could not explain
+    // which line of the reader's file produced it.
     expect(resolved.paths.reportsDirectory.source).toBe("artifacts/runs");
     expect(resolved.paths.reportsDirectory.form).toBe("relative");
   });
@@ -204,14 +237,14 @@ describe("anchoring", () => {
       }),
     );
 
-    // One location, one canonical form: otherwise two configurations that differ only in spelling produce two values
-    // that compare unequal and print differently.
+    // One location, one canonical form: otherwise two configurations that differ only in spelling produce two values that
+    // compare unequal and print differently.
     expect(withSeparator.paths.reportsDirectory.absolute).toBe(
       plain.paths.reportsDirectory.absolute,
     );
   });
 
-  it("anchors a framework configuration file the reader spelled absolutely", async () => {
+  it("anchors a framework configuration file the configuration names", async () => {
     const root = await project({
       "qat.config.json": JSON.stringify({
         version: SUPPORTED_CONFIG_VERSION,
@@ -223,9 +256,13 @@ describe("anchoring", () => {
 
     const resolved = resolvedOrFail(await resolveIn(root));
 
+    // The schema types this field as a relative project path, so the value that reaches resolution is relative and is
+    // anchored here. An absolute spelling is refused during validation, which is why acceptance of absolute input paths
+    // is covered in `paths.test.ts` rather than through a file.
     expect(resolved.paths.cypressConfigFile?.absolute).toBe(
       join(root, "cypress.config.ts"),
     );
+    expect(resolved.paths.cypressConfigFile?.form).toBe("relative");
     expect(resolved.paths.cypressConfigFile?.withinProjectRoot).toBe(true);
   });
 });
@@ -324,18 +361,53 @@ describe("a path that must be refused", () => {
 });
 
 /* -------------------------------------------------------------------------- */
-/* The environment                                                            */
+/* Environments                                                               */
 /* -------------------------------------------------------------------------- */
 
-describe("which environment the run targets", () => {
+describe("an environment", () => {
+  it("reaches resolution exactly as the reader wrote it", async () => {
+    const root = await project({
+      "qat.config.json": withEnvironments({ staging: STAGING_PROFILE }),
+    });
+
+    const resolved = resolvedOrFail(await resolveIn(root));
+
+    // The resolution stage carries environments and does not interpret them: it does not strip a profile down to its
+    // variables, expand a secret reference, or add a field the reader did not write. Whatever reads a profile later sees
+    // what the file said.
+    expect(resolved.document.environments).toStrictEqual({
+      staging: STAGING_PROFILE,
+    });
+  });
+
+  it("is not resolved by this stage, so a secret stays a reference", async () => {
+    const root = await project({
+      "qat.config.json": withEnvironments({ staging: STAGING_PROFILE }),
+    });
+
+    const resolved = resolvedOrFail(await resolveIn(root));
+    const environments = resolved.document.environments as Record<
+      string,
+      { secrets?: Record<string, { from?: string; name?: string }> }
+    >;
+
+    // A reference is a promise something else keeps. Resolution naming the source and nothing more is what keeps a
+    // credential out of every value this stage hands downstream.
+    expect(environments["staging"]?.secrets?.["API_TOKEN"]).toStrictEqual({
+      from: SecretSource.Environment,
+      name: "QAT_STAGING_API_TOKEN",
+    });
+  });
+
   it("uses the one the configuration names", async () => {
     const root = await project({
-      "qat.config.json": JSON.stringify({
-        version: SUPPORTED_CONFIG_VERSION,
-        framework: "cypress",
-        defaultEnvironment: "staging",
-        environments: { staging: { API_URL: "https://staging.example.test" } },
-      }),
+      "qat.config.json": withEnvironments(
+        {
+          staging: STAGING_PROFILE,
+          production: { baseUrl: "https://example.test" },
+        },
+        "staging",
+      ),
     });
 
     expect(
@@ -348,10 +420,8 @@ describe("which environment the run targets", () => {
 
   it("uses the only environment declared", async () => {
     const root = await project({
-      "qat.config.json": JSON.stringify({
-        version: SUPPORTED_CONFIG_VERSION,
-        framework: "cypress",
-        environments: { only: { A: "1" } },
+      "qat.config.json": withEnvironments({
+        only: { variables: { A: "1" } },
       }),
     });
 
@@ -365,10 +435,9 @@ describe("which environment the run targets", () => {
 
   it("refuses to choose between several", async () => {
     const root = await project({
-      "qat.config.json": JSON.stringify({
-        version: SUPPORTED_CONFIG_VERSION,
-        framework: "cypress",
-        environments: { staging: { A: "1" }, production: { A: "2" } },
+      "qat.config.json": withEnvironments({
+        staging: { variables: { A: "1" } },
+        production: { variables: { A: "2" } },
       }),
     });
 
@@ -379,6 +448,41 @@ describe("which environment the run targets", () => {
     ).toStrictEqual({
       origin: "none",
     });
+  });
+
+  it("is refused at the schema when a profile declares nothing", async () => {
+    const root = await project({
+      "qat.config.json": withEnvironments({ staging: {} }),
+    });
+
+    const loaded = await loadConfiguration(join(root, "qat.config.json"));
+
+    // A profile that validates as an object and applies nothing would be selected, reported, and change no behaviour —
+    // so it is refused while the document is read, at the profile's own path.
+    expect(loaded.kind).toBe(ConfigurationLoad.Invalid);
+    if (loaded.kind !== ConfigurationLoad.Invalid) return;
+
+    expect(loaded.diagnostics.map((diagnostic) => diagnostic.path)).toContain(
+      "environments.staging",
+    );
+  });
+
+  it("refuses a reserved profile name read from a real file", async () => {
+    // Written as text, because this is the only way the key exists: `JSON.parse` keeps `__proto__` as an own property,
+    // and the guard that refuses it is the one thing in the schema that has to inspect the raw value before anything
+    // rebuilds it. A unit test can construct the case; only a real file proves it arrives.
+    const root = await project({
+      "qat.config.json": `{"version": ${String(SUPPORTED_CONFIG_VERSION)}, "framework": "cypress", "environments": {"__proto__": {"baseUrl": "https://example.test"}}}`,
+    });
+
+    const loaded = await loadConfiguration(join(root, "qat.config.json"));
+
+    expect(loaded.kind).toBe(ConfigurationLoad.Invalid);
+    if (loaded.kind !== ConfigurationLoad.Invalid) return;
+
+    expect(loaded.diagnostics.map((diagnostic) => diagnostic.path)).toContain(
+      "environments.__proto__",
+    );
   });
 });
 
@@ -435,8 +539,8 @@ describe("side effects on disk", () => {
     // left the disk alone.
     await expect(stat(reports)).rejects.toThrow();
 
-    // In production this call belongs to `ensureDirectory`, immediately before the first write. Recursive creation is part
-    // of the contract: the default is `results/reports`, so the parent appears with the leaf.
+    // In production this call belongs to `ensureDirectory`, immediately before the first write. Recursive creation is
+    // part of the contract: the default is `results/reports`, so the parent appears with the leaf.
     await mkdir(reports, { recursive: true });
 
     // The anchored path is a location the process is actually allowed to use, which no string comparison can prove.

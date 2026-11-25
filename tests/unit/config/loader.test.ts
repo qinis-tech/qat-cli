@@ -32,6 +32,13 @@ import {
  * A successful load returns `{ document, source }`, where the marker on the wrapper is set only by this module. That is
  * what makes "apply defaults to a file that never loaded" a compile error rather than a review note, so the document is
  * read as `result.config.document`. The extra hop is the price of the guarantee and is asserted here rather than assumed.
+ *
+ * ## Narrowing a load result in a test
+ *
+ * `expect(result.kind).toBe(ConfigurationLoad.Loaded)` does not narrow anything: Vitest's `expect` returns void, so the
+ * following `if` is what tells the compiler which variant is in hand. Where a case has already asserted the kind, the
+ * guard is a formality. Where it has not, the guard throws — because a bare `return` there turns a fixture that stopped
+ * being valid into a test that passes without asserting anything, which is how a stale fixture survives a green run.
  */
 let created: string[] = [];
 
@@ -71,7 +78,12 @@ const FULL = JSON.stringify({
   version: SUPPORTED_CONFIG_VERSION,
   framework: "cypress",
   defaultEnvironment: "staging",
-  environments: { staging: { API_URL: "https://staging.example.test" } },
+  environments: {
+    staging: {
+      baseUrl: "https://staging.example.test",
+      variables: { API_URL: "https://staging.example.test/api" },
+    },
+  },
   output: { reports: "out/reports", evidence: "out/evidence" },
 });
 
@@ -109,6 +121,15 @@ describe("a valid configuration", () => {
       config: {
         document: {
           defaultEnvironment: "staging",
+          // The profile passes through untouched: a target and a variable map, no key invented and none dropped. Without
+          // this line the fixture could regress to a shape the schema refuses, and only the case below would notice —
+          // by throwing rather than by asserting.
+          environments: {
+            staging: {
+              baseUrl: "https://staging.example.test",
+              variables: { API_URL: "https://staging.example.test/api" },
+            },
+          },
           output: { reports: "out/reports" },
         },
       },
@@ -155,7 +176,13 @@ describe("the loaded document", () => {
 
     const result = await loadConfiguration(path);
 
-    if (result.kind !== ConfigurationLoad.Loaded) return;
+    if (result.kind !== ConfigurationLoad.Loaded) {
+      // Thrown rather than returned: this case's whole subject is a successful load, so being handed anything else means
+      // the fixture or the loader changed, and a bare `return` would report that as a pass.
+      throw new Error(
+        `expected a loaded configuration, received ${result.kind}`,
+      );
+    }
 
     // Asserted to equal the outcome's own path: a caller may hold the document without the outcome, and a diagnostic
     // that quotes a different path from the one that was read is worse than one that quotes nothing.
@@ -168,7 +195,13 @@ describe("the loaded document", () => {
       await makeFile("qat.config.json", FULL),
     );
 
-    if (result.kind !== ConfigurationLoad.Loaded) return;
+    if (result.kind !== ConfigurationLoad.Loaded) {
+      // Same reasoning as above, and the reason this case sat green while `FULL` was still the pre-profile shape: it
+      // returned early and asserted nothing.
+      throw new Error(
+        `expected a loaded configuration, received ${result.kind}`,
+      );
+    }
 
     // Exactly two own keys. A marker that was enumerable would appear here; one that serialised would reach every log
     // line, snapshot and `--json` document.
@@ -216,7 +249,7 @@ describe("a file with nothing in it", () => {
     ["whitespace only", "  \n\t\n "],
   ])(
     "reports an %s file as empty rather than as malformed",
-    async (__case__, contents) => {
+    async (_case, contents) => {
       const result = await loadConfiguration(
         await makeFile("qat.config.json", contents),
       );
@@ -330,7 +363,7 @@ describe("a file that is JSON but not a configuration", () => {
     ["null", "null"],
     ["a string", '"hello"'],
     ["a number", "42"],
-  ])("rejects %s at the root", async (__case__, contents) => {
+  ])("rejects %s at the root", async (_case, contents) => {
     // Valid JSON and not a document. One diagnostic with no path, because there are no fields to point at.
     const result = await loadConfiguration(
       await makeFile("qat.config.json", contents),

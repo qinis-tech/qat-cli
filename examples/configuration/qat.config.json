@@ -7,12 +7,24 @@
   "defaultEnvironment": "staging",
   "environments": {
     "smoke": {
-      "API_URL": "https://smoke.example.test",
-      "RETRIES": "0"
+      "baseUrl": "https://smoke.example.test",
+      "variables": {
+        "API_URL": "https://smoke.example.test/api",
+        "RETRIES": "0"
+      }
     },
     "staging": {
-      "API_URL": "https://staging.example.test",
-      "RETRIES": "2"
+      "baseUrl": "https://staging.example.test",
+      "variables": {
+        "API_URL": "https://staging.example.test/api",
+        "RETRIES": "2"
+      },
+      "secrets": {
+        "API_TOKEN": {
+          "from": "environment",
+          "name": "QAT_STAGING_API_TOKEN"
+        }
+      }
     }
   },
   "output": {

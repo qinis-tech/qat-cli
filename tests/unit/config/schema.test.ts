@@ -17,6 +17,13 @@ import { qatConfigSchema, type QatConfigInput } from "~/config/schema/index.js";
  * Fixtures live in files rather than in the test because they are the same files the loader and the initialisation
  * workflow will be tested against — a schema and a workflow that disagree about a valid file is the defect this
  * arrangement makes impossible.
+ *
+ * ## An environment is a profile
+ *
+ * Every `environments` value in this file is an object with `baseUrl`, `variables` and `secrets`, not a bare map of
+ * variables. That is why a bad variable is reported at `environments.smoke.variables.API_URL` rather than
+ * `environments.smoke.API_URL`, and why a profile with no fields at all is now a *refusal* rather than a legitimate
+ * empty declaration.
  */
 const FIXTURES = fileURLToPath(
   new URL("../../fixtures/config", import.meta.url),
@@ -66,7 +73,7 @@ function parseProfiles(count: number): number {
   const environments = Object.fromEntries(
     Array.from({ length: count }, (_unused, index) => [
       `profile-${String(index)}`,
-      { API_URL: "https://x.test" },
+      { variables: { API_URL: "https://x.test" } },
     ]),
   );
 
@@ -100,15 +107,18 @@ describe("a valid configuration", () => {
       evidence: "results/evidence",
     });
     expect(result.data.cypress).toBeUndefined();
+    // Not defaulted by the schema — the resolution stage fills an empty map. `undefined` here is what lets a consumer
+    // tell "no profiles declared" from "profiles declared, and there are none".
     expect(result.data.environments).toBeUndefined();
   });
 
-  it.each(["minimal.json", "full.json", "awkward-names.json"])(
+  it.each(["minimal.json", "full.json", "awkward-names.json", "profiles.json"])(
     "accepts fixtures/valid/%s",
     async (name) => {
       const result = qatConfigSchema.safeParse(await fixture("valid", name));
 
-      expect(result.success).toBe(true);
+      // The issues rather than a bare boolean, so a fixture that drifts says which field disagrees.
+      expect(result.success ? [] : result.error.issues).toStrictEqual([]);
     },
   );
 
@@ -121,7 +131,10 @@ describe("a valid configuration", () => {
     if (!result.success) return;
 
     expect(result.data.output.reports).toBe("results/reports/nightly");
-    expect(result.data.environments?.["staging"]?.["RETRIES"]).toBe("2");
+    // One level deeper than it used to be: a profile carries its variables in a field of their own rather than being one.
+    expect(result.data.environments?.["staging"]?.variables?.["RETRIES"]).toBe(
+      "2",
+    );
     expect(result.data.defaultEnvironment).toBe("staging");
   });
 });
@@ -156,12 +169,39 @@ describe("an invalid configuration", () => {
     [
       "a multi-line variable value",
       "variable-value-multiline.json",
-      "environments.smoke.API_URL",
+      "environments.smoke.variables.API_URL",
     ],
     [
       "a default naming an undeclared profile",
       "default-environment-undeclared.json",
       "defaultEnvironment",
+    ],
+    // The four below are the profile model's own refusals. Each one is a document somebody would plausibly write, which
+    // is why they are fixtures rather than literals: they double as the examples a reader compares against.
+    [
+      "a profile that declares nothing",
+      "profile-empty.json",
+      "environments.staging",
+    ],
+    [
+      "an empty variables map",
+      "profile-variables-empty.json",
+      "environments.staging.variables",
+    ],
+    [
+      "an unknown property inside a profile",
+      "profile-unknown-property.json",
+      "environments.staging",
+    ],
+    [
+      "credentials in a profile target",
+      "profile-base-url-credentials.json",
+      "environments.staging.baseUrl",
+    ],
+    [
+      "a secret that carries its value",
+      "profile-secret-value.json",
+      "environments.staging",
     ],
   ])("rejects %s, and names the field", async (_case, name, field) => {
     expect(reportedAt(await fixture("invalid", name), field)).toBe(true);
@@ -193,7 +233,9 @@ describe("edge cases", () => {
     const result = qatConfigSchema.safeParse({
       version: 1,
       framework: "cypress",
-      environments: { smoke: { API_URL: "https://example.test" } },
+      environments: {
+        smoke: { variables: { API_URL: "https://example.test" } },
+      },
     });
 
     expect(result.success).toBe(true);
@@ -204,7 +246,7 @@ describe("edge cases", () => {
       version: 1,
       framework: "cypress",
       defaultEnvironment: "production",
-      environments: { smoke: {} },
+      environments: { smoke: { baseUrl: "https://smoke.example.test" } },
     });
 
     expect(result.success).toBe(false);
@@ -214,7 +256,8 @@ describe("edge cases", () => {
       (candidate) => candidate.path.join(".") === "defaultEnvironment",
     );
 
-    // Naming the value is the difference between "something is wrong" and a one-line fix.
+    // Naming the value is the difference between "something is wrong" and a one-line fix. The declared profile is valid
+    // on its own, so the only failure is the cross-field one this case is about.
     expect(issue?.message).toContain("production");
   });
 
@@ -229,14 +272,36 @@ describe("edge cases", () => {
     ).toContain("defaultEnvironment");
   });
 
-  it("accepts an empty environment profile", () => {
-    // A profile with no variables is a legitimate state — the selection still changes which `--environment` is active,
-    // and a schema that refused it would force a placeholder into every configuration.
+  it("rejects a profile that declares nothing, and says what is missing", () => {
+    const result = qatConfigSchema.safeParse({
+      version: 1,
+      framework: "cypress",
+      environments: { smoke: {} },
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+
+    const issue = result.error.issues.find(
+      (candidate) => candidate.path.join(".") === "environments.smoke",
+    );
+
+    // Previously this was accepted, on the argument that selecting an empty profile still selects an environment. It is
+    // refused now because an empty profile can be the default, applies nothing, and reports the new name — so the first
+    // symptom is a run against whatever the previous command left behind.
+    expect(issue?.message).toContain(
+      "declares no base URL, variables or secrets",
+    );
+  });
+
+  it("accepts a profile that sets only a target", () => {
+    // The counterpart to the refusal above, and the reason it is not simply "a profile must have variables": an
+    // environment that only changes where a run points is the ordinary case.
     expect(
       qatConfigSchema.safeParse({
         version: 1,
         framework: "cypress",
-        environments: { smoke: {} },
+        environments: { smoke: { baseUrl: "https://smoke.example.test" } },
       }).success,
     ).toBe(true);
   });
@@ -254,11 +319,27 @@ describe("corner cases", () => {
     ],
     [
       "a prototype key as a variable name",
-      { environments: { smoke: JSON.parse('{"__proto__": "x"}') as unknown } },
+      {
+        environments: {
+          smoke: { variables: JSON.parse('{"__proto__": "x"}') as unknown },
+        },
+      },
     ],
     [
       "a constructor key as a variable name",
-      { environments: { smoke: { constructor: "x" } } },
+      { environments: { smoke: { variables: { constructor: "x" } } } },
+    ],
+    [
+      "a prototype key as a secret name",
+      {
+        environments: {
+          smoke: {
+            secrets: JSON.parse(
+              '{"__proto__": {"from": "environment", "name": "X"}}',
+            ) as unknown,
+          },
+        },
+      },
     ],
   ])("rejects %s", (_case, override) => {
     // Assigning `__proto__` on an ordinary object changes its prototype rather than adding a key, so a record built from
@@ -299,9 +380,9 @@ describe("corner cases", () => {
       environments: JSON.parse('{"__proto__": {"polluted": true}}') as unknown,
     });
 
-    // A canary rather than a proof: it passes trivially until something pollutes, and then it never passes again in
-    // this process. Worth having because the failure it guards is silent and global — every object in the run would gain
-    // a property, and the first symptom would be somewhere unrelated.
+    // A canary rather than a proof: it passes trivially until something pollutes, and then it never passes again in this
+    // process. Worth having because the failure it guards is silent and global — every object in the run would gain a
+    // property, and the first symptom would be somewhere unrelated.
     const emptyObject: Record<string, unknown> = {};
 
     expect(emptyObject["polluted"]).toBeUndefined();
@@ -346,10 +427,12 @@ describe("boundaries", () => {
     ["a profile name at the limit", "a".repeat(32), true],
     ["a profile name past the limit", "a".repeat(33), false],
   ])("handles %s", (_case, name, accepted) => {
+    // The profile carries a target rather than nothing: an empty profile is refused for its own reason, which would mask
+    // whether the *name* was the thing being measured.
     const value = {
       version: 1,
       framework: "cypress",
-      environments: { [name]: {} },
+      environments: { [name]: { baseUrl: "https://example.test" } },
     };
 
     expect(qatConfigSchema.safeParse(value).success).toBe(accepted);
@@ -375,7 +458,7 @@ describe("boundaries", () => {
     const config = {
       version: 1,
       framework: "cypress",
-      environments: { smoke: { API_URL: value } },
+      environments: { smoke: { variables: { API_URL: value } } },
     };
 
     expect(qatConfigSchema.safeParse(config).success).toBe(accepted);
