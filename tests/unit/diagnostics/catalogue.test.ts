@@ -9,10 +9,10 @@ import {
   HealthCode,
 } from "~/core/application/checks.js";
 import {
-  CHECKS,
-  HEALTH_GUIDANCE,
-  MINIMUM_NODE_MAJOR,
-} from "~/diagnostics/checks/index.js";
+  parseRange,
+  qatRuntimeRequirement,
+} from "~/core/compatibility/index.js";
+import { CHECKS, HEALTH_GUIDANCE } from "~/diagnostics/checks/index.js";
 
 /**
  * The catalogue as an artefact.
@@ -89,6 +89,10 @@ describe("the scenario inventory", () => {
       for (const scenario of check.scenarios) {
         // The prefix is what makes a scenario id readable on its own: `output.reports-writable.unwritable` says which
         // check it verifies and which condition it exercises, in the order a reader needs them.
+        //
+        // The separator is a dot, not a colon, and that is not cosmetic: `run.test.ts` keys its fixtures by these exact
+        // strings, so a different separator makes the rule and its verification disagree while both read correctly in
+        // isolation.
         expect(scenario.startsWith(`${id}.`)).toBe(true);
         expect(scenario.length).toBeGreaterThan(id.length + 1);
       }
@@ -148,12 +152,17 @@ describe("severity, mandatory-ness and blocking are three separate facts", () =>
   it("marks a check mandatory exactly when it has no precondition", () => {
     // Derived rather than stored, so there is no second list to drift. This pins the derivation against the policy the
     // architecture note states, and it is the assertion that fails when a precondition is added or removed carelessly.
+    //
+    // The advisory runtime check is in this list, and that is the point of it: "always asked" and "can stop a run" are
+    // different questions, and the framework's runtime bound is always worth asking about even though the answer never
+    // blocks.
     const mandatory = CHECKS.filter(
       (check) => check.precondition === undefined,
     ).map((check) => check.id);
 
     expect(mandatory).toStrictEqual([
       CheckId.NodeVersion,
+      CheckId.CypressRuntimeSupported,
       CheckId.PackageManager,
       CheckId.ProjectRecognised,
       CheckId.QatConfigurationLoadable,
@@ -181,6 +190,11 @@ describe("severity, mandatory-ness and blocking are three separate facts", () =>
 
     expect(mandatory.has(CheckId.ReportsWritable)).toBe(false);
     expect(blocking.has(CheckId.ReportsWritable)).toBe(true);
+
+    // The same split inside one subject: both runtime questions are always asked, and only QAT's own requirement can
+    // refuse a run.
+    expect(mandatory.has(CheckId.CypressRuntimeSupported)).toBe(true);
+    expect(blocking.has(CheckId.CypressRuntimeSupported)).toBe(false);
   });
 
   it("uses both severities, so the distinction is exercised", () => {
@@ -263,18 +277,43 @@ describe("the guidance table", () => {
     expect(text.explanation).toContain("line 4");
     expect(text.explanation).not.toContain("sk_live");
   });
+
+  it("quotes the declared range for an unsupported runtime, rather than a version of its own", () => {
+    // The entry used to name a floor it held as a constant. It now quotes what the facts carry, which is the only way
+    // the message cannot lag the policy — and this is the assertion that stops a constant being reintroduced here.
+    const text = HEALTH_GUIDANCE[HealthCode.RuntimeUnsupported].describe({
+      runtime: {
+        nodeVersion: "v18.19.0",
+        required: {
+          range: ">=24.0.0 <25",
+          origin: "package.json#engines.node",
+        },
+      },
+    });
+
+    expect(text.explanation).toContain(">=24.0.0 <25");
+    expect(text.explanation).toContain("package.json#engines.node");
+    expect(text.explanation).toContain("v18.19.0");
+  });
 });
 
-describe("the Node floor", () => {
-  it("matches the floor the package declares", async () => {
+describe("the declared Node range", () => {
+  it("is declared, and readable by the compatibility engine", async () => {
     const manifest = JSON.parse(
       await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
     ) as { engines?: { node?: string } };
 
-    // The constant is a restatement of `engines.node`, because a module of pure functions cannot open a manifest. This
-    // is what stops the restatement from becoming a copy that lags — and the failure it prevents is a check that
-    // refuses a runtime the project says it supports.
-    expect(manifest.engines?.node).toBe(`>=${String(MINIMUM_NODE_MAJOR)}.0.0`);
+    // There used to be a constant here — the supported floor, restated from `engines.node` and compared against it.
+    // The comparison was the guard and the constant was the duplication: every support change meant two edits, and
+    // forgetting the second produced a message confidently quoting a requirement QAT no longer had.
+    //
+    // The range is now read from the manifest by the same function the check uses, so there is nothing left to compare
+    // the declaration against. What still needs a release gate is that the declaration exists and that the engine can
+    // parse it — an unreadable range is a warning at runtime, which is right for a user and useless as a build check.
+    const requirement = qatRuntimeRequirement(manifest);
+
+    expect(requirement.range).not.toBe("");
+    expect(parseRange(requirement.range).ok).toBe(true);
   });
 });
 

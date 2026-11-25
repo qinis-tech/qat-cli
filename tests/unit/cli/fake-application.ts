@@ -29,6 +29,20 @@
  * The logger is the exception, and deliberately: a handler is entitled to log, and a rejecting logger would fail a test
  * for doing something correct. Its methods discard.
  *
+ * ## Why the runtime evidence is a value and not a trap
+ *
+ * `runtime` and `nodeRequirement` are the two members added for the runtime checks, and they are treated differently
+ * from the collaborators above — because they are not collaborators. They are *evidence*: a version string and a
+ * declared range, both of which a doctor run reads as a matter of course.
+ *
+ * Trapping them would make a legitimate read fail with "runtime is unused in this test", which is worse than useless: it
+ * names the wrong problem, and it teaches whoever hits it to loosen the trap. A fixture that states a version and a range
+ * admits itself is honest, visible at the call site, and overridable when a test needs a different answer.
+ *
+ * The default is a **fixture, not a claim about what this build supports**. The shipped policy is `engines.node`, and
+ * the contract suite is the only place entitled to assert anything about it; a unit test must not depend on the machine
+ * it runs on, which is why the default is a literal rather than `process.versions.node`.
+ *
  * ## What to do instead of loosening a trap
  *
  * A test that genuinely needs one of these should give it something real, not a stub. A handler needing a resolved
@@ -36,11 +50,35 @@
  * initialise one belongs in the end-to-end suite, where the file either appears on disk or does not. A stub that returns
  * a plausible value turns either of those into a test of the stub.
  */
-import type { Application } from "~/core/application/ports.js";
+import type { Application, RuntimeProbe } from "~/core/application/ports.js";
+import type { RuntimeRequirement } from "~/core/compatibility/index.js";
+
+/**
+ * The version a fake reports unless a test says otherwise, and a range that admits it.
+ *
+ * Paired deliberately: a fixture that reported a version its own range refused would make every lifecycle test look like
+ * it had an unsupported runtime, and the resulting warning would be read as a defect in the program rather than as a
+ * badly chosen fixture.
+ */
+const FAKE_VERSION = "v20.11.1";
+
+/** Frozen, like the real one, so a test cannot accidentally change what the next assertion reads. */
+const FAKE_REQUIREMENT: RuntimeRequirement = Object.freeze({
+  source: "qat",
+  range: ">=20.11.0 <21.0.0",
+  origin: "package.json#engines.node",
+  severityWhenUnsatisfied: "error",
+});
 
 export interface FakeApplicationOptions {
   /** Called when the handler disposes the application. Records the lifecycle without a spy. */
   readonly onDispose?: () => void;
+
+  /** Replaces the reported interpreter. Supply one to exercise an unsupported or unreadable runtime. */
+  readonly runtime?: RuntimeProbe;
+
+  /** Replaces the declared range. Supply one to exercise a policy the fixture range would not reach. */
+  readonly nodeRequirement?: RuntimeRequirement;
 }
 
 /**
@@ -106,6 +144,15 @@ export function fakeApplication(
       assess: () => unused("discovery"),
       discover: () => unused("discovery"),
     },
+
+    // Inline rather than `createProcessRuntime`: a fake of a *value* should not borrow the adapter it is standing in
+    // for, or the fake and the implementation would agree for the same reason and neither would be tested. The default
+    // is overridable because a test that needs an unsupported runtime needs only to say so.
+    runtime: options.runtime ?? { readNodeVersion: () => FAKE_VERSION },
+
+    // A value rather than a resolver, matching the port: the range is read once at composition and shared. Frozen so
+    // that a test which mutated it could not silently change what a later assertion in the same file reads.
+    nodeRequirement: options.nodeRequirement ?? FAKE_REQUIREMENT,
 
     // One member, and it throws rather than rejecting: see `unusedImmediately`. A command that needs a resolved
     // configuration does not call this — it reads the one attached to its assessment, which `discovery.assess` above

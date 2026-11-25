@@ -21,7 +21,7 @@
  * something can be "constructed" would add a layer that exists only to be injected, and every caller would then need
  * the wrapper instead of the function. They are imported where they are used.
  *
- * What *is* adapted here is only what the port's shape requires, and the six adaptations fall into four kinds:
+ * What *is* adapted here is only what the port's shape requires, and the seven adaptations fall into four kinds:
  *
  * | Port member | Implementation | Adaptation |
  * | --- | --- | --- |
@@ -31,11 +31,13 @@
  * | `discover(root)` | `discoverProject({ cwd: root })` | Reshaped — the function takes options |
  * | `configuration.resolve(root, loaded)` | `resolveConfiguration({ loaded, projectRoot })` | Reshaped, and the result translated into the port's own vocabulary |
  * | `initialisation.initialise(root)` | `createInitialisationService({ assess: assessProject, readConfiguration, createFile })` | Composed — three existing operations, assigned directly |
+ * | `runtime.readNodeVersion()` | `createProcessRuntime()` | **None** — assigned directly, because the factory is the implementation |
  *
- * Every member does one of those four, and two do a pair; that is the rule worth keeping: **narrow a test seam,
+ * Every member does one of those four, and some do a pair; that is the rule worth keeping: **narrow a test seam,
  * reshape an argument, translate a vocabulary, or compose a workflow — and know which of them you are doing.** A
  * member that needed none of them should be assigned directly rather than wrapped for symmetry, because an adapter
- * with no translation in it is a second name for the same thing.
+ * with no translation in it is a second name for the same thing. The runtime probe is the worked example: it is
+ * constructed, frozen and returned, and a wrapper around it would only add a third name.
  *
  * The narrowing is deliberate rather than incidental. A command should not be able to tune the parent search depth:
  * the engine's default is right for every real invocation, and putting it on a port turns a constant into a decision
@@ -49,35 +51,46 @@
  * command that did any of that itself would either repeat the assessment's work or form a second opinion about what a
  * usable project is.
  *
- * ## Why initialisation does not go through the enriched assessment
+ * ## Why the health checks are not assembled here
  *
- * The service is handed `assessProject`, not `discovery.assess`. The difference between them is one attached field, and
- * initialisation never reads it: its own question is about the gate's blocking findings, and its work is to decide
- * whether to write a file at a path. Going through the port would therefore read `qat.config.json` twice on an ordinary
- * run — once to attach output locations nobody asks for, once to answer "is a configuration already here".
+ * The catalogue is static data — a keyed table of definitions, each a pure function of the evidence it declared a need
+ * for — so there is nothing for a factory to build and nothing to inject. What assembly supplies is the *evidence*,
+ * not the questions: the running interpreter and the range this build declares are exposed for whichever workflow
+ * gathers facts, and the checks then read exactly the groups they asked for.
  *
- * The verdict is identical either way, because attaching a configuration adds a field rather than changing a gate. If a
- * command ever needs both, it calls `discovery.assess` and gets both from one read.
+ * The obvious design is the wrong one, which is why it is worth naming. Injecting a requirement into a check would make
+ * every definition a closure over policy, and then the same catalogue entry would behave differently depending on who
+ * constructed it — the last thing a report that quotes "the supported range" should be able to do. It would also put
+ * the comparison back inside a map literal, where none of its branches can be tested on their own.
  *
- * ## What is deliberately not wired
+ * ## Where the supported Node.js range comes from
  *
- * `replaceFileWithBackup` lives in `core/filesystem` and is named in no other file. It replaces a configuration after
- * copying the previous contents aside and reading the copy back, and it is the mechanism a replacement command would be
- * built on — once a replacement command is approved.
+ * From the package's own declaration, read once, and exposed as a value. Nowhere else.
  *
- * It is not wired because there is no approved intent to pass to it. A replacement a command line can produce is a
- * replacement somebody types after a long day, and `qat init` deliberately has no flag for one. Wiring it later takes
- * three things in a single change: an approved flag whose semantics are written down, a caller that has read the file
- * and therefore holds the hash of what it is replacing, and a test proving the backup verified before the target
- * changed. Until then it is exercised by its own suite and reachable from nowhere, which is the safest state for a
- * destructive operation to wait in.
+ * The manifest's `engines.node` is the single authority: it is the field a package manager already enforces on
+ * install, it travels with the published artefact, and it is the one place a release changes when the supported
+ * runtime changes. A copy in a check, a README and a CI matrix is three copies, and the first one to drift produces a
+ * support claim that no test covers.
  *
- * ## What is still not orchestrated
+ * Four consequences worth stating, because all four are decisions rather than omissions:
  *
- * The loader's six outcomes are not published to commands. A command that needs them — one that reports why a file
- * could not be read — calls the loader directly, where those messages are rendered. The assembly reads files itself
- * where an operation needs an answer, but it never hands a command that answer's raw shape and never chooses a
- * user-visible sentence from inside a factory.
+ * - The manifest is read from **this installation**, never from the working directory. `qat doctor` runs inside a
+ *   user's project, so `cwd/package.json` is a stranger's manifest — reading it would make the range QAT supports
+ *   depend on whichever project it was pointed at. The reader resolves from its own module location for exactly that
+ *   reason.
+ * - A **missing** declaration does not make this factory throw and does not acquire a default. The requirement is
+ *   built with an empty range, and the check reports it as unreadable policy — a visible warning on the one command a
+ *   user runs when their installation is broken, instead of a crash from the command that was supposed to explain it.
+ * - The requirement is resolved **once per process** and frozen by its builder. Every consumer, now and later, reads
+ *   the same value, so two findings cannot disagree about what "supported" means within a single run.
+ * - It is **not** pushed into the checks. A check receives facts, and the range reaches it through
+ *   `RuntimeFacts.required` — so the value the check compares against is the value the guidance table quotes back,
+ *   not a second copy assembled somewhere else.
+ *
+ * A project-level framework runtime bound needs nothing from this file. The gatherer that inspects the project reads
+ * the declaration and puts it in `RuntimeFacts.frameworkRequired`; the advisory check emits a finding when it is there
+ * and stays silent when it is not. Assembly does not guess, and does not wire a placeholder for a value nobody
+ * declared.
  */
 import { join } from "node:path";
 
@@ -97,9 +110,17 @@ import type {
 import type {
   Application,
   ProjectDiscovery,
+  RuntimeProbe,
 } from "../core/application/ports.js";
 import type { ProjectAssessment } from "../core/application/validation.js";
-import type { EnvironmentSource } from "../core/environment/index.js";
+import {
+  qatRuntimeRequirement,
+  type RuntimeRequirement,
+} from "../core/compatibility/index.js";
+import {
+  createProcessRuntime,
+  type EnvironmentSource,
+} from "../core/environment/index.js";
 import { ErrorCode, InvalidArgumentError } from "../core/errors/index.js";
 import { writeNewFile } from "../core/filesystem/index.js";
 import {
@@ -117,6 +138,10 @@ import {
   discoverProject,
   resolveWorkingDirectory,
 } from "../project/index.js";
+// Reads QAT's own manifest, resolved from the installed package rather than from the working directory — `qat doctor`
+// runs inside a user's project, so `cwd/package.json` holds a manifest that has nothing to do with what *this* build
+// supports. Not imported from `shared/utils/version.js`: that module interprets version strings and owns no I/O.
+import { readOwnManifest } from "../shared/utils/package-manifest.js";
 
 import type { ApplicationOptions } from "./contracts.js";
 
@@ -143,6 +168,37 @@ export function createApplication(
   });
 
   const repository = options.repository ?? new InMemoryExecutionRepository();
+
+  /**
+   * The supported runtime range, read once from the package's own declaration.
+   *
+   * `qatRuntimeRequirement` freezes what it builds and refuses to substitute a default for a missing field: an
+   * unknown policy must stay unknown so a check can report it. Nothing downstream re-reads the manifest, and nothing
+   * downstream restates the range — which is what makes "change the supported version" a one-line change in one file.
+   *
+   * The reader returns `undefined` when the manifest is missing or unreadable, and the requirement treats that the
+   * same as a manifest that declares no `engines.node`: an empty range that the check reports. That is deliberate —
+   * a broken installation should produce a warning on `qat doctor`, which is the command a user runs *because*
+   * something is wrong, not a crash from it.
+   *
+   * No import of `PackageManifest` here: the function takes the structural shape, so this file depends on the reader
+   * and the policy, and not on the document's type as well.
+   *
+   * Overridable so a test can drive the whole boundary matrix without editing `package.json`. That seam exists for the
+   * same reason `repository` and `environment` do: assembly is the only place that names real things, so it is also
+   * the only place that has to be told about fakes.
+   */
+  const nodeRequirement: RuntimeRequirement =
+    options.nodeRequirement ?? qatRuntimeRequirement(readOwnManifest());
+
+  /**
+   * The running interpreter, behind its port.
+   *
+   * One property read, no child process: a spawn would report whichever `node` happened to be first on `PATH`, which
+   * is not necessarily the binary executing this code. Diagnostics must describe the runtime the user is actually in —
+   * and a probe that reported the wrong one would be worse than no probe, because the message would be confident.
+   */
+  const runtime: RuntimeProbe = options.runtime ?? createProcessRuntime();
 
   const configuration: ConfigurationResolver = {
     resolve: (projectRoot, loaded) => {
@@ -273,6 +329,12 @@ export function createApplication(
     discovery,
     configuration,
     initialisation,
+
+    // Both halves of the runtime evidence, exposed rather than combined here: the probe answers "what is running", and
+    // the requirement answers "what is required". Whoever gathers facts pairs them into `RuntimeFacts`, because that
+    // pairing is a gathering decision — this file supplies the two inputs and takes no view on the shape a check reads.
+    runtime,
+    nodeRequirement,
 
     async dispose(): Promise<void> {
       if (disposed) return;

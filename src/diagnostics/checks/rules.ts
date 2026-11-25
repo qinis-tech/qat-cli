@@ -1,15 +1,16 @@
 /**
  * The catalogue.
  *
- * Twelve checks, keyed by identifier so a missing entry does not compile, in the order a reader fixes things in. Every
+ * Thirteen checks, keyed by identifier so a missing entry does not compile, in the order a reader fixes things in. Every
  * field the task asks for is a field on an entry, which is what makes "every check has a documented purpose" something
  * a test can hold rather than something a reviewer has to remember.
  *
  * ## Two kinds of check, and the difference is visible in the body
  *
  * Six **forward** a conclusion a lower layer already drew: they find the finding the assessment carries and carry it
- * onward unchanged. Six **judge** something nothing else looks at — the runtime, the package manager, the configuration
- * file, the selected environment, the two output directories — and author a `QAT-H` finding of their own.
+ * onward unchanged. Seven **judge** something nothing else looks at — the runtime QAT requires, the runtime a
+ * framework requires, the package manager, the configuration file, the selected environment, the two output
+ * directories — and author a `QAT-H` finding of their own.
  *
  * The forwarding checks are deliberately thin. Their value is not the logic; it is that the question a *user* asks is
  * answered where they look for it, with the severity and the remedy the layer that noticed the condition chose.
@@ -19,6 +20,18 @@
  * `cypress.version-supported` does not compare a version with a floor. It reads the finding the version policy
  * produced. A second arithmetic in a second place is the arithmetic that disagrees, and the doctor is the worst
  * possible home for a support decision — it would become the definition the moment somebody read it there.
+ *
+ * `runtime.node-version` *does* compare, and it is not an exception: it compares by delegating to the one compatibility
+ * engine, using the range the package manifest declares, both supplied as evidence. The distinction is between *using*
+ * an authority and *being* one. That check contributes no floor, no operator and no tolerance of its own — delete it
+ * and the policy is unchanged; delete the engine and nothing compiles.
+ *
+ * ## Why the runtime pair is not defined in this file
+ *
+ * Because the comparison has real branches — a floor, a ceiling, gap alternatives, pre-release admission, three
+ * unreadable states — and a branch that lives inside a map literal is a branch nobody tests in isolation. The two
+ * runtime definitions live in `./rules/node-runtime.js` and are registered here, so this file keeps its single job:
+ * decide *which* questions exist, in *what order*, under *which* identifier.
  */
 import { ConfigurationLoad } from "../../config/loader/index.js";
 import {
@@ -39,7 +52,6 @@ import {
   ValidationCode,
   type AnyDiagnosticFinding,
 } from "../../core/application/validation.js";
-import { majorOf } from "../../shared/utils/version.js";
 
 import {
   FactGroup,
@@ -49,11 +61,11 @@ import {
   type CheckFacts,
   type CheckVerdict,
 } from "./contracts.js";
+import { healthFinding, unwritableFinding } from "./guidance.js";
 import {
-  MINIMUM_NODE_MAJOR,
-  healthFinding,
-  unwritableFinding,
-} from "./guidance.js";
+  frameworkRuntimeCheck,
+  nodeRuntimeCheck,
+} from "./rules/node-runtime.js";
 
 /**
  * The codes that mean "this directory cannot be recognised as a project QAT could drive".
@@ -143,41 +155,33 @@ function firstOf(
   );
 }
 
+/**
+ * Separates a definition from its identifier.
+ *
+ * The map below is keyed by identifier and therefore holds entries without one: the key *is* the identity, and a
+ * definition carrying its own copy would allow the two to disagree with nothing to catch it. Destructuring names the
+ * discarded field explicitly, so the discard is visible rather than implied by an omission.
+ */
+function withoutId({
+  id: _id,
+  ...definition
+}: CheckDefinition): Omit<CheckDefinition, "id"> {
+  return definition;
+}
+
 const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
-  [CheckId.NodeVersion]: {
-    category: CheckCategory.Runtime,
-    title: "Node runtime version",
-    purpose:
-      "QAT is built for a Node major it can rely on, and an older runtime fails in ways that look like defects in the tool rather than like an old runtime.",
-    procedure:
-      "Reads the running Node version and compares its major with the supported floor.",
-    requires: [FactGroup.Runtime],
-    severity: CheckSeverity.Error,
-    scenarios: [
-      "runtime.node-version.supported",
-      "runtime.node-version.below-floor",
-      "runtime.node-version.unreadable",
-    ],
-    evaluate: (facts) => {
-      const { nodeVersion } = present(facts.runtime);
+  /**
+   * Registered from the rule module rather than defined here. Its comparison is the compatibility engine's, and its
+   * supported range is whatever the manifest declares — neither of which this file should be able to restate.
+   */
+  [CheckId.NodeVersion]: withoutId(nodeRuntimeCheck),
 
-      // `process.version` reports `v24.4.0`; `majorOf` reads a version as semver writes one. Trimming here rather than
-      // in the fact keeps the fact as whatever the process reported, which is the string a reader will compare with
-      // `node --version`.
-      const major = majorOf(nodeVersion.replace(/^v/, ""));
-
-      // An unreadable version is not a supported one. Treating "I cannot tell" as "fine" is how a report blesses a
-      // runtime it never measured, so both states share the code and the sentence names the string that was seen.
-      if (major === undefined || major < MINIMUM_NODE_MAJOR) {
-        return {
-          verdict: "fail",
-          finding: healthFinding(HealthCode.RuntimeUnsupported, facts),
-        };
-      }
-
-      return PASS;
-    },
-  },
+  /**
+   * Immediately after the blocking runtime question, and advisory. A reader meets the requirement they must satisfy
+   * before the one their project's framework adds — and if the first fails, the second is still worth reading, which is
+   * why it carries no precondition on its sibling.
+   */
+  [CheckId.CypressRuntimeSupported]: withoutId(frameworkRuntimeCheck),
 
   [CheckId.PackageManager]: {
     category: CheckCategory.PackageManager,
