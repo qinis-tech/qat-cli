@@ -17,6 +17,15 @@
  * the tool chose an absolute one. A report that does not say where reports and evidence will land leaves the most
  * consequential decision of the run undocumented — and the first time it matters is the first time it is wrong.
  *
+ * ## One renderer, two vocabularies
+ *
+ * The finding block, the label column and the padding are exported rather than private, because a second reporter
+ * (`qat init`) prints findings from a different vocabulary: a project finding carries the detection and validation
+ * codes, a configuration finding carries the schema's. Their code unions do not overlap and must not be merged — a
+ * schema code reaching a gate that can never produce one would be a type that lies. Their *shape* is identical, and a
+ * block renderer needs the shape. Without the export, the alternative is a copy of this function in the file next door,
+ * which is exactly the drift this module exists to prevent.
+ *
  * ## Two indents, two jobs
  *
  * A summary row is a label and a value on one line, aligned into a column. A finding block is a header with a body: the
@@ -43,17 +52,42 @@ import type {
 import {
   QatOperation,
   isExecutable,
-  type AnyDiagnosticFinding,
   type ProjectAssessment,
 } from "../../core/application/validation.js";
 import { Framework } from "../../core/domain/index.js";
 import { ExitCode } from "../../core/errors/index.js";
 
-/** Every label padded to this width, so a longer label added later cannot misalign the column beside it. */
-const LABEL_WIDTH = 10;
+/**
+ * Every label padded to this width, so a longer label added later cannot misalign the column beside it.
+ *
+ * Exported for the second reporter, so both blocks put their values in the same column. A copy of `padEnd(10)` in
+ * another module would agree today and disagree after the first edit.
+ */
+export const LABEL_WIDTH = 10;
 
-function row(label: string, value: string): string {
+/** One label/value row, in the shared column. */
+export function row(label: string, value: string): string {
   return `${label.padEnd(LABEL_WIDTH)} ${value}`;
+}
+
+/**
+ * The part of a finding a block renderer needs, and nothing else.
+ *
+ * Structural on purpose. `AnyDiagnosticFinding` and the initialisation module's finding type carry different code
+ * vocabularies — one covers detection and validation, the other adds the schema's — and their unions cannot be merged
+ * without a code being representable somewhere it can never come from. What they do share is four fields and a
+ * severity, and that is the whole of a block's input.
+ *
+ * `code` and `severity` are `string` here rather than unions: the renderer prints them, so a narrower type would force
+ * this file to know about codes it does not produce.
+ */
+export interface RenderableFinding {
+  readonly code: string;
+  readonly severity: string;
+  /** One sentence, naming the field and never quoting a configured value. */
+  readonly explanation: string;
+  readonly path?: string;
+  readonly remediation?: string;
 }
 
 /**
@@ -71,7 +105,7 @@ function row(label: string, value: string): string {
  * `at:` and `fix:` are omitted when absent rather than printed empty: a line saying `at: (none)` is noise, and a
  * consumer parsing a report should be able to tell "no file" from "a file named (none)".
  */
-function findingBlock(finding: AnyDiagnosticFinding): readonly string[] {
+export function findingBlock(finding: RenderableFinding): readonly string[] {
   return [
     `${finding.code} ${finding.severity}`,
     `  ${finding.explanation}`,
