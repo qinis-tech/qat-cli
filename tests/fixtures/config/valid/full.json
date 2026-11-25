@@ -1,11 +1,34 @@
 {
   "version": 1,
   "framework": "cypress",
-  "cypress": { "configFile": "config/cypress.config.ts" },
+  "cypress": {
+    "configFile": "config/cypress.config.ts"
+  },
   "defaultEnvironment": "staging",
   "environments": {
-    "smoke": { "API_URL": "https://smoke.example.test" },
-    "staging": { "API_URL": "https://staging.example.test", "RETRIES": "2" }
+    "smoke": {
+      "baseUrl": "https://smoke.example.test",
+      "variables": {
+        "API_URL": "https://smoke.example.test/api",
+        "RETRIES": "0"
+      }
+    },
+    "staging": {
+      "baseUrl": "https://staging.example.test",
+      "variables": {
+        "API_URL": "https://staging.example.test/api",
+        "RETRIES": "2"
+      },
+      "secrets": {
+        "API_TOKEN": {
+          "from": "environment",
+          "name": "QAT_STAGING_API_TOKEN"
+        }
+      }
+    }
   },
-  "output": { "reports": "results/reports/nightly", "evidence": "results/evidence" }
+  "output": {
+    "reports": "results/reports/nightly",
+    "evidence": "results/evidence"
+  }
 }

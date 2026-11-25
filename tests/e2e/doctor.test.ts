@@ -1,3 +1,4 @@
+import { stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -15,8 +16,11 @@ import {
   temporaryDirectory,
 } from "./harness.js";
 
-import { OUTPUT_DEFAULTS } from "~/config/schema/config.js";
-import { SUPPORTED_CONFIG_VERSION } from "~/config/schema/index.js";
+import {
+  OUTPUT_DEFAULTS,
+  SecretSource,
+  SUPPORTED_CONFIG_VERSION,
+} from "~/config/schema/index.js";
 import { ExitCode } from "~/core/errors/index.js";
 
 /**
@@ -36,6 +40,12 @@ import { ExitCode } from "~/core/errors/index.js";
  * middle one is present only when the project has a configuration to resolve, which is why several cases below assert
  * that it is *absent* — a project with no configuration has no output location, and a report that invented one would be
  * worse than one that stayed quiet.
+ *
+ * ## What the report says about a configuration, and what it deliberately does not
+ *
+ * It says where output will go and which environment was selected. It does not reproduce the profile: no variable, no
+ * target, no secret source. Naming the environment is enough for an operator, and a report that dumped a profile would
+ * put the contents of a committed file into a log line by default.
  *
  * ## Two imports, and the split is the modules'
  *
@@ -237,7 +247,16 @@ describe("doctor", () => {
             framework: "cypress",
             defaultEnvironment: "staging",
             environments: {
-              staging: { API_URL: "https://staging.example.test" },
+              staging: {
+                baseUrl: "https://staging.example.test",
+                variables: { API_URL: "https://staging.example.test/api" },
+                secrets: {
+                  API_TOKEN: {
+                    from: SecretSource.Environment,
+                    name: "QAT_STAGING_API_TOKEN",
+                  },
+                },
+              },
             },
           }),
         },
@@ -245,14 +264,21 @@ describe("doctor", () => {
 
       const result = await qat(["doctor", root]);
 
+      expect(result.exitCode).toBe(ExitCode.Success);
+
       // The origin is in the sentence on purpose: an operator who never named an environment should be able to see that
       // the tool took them at their word, rather than assuming it inferred one.
       expect(valueOf(result.stdout, "env")).toBe(
         "staging (from defaultEnvironment)",
       );
+
+      // The report names the environment and stops there. A profile is a committed file that may name credentials; a
+      // report that reproduced it would put those names into every log line and pasted issue by default.
+      expect(result.stdout).not.toContain("QAT_STAGING_API_TOKEN");
+      expect(result.stdout).not.toContain("https://staging.example.test");
     });
 
-    it("says nothing about output when there is no configuration to resolve", async () => {
+    it("says nothing about output when the project has no configuration", async () => {
       const root = await temporaryDirectory();
 
       const result = await qat(["doctor", root]);
@@ -262,6 +288,27 @@ describe("doctor", () => {
       expect(valueOf(result.stdout, "reports")).toBeUndefined();
       expect(valueOf(result.stdout, "evidence")).toBeUndefined();
       expect(result.stderr).toBe("");
+    });
+
+    it("says nothing about output when the configuration cannot be read", async () => {
+      const root = await temporaryProject({
+        extra: {
+          "qat.config.json": JSON.stringify({
+            version: 2,
+            framework: "cypress",
+          }),
+        },
+      });
+
+      const result = await qat(["doctor", root]);
+
+      // Current behaviour, recorded rather than endorsed. An unusable configuration produces no finding and no output
+      // block, so the report is indistinguishable from a project that was never initialised. Closing that means merging
+      // the loader's diagnostics into the assessment's gate, which changes this exit status — so this case exists to make
+      // that change a decision rather than an accident.
+      expect(result.exitCode).toBe(ExitCode.Success);
+      expect(result.stdout).not.toContain("QAT-C002");
+      expect(valueOf(result.stdout, "reports")).toBeUndefined();
     });
   });
 
@@ -463,9 +510,13 @@ describe("doctor", () => {
         join(root, OUTPUT_DEFAULTS.reports),
       );
 
-      // Directories are created at the till, not at the door: the report says where a run *will* write, and an
-      // inspection that pre-created the directory would leave output folders in a project that never ran.
-      expect(await snapshot(root)).not.toContain("results/reports");
+      // Asked of the filesystem directly, not of a snapshot: the directory the report just named must not exist. A
+      // snapshot comparison would also pass if the directory had never existed for an unrelated reason, which is the
+      // shape of assertion that proves nothing.
+      await expect(stat(join(root, OUTPUT_DEFAULTS.reports))).rejects.toThrow();
+      await expect(
+        stat(join(root, OUTPUT_DEFAULTS.evidence)),
+      ).rejects.toThrow();
     });
 
     it("does not need an executable Cypress, and so cannot have run one", async () => {

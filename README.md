@@ -28,7 +28,8 @@ QAT is a CLI that sits on top of the tools you already use and answers those que
 differently. It makes the _result_ of running them into evidence you can act on.
 
 The first question it answers is the one everything else depends on: **is this project one QAT can run at all?** That is
-what `qat doctor` does, and it is the command that exists today.
+what `qat doctor` does. `qat init` is the step before it: it writes the one file a project needs to be configured, and
+nothing else.
 
 ```console
 $ qat doctor
@@ -45,6 +46,9 @@ result       ready
 $ echo $?
 0
 ```
+
+Once a project has a `qat.config.json`, the report gains a block saying where a run would write and which environment it
+would use — the decisions that are otherwise invisible in a file the reader deliberately left empty.
 
 When something blocks a run, the reason is printed with a code, the file it concerns, and what to do about it — and the
 exit status carries the failure.
@@ -63,7 +67,26 @@ $ echo $?
 2
 ```
 
-> `qat doctor` is real. `qat run` is next and is not written yet — see [Status](#status).
+`qat init` writes that configuration, and never touches a file it did not create:
+
+```console
+$ qat init
+created    /repo/packages/api/qat.config.json
+root       /repo/packages/api
+
+Edit the file to change the framework or add environments, then run `qat doctor`.
+
+$ qat init
+exists     /repo/packages/api/qat.config.json
+root       /repo/packages/api
+
+Nothing was changed. Delete the file first if you want a fresh one.
+```
+
+Both exit `0`, and the second one changed nothing — a provisioning script that runs twice must not fail on the second
+pass.
+
+> `qat doctor` and `qat init` are real. `qat run` is next and is not written yet — see [Status](#status).
 
 ---
 
@@ -85,21 +108,24 @@ into a fix.
 
 ## Status
 
-**Pre-alpha.** The engineering foundation is in place and the first user-facing command works; the product is not
+**Pre-alpha.** The engineering foundation is in place and the first two user-facing commands work; the product is not
 finished, and the package is not published.
 
-| Area                                                      | State       |
-| --------------------------------------------------------- | ----------- |
-| Domain contracts, error model, exit-code mapping          | Built       |
-| Structured logging, safe filesystem utilities             | Built       |
-| Package metadata and Cypress project detection            | Built       |
-| Diagnostics, validation and per-operation readiness       | Built       |
-| CLI entry point, `qat doctor`, exit-status contract       | Built       |
-| Lint, format, type, test and decision-record gates        | Built       |
-| Continuous integration, git hooks, publication safeguards | Built       |
-| Architecture decision records                             | 21 accepted |
-| Cypress adapter and `qat run`                             | Not started |
-| Reports, history, diff and `qat diagnose`                 | Not started |
+| Area                                                                 | State       |
+| -------------------------------------------------------------------- | ----------- |
+| Domain contracts, error model, exit-code mapping                     | Built       |
+| Structured logging, safe filesystem utilities                        | Built       |
+| Package metadata and Cypress project detection                       | Built       |
+| Diagnostics, validation and per-operation readiness                  | Built       |
+| Configuration schema, defaults and path resolution                   | Built       |
+| Environment profiles, including secret references                    | Built       |
+| CLI entry point, `qat doctor`, `qat init`, exit-status contract      | Built       |
+| Safe configuration writing — create-only, backed up if ever replaced | Built       |
+| Lint, format, type, test and decision-record gates                   | Built       |
+| Continuous integration, git hooks, publication safeguards            | Built       |
+| Architecture decision records                                        | 30 accepted |
+| Cypress adapter and `qat run`                                        | Not started |
+| Reports, history, diff and `qat diagnose`                            | Not started |
 
 This table is updated as work lands. If it says "Built", there is code and a test behind it.
 
@@ -124,9 +150,10 @@ Most CLIs spend `1` on every failure, which makes a configuration typo indisting
 cannot tell "your change is bad" from "our tool is bad", so a human has to read the log — which is where the time goes.
 QAT refuses that trade, and a test asserts that no application error can ever produce `1`.
 
-`qat doctor` already honours it in the direction that matters most: a project that cannot be run exits `2`, and it writes
-**nothing to standard error**, because the report _is_ the failure message. A pipeline can therefore separate "this
-command found something to say" from "this command broke" without parsing prose.
+Both commands already honour it in the direction that matters most: a project that cannot be run exits `2`, and a
+configuration that cannot be written exits `2`, and both write **nothing to standard error**, because the report _is_
+the failure message. A pipeline can therefore separate "this command found something to say" from "this command broke"
+without parsing prose.
 
 Full contract and rationale: [error model](docs/architecture/error-model.md).
 
@@ -134,18 +161,21 @@ Full contract and rationale: [error model](docs/architecture/error-model.md).
 
 ## Command surface
 
-| Command        | Purpose                                                        | State     |
-| -------------- | -------------------------------------------------------------- | --------- |
-| `qat doctor`   | Report what QAT can see about a project, and what blocks a run | **Built** |
-| `qat run`      | Execute a suite through the detected framework                 | Next      |
-| `qat init`     | Scaffold a project against a known-good structure              | Planned   |
-| `qat report`   | Render a structured result as HTML, JSON or JUnit              | Planned   |
-| `qat history`  | Previous runs, and what changed between them                   | Planned   |
-| `qat diff`     | Compare two runs: new failures, fixed failures, timing drift   | Planned   |
-| `qat diagnose` | Turn a failure into something explainable                      | Planned   |
+| Command        | Purpose                                                           | State     |
+| -------------- | ----------------------------------------------------------------- | --------- |
+| `qat doctor`   | Report what QAT can see about a project, and what blocks a run    | **Built** |
+| `qat init`     | Write the project's configuration, without touching anything else | **Built** |
+| `qat run`      | Execute a suite through the detected framework                    | Next      |
+| `qat report`   | Render a structured result as HTML, JSON or JUnit                 | Planned   |
+| `qat history`  | Previous runs, and what changed between them                      | Planned   |
+| `qat diff`     | Compare two runs: new failures, fixed failures, timing drift      | Planned   |
+| `qat diagnose` | Turn a failure into something explainable                         | Planned   |
 
 Framework-agnostic by design, Cypress-native first: the Cypress adapter is the reference implementation, and everything
 above it is meant to be unaware that Cypress exists.
+
+Both commands take a positional directory and a global `--cwd`, and both accept `--json`. `qat doctor --json` emits the
+assessment itself — the same contract the command read — so a consumer is never parsing a presentation of it.
 
 ---
 
@@ -162,7 +192,7 @@ Five layers. Dependencies point one way, downward.
         └── composition root: the only place that constructs an implementation
 
    execution/adapters/cypress · persistence · reporting · evidence
-   project · config · core/filesystem · core/process · core/logging · core/errors
+   project · config · init · core/filesystem · core/process · core/logging · core/errors
         └── implement a port, import domain and leaves
 ```
 
@@ -182,22 +212,26 @@ Full matrix, prohibited edges, and what is enforced by lint versus by review:
 
 Every one of these is a real document with a real job, not a placeholder.
 
-| Document                                                             | Covers                                                                   |
-| -------------------------------------------------------------------- | ------------------------------------------------------------------------ |
-| [Module boundaries](docs/architecture/module-boundaries.md)          | Layers, permitted and prohibited dependencies, the composition root      |
-| [Error model](docs/architecture/error-model.md)                      | Codes, categories, recoverability, exit-code mapping                     |
-| [Project discovery](docs/architecture/project-discovery.md)          | Which project a command is working on, and when a condition blocks a run |
-| [Validation](docs/architecture/validation.md)                        | Per-operation readiness, the rule table, the supported-layout policy     |
-| [Decision records](docs/architecture/adr/adr-index.md)               | Why the architecture looks the way it does                               |
-| [Code standards](docs/development/code-standards.md)                 | Lint rules, severity policy, suppression rules, formatting               |
-| [Testing standards](docs/development/testing-standards.md)           | Layout, naming, coverage rules, and why no threshold is enforced yet     |
-| [CLI commands](docs/development/cli-commands.md)                     | The command contract, argument conventions, how help is generated        |
-| [CLI output](docs/development/cli-output.md)                         | Streams, the report shape, and what a `--json` consumer receives         |
-| [Logging](docs/development/logging.md)                               | Levels, correlation, redaction, and the output/log split                 |
-| [Continuous integration](docs/development/continuous-integration.md) | Jobs, required checks, the Node policy                                   |
-| [Git hooks](docs/development/git-hooks.md)                           | What runs locally, and why it is a courtesy rather than a gate           |
-| [Repository hygiene](docs/development/repository-hygiene.md)         | What enters git, what ships to npm, secret protection                    |
-| [Commit convention](docs/engineering/commit-convention.md)           | Message format, types, scopes, release mapping                           |
+| Document                                                              | Covers                                                                   |
+| --------------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| [Module boundaries](docs/architecture/module-boundaries.md)           | Layers, permitted and prohibited dependencies, the composition root      |
+| [Error model](docs/architecture/error-model.md)                       | Codes, categories, recoverability, exit-code mapping                     |
+| [Project discovery](docs/architecture/project-discovery.md)           | Which project a command is working on, and when a condition blocks a run |
+| [Validation](docs/architecture/validation.md)                         | Per-operation readiness, the rule table, the supported-layout policy     |
+| [Configuration format](docs/architecture/configuration-format.md)     | The file a project commits: fields, paths, and what to keep out of it    |
+| [Environment profiles](docs/architecture/environment-profiles.md)     | A named environment, and why a secret is a reference rather than a value |
+| [Configuration defaults](docs/architecture/configuration-defaults.md) | Every optional field, its default or its explicit refusal to have one    |
+| [Decision records](docs/architecture/adr/adr-index.md)                | Why the architecture looks the way it does                               |
+| [Code standards](docs/development/code-standards.md)                  | Lint rules, severity policy, suppression rules, formatting               |
+| [Testing standards](docs/development/testing-standards.md)            | Layout, naming, coverage rules, and why no threshold is enforced yet     |
+| [CLI commands](docs/development/cli-commands.md)                      | The command contract, argument conventions, how help is generated        |
+| [CLI output](docs/development/cli-output.md)                          | Streams, the report shape, and what a `--json` consumer receives         |
+| [Logging](docs/development/logging.md)                                | Levels, correlation, redaction, and the output/log split                 |
+| [Continuous integration](docs/development/continuous-integration.md)  | Jobs, required checks, the Node policy                                   |
+| [Git hooks](docs/development/git-hooks.md)                            | What runs locally, and why it is a courtesy rather than a gate           |
+| [Repository hygiene](docs/development/repository-hygiene.md)          | What enters git, what ships to npm, secret protection                    |
+| [Commit convention](docs/engineering/commit-convention.md)            | Message format, types, scopes, release mapping                           |
+| [Manual end-to-end testing](docs/quality/manual-e2e-testing.md)       | What a human checks that the suite cannot, and how to check it twice     |
 
 A recurring theme in all of them: a rule that nothing checks is a suggestion. Where a rule can be a lint error, it is
 one.
@@ -249,6 +283,13 @@ something the reader can do about it.
 **Report, then refuse.** A command that can describe a condition does so, and lets the exit status carry the failure.
 Throwing for something the user can see and fix loses the description, and a report cannot be built out of an exception.
 
+**Never write what you were not asked to write.** `qat init` creates one file and only when that path is free, never
+replaces a configuration it did not generate, and never creates an output directory for a run that has not happened. The
+check before the write is advice; the write itself is the guarantee.
+
+**Defaults fill blanks, and never close a gap somebody filled.** `false`, `0` and `""` are values a person typed. Every
+default has one authority and one published reason, and a field with no default says so out loud.
+
 **One decision, one record.** Architectural choices go in an ADR at the moment they are made. Records are immutable once
 accepted; a reversal supersedes rather than edits, so the reasoning survives.
 
@@ -267,8 +308,12 @@ the parts a pipeline depends on at 3am.
 
 Report vulnerabilities privately via the process in [SECURITY.md](SECURITY.md). Do not open a public issue.
 
-Two things worth knowing: log context accepts primitives only, so a caller cannot accidentally log a whole response
-body; and the published package is controlled by an allowlist, verified before every release.
+Two things worth knowing: log context accepts primitives only, so a caller cannot accidentally log a whole response body;
+and the published package is controlled by an allowlist, verified before every release.
+
+A project's configuration is a committed file, so it is published the moment it is pushed — which is why an environment
+profile names the variable a secret comes from rather than holding the secret, and why writing a `value` beside that name
+is refused by the schema instead of reviewed by a person.
 
 ---
 

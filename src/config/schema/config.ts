@@ -38,23 +38,25 @@
  * `defaultEnvironment` is the deliberate gap between the two: this file checks that a named default refers to something
  * declared, and refuses to invent one. Choosing a target is a decision about a run, not about a file.
  *
+ * ## Where the environments live
+ *
+ * A profile is its own schema, in `profiles.ts`, and this file composes it rather than describing it again. That module
+ * also owns the reserved-name walk, because environments are the only place in the format with user-chosen keys — and
+ * therefore the only place `__proto__` can do damage. A composition rather than a second validator: the profile's
+ * constraints are the same `constraints.ts` primitives every other field uses, so a rule stated once applies everywhere.
+ *
  * ## What is not here
  *
  * No field exists because a later command might want it. `cypress.configFile` exists because detection cannot find a
  * configuration outside the conventional names without listing a directory, and that is a limitation with a date on it.
- * Anything else waits for the consumer that needs it.
+ * Anything else waits for the consumer that needs it — which is why a profile carries no execution settings yet.
  */
 import { z } from "zod";
 
 import { Framework } from "../../core/domain/index.js";
 
-import {
-  RESERVED_NAMES,
-  environmentName,
-  environmentVariableName,
-  environmentVariableValue,
-  relativeProjectPath,
-} from "./constraints.js";
+import { environmentName, relativeProjectPath } from "./constraints.js";
+import { environmentsSchema } from "./profiles.js";
 
 /**
  * The one configuration version this build reads.
@@ -140,68 +142,6 @@ const cypressSchema = z
   .strict();
 
 /**
- * Refuses reserved names before any record schema can reassign them.
- *
- * ## Why this runs on the raw value
- *
- * `JSON.parse` keeps `__proto__` as an own enumerable key, and a record's key schema would reject it. But a record builds
- * its result by assigning each key, and assigning `__proto__` on an ordinary object *changes that object's prototype*
- * rather than adding a property — so the key is gone before a key schema could refuse it, and the parse succeeds with the
- * profile silently missing. `constructor` is caught by the key refinement; `__proto__` was not, and that asymmetry is how
- * this got through its first test run.
- *
- * Walking the input is the only place the key still exists.
- *
- * ## Why it stops at the first one
- *
- * This is a refusal, not a diagnostic. A document that is trying to change a prototype is not one whose remaining field
- * errors are worth collecting, and the pipeline below short-circuits once a stage fails — which is the reason the "reports
- * every independent failure" property holds for everything except this case.
- */
-function refuseReservedKeys(value: unknown, ctx: z.RefinementCtx): void {
-  if (typeof value !== "object" || value === null) return;
-
-  const environments = (value as Record<string, unknown>)["environments"];
-
-  if (
-    typeof environments !== "object" ||
-    environments === null ||
-    Array.isArray(environments)
-  )
-    return;
-
-  for (const name of Object.keys(environments)) {
-    if (RESERVED_NAMES.has(name)) {
-      ctx.addIssue({
-        code: "custom",
-        path: ["environments", name],
-        message: `"${name}" is reserved by the language and cannot be used as a profile name`,
-      });
-      continue;
-    }
-
-    const profile = (environments as Record<string, unknown>)[name];
-
-    if (
-      typeof profile !== "object" ||
-      profile === null ||
-      Array.isArray(profile)
-    )
-      continue;
-
-    for (const variable of Object.keys(profile)) {
-      if (!RESERVED_NAMES.has(variable)) continue;
-
-      ctx.addIssue({
-        code: "custom",
-        path: ["environments", name, variable],
-        message: `"${variable}" is reserved by the language and cannot be used as a variable name`,
-      });
-    }
-  }
-}
-
-/**
  * The configuration file's fields.
  *
  * Two required and four optional. Required means the tool cannot proceed sensibly without it; optional means its absence
@@ -236,13 +176,14 @@ const rootSchema = z
      * indistinguishable from something the reader asked for.
      */
     defaultEnvironment: environmentName.optional(),
-    /** Named sets of variables, selected by `--environment` or by `defaultEnvironment`. */
-    environments: z
-      .record(
-        environmentName,
-        z.record(environmentVariableName, environmentVariableValue),
-      )
-      .optional(),
+    /**
+     * Named environments, selected by `--environment` or by `defaultEnvironment`.
+     *
+     * Each one is a profile — a target, non-sensitive variables and references to secrets — rather than a bare map of
+     * variables. `profiles.ts` explains why, owns the shape, and holds the reserved-name guard that has to run on the raw
+     * value; this file only says where the map belongs.
+     */
+    environments: environmentsSchema.optional(),
     /**
      * Where output goes. Always present after parsing, because both paths have defaults.
      *
@@ -281,13 +222,12 @@ const objectSchema = rootSchema.superRefine((config, ctx) => {
 /**
  * The configuration file.
  *
- * A pipeline rather than one object: the first stage inspects the raw value for reserved keys, the second validates the
- * shape. `z.unknown()` is what makes the first stage able to see an input the second stage will have transformed.
+ * One schema, and no outer pipeline. The outer `z.unknown()` stage that used to sit here existed to inspect the raw
+ * document for reserved names inside `environments`; that inspection now belongs to {@link environmentsSchema}, where it
+ * cannot be bypassed by a consumer that reaches the profile schema directly. The root needs no such stage: its keys are
+ * this file's own, and `.strict()` refuses an unrecognised one before anything is assigned.
  */
-export const qatConfigSchema = z
-  .unknown()
-  .superRefine(refuseReservedKeys)
-  .pipe(objectSchema);
+export const qatConfigSchema = objectSchema;
 
 /**
  * Every configuration field, as a dotted path.
@@ -298,7 +238,8 @@ export const qatConfigSchema = z
  * promise into an assertion.
  *
  * `environments` contributes one path and not its contents. A record's keys are the *user's*, so there is nothing to
- * enumerate — the paths below are the schema's fields, not a document's possible values.
+ * enumerate — and the profile's own fields (`baseUrl`, `variables`, `secrets`) are properties of a value rather than
+ * paths in a document, which is why they appear in the format documentation's prose and not in this list.
  *
  * Sorted, because the table it is compared against is sorted by whichever order the document was written in, and a set
  * comparison is the claim being made.

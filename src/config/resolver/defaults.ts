@@ -21,14 +21,20 @@ import { deepFreeze } from "./freeze.js";
  *
  * ## Why `environments` is filled here and not by the schema
  *
- * The schema leaves `environments` absent, which is a legitimate state: a project with no named profiles. The
+ * The schema leaves `environments` absent, which is a legitimate state: a project with no named environments. The
  * resolution stage fills it with an empty map so a consumer never has to distinguish "no environments" from "an empty
- * set of them". Both this and the re-applied output paths are idempotent on a validated document, which is what makes
- * them a guarantee rather than a mechanism.
+ * set of them" — the same distinction the output block saves every writer from making.
+ *
+ * An environment is a profile — a target, non-sensitive variables and references to secrets — not a bare map of
+ * variables. Nothing here declares, defaults or invents a profile: the empty map is the whole of what this stage knows
+ * about them, and a project that names none is one QAT can still inspect.
+ *
+ * Both this and the re-applied output paths are idempotent on a validated document, which is what makes them a
+ * guarantee rather than a mechanism.
  *
  * ## No value constants are exported any more
  *
- * The previous revision published `DEFAULT_REPORTS_DIRECTORY` and friends, which is how two answers to one question
+ * An earlier revision published `DEFAULT_REPORTS_DIRECTORY` and friends, which is how two answers to one question
  * appear: a caller could import the constant while the schema applied a different one. `OUTPUT_DEFAULTS` is the value;
  * this module is the explanation.
  */
@@ -59,8 +65,8 @@ export const CONFIGURATION_DEFAULTS: Readonly<DefaultableConfiguration> =
 /**
  * Catalogue entries before the list is sealed.
  *
- * Declared with an explicit annotation so every literal is checked against `DefaultDescriptor`; without it, `rule:
- * "none"` widens to `string` the moment the array passes through `Object.freeze`.
+ * Declared with an explicit annotation so every literal is checked against `DefaultDescriptor`; without it,
+ * `rule: "none"` widens to `string` the moment the array passes through `Object.freeze`.
  */
 const CATALOGUE_ENTRIES: readonly DefaultDescriptor[] = [
   {
@@ -92,7 +98,7 @@ const CATALOGUE_ENTRIES: readonly DefaultDescriptor[] = [
     rule: "default",
     value: {},
     rationale:
-      "No implicit variables, so anything a run depends on is visible in the file rather than inherited from the operator.",
+      "No profiles are invented: a project with no named environments is a legitimate state, and anything a run depends on is written in the file rather than inherited from the operator.",
   },
   {
     field: "output.reports",
@@ -116,6 +122,10 @@ const CATALOGUE_ENTRIES: readonly DefaultDescriptor[] = [
  * One entry per leaf field the schema declares, and a test compares this list against `CONFIG_FIELD_PATHS` in both
  * directions — so a field added to the schema without a rule fails the build rather than passing unnoticed, and a rule
  * left behind after a field is removed does the same.
+ *
+ * A profile's own fields (`baseUrl`, `variables`, `secrets`) are properties of a value rather than paths in a document,
+ * so they are documented in `environment-profiles.md` and deliberately absent here. The coverage test agrees: the map
+ * contributes one leaf, not four.
  */
 export const DEFAULT_CATALOGUE: readonly DefaultDescriptor[] = Object.freeze(
   // Frozen entry by entry: a shared, mutable descriptor would let one consumer reword a rationale that a published

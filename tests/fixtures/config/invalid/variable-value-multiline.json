@@ -3,7 +3,9 @@
   "framework": "cypress",
   "environments": {
     "smoke": {
-      "API_URL": "https://example.test\nsecond line"
+      "variables": {
+        "API_URL": "line one\nline two"
+      }
     }
   }
 }

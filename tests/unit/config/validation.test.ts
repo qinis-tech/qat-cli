@@ -14,6 +14,12 @@ import {
  *
  * Two groups are load-bearing rather than incidental. The version cases pin an ordering that only exists in one module,
  * and the secrecy cases assert a property that no type can express.
+ *
+ * ## An environment is a profile
+ *
+ * `environments.smoke` is an object with `baseUrl`, `variables` and `secrets`, not a map of variables. A case that wanted
+ * to exercise *a variable's* value has to reach it as `environments.smoke.variables.TOKEN`; written the old way it would
+ * fail on an unknown key and assert something else entirely while still passing.
  */
 const VALID = { version: SUPPORTED_CONFIG_VERSION, framework: "cypress" };
 
@@ -59,8 +65,20 @@ describe("a valid configuration", () => {
       cypress: { configFile: "config/cypress.config.ts" },
       defaultEnvironment: "staging",
       environments: {
-        smoke: { API_URL: "https://smoke.example.test" },
-        staging: { API_URL: "https://staging.example.test", RETRIES: "2" },
+        smoke: {
+          baseUrl: "https://smoke.example.test",
+          variables: { API_URL: "https://smoke.example.test/api" },
+        },
+        staging: {
+          baseUrl: "https://staging.example.test",
+          variables: {
+            API_URL: "https://staging.example.test/api",
+            RETRIES: "2",
+          },
+          secrets: {
+            API_TOKEN: { from: "environment", name: "QAT_STAGING_API_TOKEN" },
+          },
+        },
       },
       output: { reports: "out/reports", evidence: "out/evidence" },
     });
@@ -69,6 +87,13 @@ describe("a valid configuration", () => {
     if (!result.valid) return;
 
     expect(result.config.output.reports).toBe("out/reports");
+    // The profile comes through the service intact, which is what a command reading it downstream depends on.
+    expect(
+      result.config.environments?.["staging"]?.secrets?.["API_TOKEN"],
+    ).toStrictEqual({
+      from: "environment",
+      name: "QAT_STAGING_API_TOKEN",
+    });
   });
 
   it("preserves the values it was given rather than the defaults", () => {
@@ -188,16 +213,16 @@ describe("fields", () => {
   });
 
   it("does not mistake a missing key for a wrong type, or the reverse", () => {
-    // Both halves use a field where the two situations really are different. `framework` would not do: it is an enum, and a
-    // number in an enum field is reported as an unsupported *value*, because for an enum a wrong type and a wrong value have
-    // the same fix. The pairing only means something where the field has a type apart from its allowed values.
+    // Both halves use a field where the two situations really are different. `framework` would not do: it is an enum, and
+    // a number in an enum field is reported as an unsupported *value*, because for an enum a wrong type and a wrong value
+    // have the same fix. The pairing only means something where the field has a type apart from its allowed values.
     const missing = validateConfiguration({
       version: SUPPORTED_CONFIG_VERSION,
     });
     const wrong = validateConfiguration({ ...VALID, output: "results" });
 
-    // The library encodes absence differently depending on what the field holds — an enum member and a literal both report it
-    // as a value error — so this pair is what proves the document is consulted rather than the issue's own encoding.
+    // The library encodes absence differently depending on what the field holds — an enum member and a literal both report
+    // it as a value error — so this pair is what proves the document is consulted rather than the issue's own encoding.
     expect(codesOf(missing)).toStrictEqual([
       ConfigurationDiagnosticCode.Missing,
     ]);
@@ -268,19 +293,69 @@ describe("fields", () => {
   it("names a profile whose name breaks the rule", () => {
     const result = validateConfiguration({
       ...VALID,
-      environments: { Staging: {} },
+      // A valid body, so the only thing wrong with this document is the name. `{}` would fail for its own reason as well,
+      // and the case would then be asserting whichever issue happened to come first.
+      environments: { Staging: { variables: { A: "1" } } },
     });
 
     expect(result.valid).toBe(false);
     if (result.valid) return;
 
     // The record key is part of the path, so the diagnostic points at the profile rather than at `environments`.
-    expect(pathsOf(result)).toContainEqual(
-      expect.stringContaining("environments"),
-    );
+    expect(pathsOf(result)).toContain("environments.Staging");
     expect(result.diagnostics[0]?.code).toBe(
       ConfigurationDiagnosticCode.RefusedValue,
     );
+    expect(result.diagnostics[0]?.message).toContain("lowercase");
+  });
+
+  it("names a profile that declares nothing", () => {
+    const result = validateConfiguration({
+      ...VALID,
+      environments: { smoke: {} },
+    });
+
+    expect(result.valid).toBe(false);
+    if (result.valid) return;
+
+    // The rule reads oddly for a moment and then does not: an empty profile can be the default, applies nothing, and
+    // reports the name it was selected by — so the first symptom is a run against whatever the previous command left
+    // behind.
+    expect(pathsOf(result)).toStrictEqual(["environments.smoke"]);
+    expect(result.diagnostics[0]?.code).toBe(
+      ConfigurationDiagnosticCode.RefusedValue,
+    );
+    expect(result.diagnostics[0]?.message).toContain(
+      "declares no base URL, variables or secrets",
+    );
+  });
+
+  it("names a secret that carries a value", () => {
+    const result = validateConfiguration({
+      ...VALID,
+      environments: {
+        smoke: {
+          secrets: {
+            API_TOKEN: {
+              from: "environment",
+              name: "TOKEN_SOURCE",
+              value: "hunter2",
+            },
+          },
+        },
+      },
+    });
+
+    expect(result.valid).toBe(false);
+    if (result.valid) return;
+
+    // An unknown key rather than a custom rule, which is the point: a `value` beside a `name` is refused by the shape
+    // rather than by a check that could be forgotten.
+    expect(result.diagnostics[0]).toMatchObject({
+      code: ConfigurationDiagnosticCode.UnknownField,
+      path: "environments.smoke.secrets.API_TOKEN",
+    });
+    expect(messagesOf(result)).not.toContain("hunter2");
   });
 
   it("reports several field problems together when the version is one it reads", () => {
@@ -302,11 +377,23 @@ describe("sensitive values", () => {
     ["a profile name that cannot be used", { defaultEnvironment: SECRET }],
     [
       "a variable value holding a control character",
-      { environments: { staging: { TOKEN: `${SECRET}\u0000` } } },
+      {
+        environments: { staging: { variables: { TOKEN: `${SECRET}\u0000` } } },
+      },
     ],
     [
       "a variable value that spans lines",
-      { environments: { staging: { TOKEN: `${SECRET}\nline` } } },
+      {
+        environments: { staging: { variables: { TOKEN: `${SECRET}\nline` } } },
+      },
+    ],
+    [
+      "a profile target that carries credentials",
+      {
+        environments: {
+          staging: { baseUrl: `https://user:${SECRET}@example.test` },
+        },
+      },
     ],
   ])("does not echo %s", (_case, override) => {
     const result = validateConfiguration({ ...VALID, ...override });
@@ -349,7 +436,9 @@ describe("boundaries", () => {
   ])("handles %s", (_case, name, accepted) => {
     const result = validateConfiguration({
       ...VALID,
-      environments: { [name]: {} },
+      // A target rather than nothing: an empty profile is refused for a reason of its own, which would mask whether the
+      // *name* was the thing being measured.
+      environments: { [name]: { baseUrl: "https://example.test" } },
     });
 
     expect(result.valid).toBe(accepted);
@@ -361,7 +450,7 @@ describe("boundaries", () => {
   ])("handles %s", (_case, value, accepted) => {
     const result = validateConfiguration({
       ...VALID,
-      environments: { staging: { TOKEN: value } },
+      environments: { staging: { variables: { TOKEN: value } } },
     });
 
     expect(result.valid).toBe(accepted);
@@ -370,7 +459,7 @@ describe("boundaries", () => {
   it("reports a size violation as a refused value, and states the bound", () => {
     const result = validateConfiguration({
       ...VALID,
-      environments: { staging: { TOKEN: "a".repeat(4097) } },
+      environments: { staging: { variables: { TOKEN: "a".repeat(4097) } } },
     });
 
     expect(result.valid).toBe(false);

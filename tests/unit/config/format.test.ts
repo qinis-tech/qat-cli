@@ -1,4 +1,4 @@
-import { readFile, readdir } from "node:fs/promises";
+import { readdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -19,6 +19,12 @@ import { CONFIG_FIELD_PATHS, qatConfigSchema } from "~/config/schema/index.js";
  * parsed, and every fenced `json` block in the two configuration documents must be a *whole valid configuration*. The
  * third is the one that constrains an author: a fragment pasted into the specification has to be tagged as something
  * other than `json`, or it fails.
+ *
+ * ## Why the block check collects instead of asserting
+ *
+ * An expectation inside a loop aborts at the first failure, so a document with three bad blocks reports one and hides
+ * two — and fixing it becomes three rounds of edit-and-run rather than one. The check below gathers every offending
+ * block and asserts once, so a single run names all of them.
  */
 const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
 
@@ -36,6 +42,14 @@ const CONFIGURATION_DOCUMENTS = [
   "docs/architecture/configuration-schema.md",
 ];
 
+/** A `json` block that is not a whole valid configuration. */
+interface BlockFailure {
+  /** Zero-based index among the document's `json` blocks, so a reader can count to it. */
+  readonly block: number;
+  /** A parse error, or the issue paths — never both, because a block that will not parse has no fields to report. */
+  readonly issues: readonly string[];
+}
+
 async function read(relativePath: string): Promise<string> {
   return readFile(join(ROOT, relativePath), "utf8");
 }
@@ -50,14 +64,60 @@ function jsonBlocks(markdown: string): string[] {
 }
 
 /**
+ * Every `json` block that is not a whole valid configuration.
+ *
+ * Collected rather than thrown, for the reason in the header: the loop keeps going after a bad block so the reader sees
+ * the whole document's worth of problems at once.
+ *
+ * `JSON.parse` runs first and separately: invalid JSON and an invalid configuration are different mistakes, and a block
+ * with a trailing comma should say so rather than reporting a schema issue at the root.
+ */
+function blockFailures(markdown: string): readonly BlockFailure[] {
+  return jsonBlocks(markdown).flatMap((block, index) => {
+    let value: unknown;
+
+    try {
+      value = JSON.parse(block);
+    } catch (error) {
+      return [
+        {
+          block: index,
+          issues: [
+            `not JSON: ${error instanceof Error ? error.message : String(error)}`,
+          ],
+        },
+      ];
+    }
+
+    const result = qatConfigSchema.safeParse(value);
+
+    return result.success
+      ? []
+      : [
+          {
+            block: index,
+            issues: result.error.issues.map(
+              (issue) => issue.path.map(String).join(".") || "(root)",
+            ),
+          },
+        ];
+  });
+}
+
+/**
  * Every field path documented as the first cell of a table row.
  *
  * Narrow on purpose: the shape has to be a backticked dotted identifier, so a rule in a table (`..`, `results/reports`)
  * is not mistaken for a field. A table whose first column holds something else is invisible to this, which is why the
  * assertion below checks the count as well as the contents — a regex that matches nothing would otherwise pass.
+ *
+ * Deliberately *not* extended to cover a profile's own properties. `baseUrl`, `variables` and `secrets` are properties
+ * of a value rather than paths through the document, so `CONFIG_FIELD_PATHS` does not list them and a table of them here
+ * would fail the comparison below. The correct response is to document them in `environment-profiles.md`, or as prose,
+ * rather than to widen this extractor.
  */
 function documentedFields(markdown: string): string[] {
-  const pattern = /^\|\s*`([a-zA-Z][a-zA-Z.]*)`\s*\|/gm;
+  const pattern = /^\|\s`([a-zA-Z][a-zA-Z.]*)`\s*\|/gm;
 
   return [...markdown.matchAll(pattern)]
     .map((match) => match[1])
@@ -77,20 +137,21 @@ describe("the filename", () => {
 });
 
 describe("the example files", () => {
-  it.each(["qat.config.minimal.json", "qat.config.json"])(
-    "parses examples/configuration/%s",
-    async (name) => {
-      const value: unknown = JSON.parse(
-        await readFile(join(EXAMPLES, name), "utf8"),
-      );
+  it.each([
+    "qat.config.minimal.json",
+    "qat.config.json",
+    "qat.config.profiles.json",
+  ])("parses examples/configuration/%s", async (name) => {
+    const value: unknown = JSON.parse(
+      await readFile(join(EXAMPLES, name), "utf8"),
+    );
 
-      const result = qatConfigSchema.safeParse(value);
+    const result = qatConfigSchema.safeParse(value);
 
-      // The issue list rather than a bare boolean, so a failure says which field disagrees rather than "expected false to
-      // be true".
-      expect(result.success ? [] : result.error.issues).toStrictEqual([]);
-    },
-  );
+    // The issue list rather than a bare boolean, so a failure says which field disagrees rather than "expected false to
+    // be true".
+    expect(result.success ? [] : result.error.issues).toStrictEqual([]);
+  });
 
   it("keeps the template to the two required fields", async () => {
     const value = JSON.parse(
@@ -142,15 +203,9 @@ describe("the specification", () => {
   it.each(CONFIGURATION_DOCUMENTS)(
     "validates every json block in %s",
     async (document) => {
-      for (const block of jsonBlocks(await read(document))) {
-        // `JSON.parse` first: invalid JSON and invalid configuration are different mistakes, and a document with a trailing
-        // comma in it should say so rather than reporting a schema issue at the root.
-        const value: unknown = JSON.parse(block);
-
-        const result = qatConfigSchema.safeParse(value);
-
-        expect(result.success ? [] : result.error.issues).toStrictEqual([]);
-      }
+      // Every offending block in one assertion. The alternative — an expectation inside the loop — reported one block per
+      // run, which is how a three-block mistake took three runs to find.
+      expect(blockFailures(await read(document))).toStrictEqual([]);
     },
   );
 
@@ -178,16 +233,33 @@ describe("non-functional behaviour", () => {
     expect(second).toStrictEqual(first);
   });
 
+  it("reports every bad block rather than the first", () => {
+    // The behaviour the collector exists for, asserted directly: one valid document, one fragment, one broken document —
+    // and both bad ones named, with their own indices, from a single call.
+    const markdown = [
+      '```json\n{"version": 1, "framework": "cypress"}\n```',
+      '```json\n"secrets": {}\n```',
+      '```json\n{ "version": 1, }\n```',
+    ].join("\n");
+
+    const failures = blockFailures(markdown);
+
+    expect(failures.map((failure) => failure.block)).toStrictEqual([1, 2]);
+    expect(failures[0]?.issues[0]).toContain("not JSON");
+    expect(failures[1]?.issues[0]).toContain("not JSON");
+  });
+
   it("keeps every example file in the examples directory accounted for", async () => {
     const files = (await readdir(EXAMPLES)).filter((name) =>
       name.endsWith(".json"),
     );
 
-    // A third example added without a case above is a file nothing validates. Cheaper to notice here than when somebody
+    // A fourth example added without a case above is a file nothing validates. Cheaper to notice here than when somebody
     // copies it.
     expect(files.sort()).toStrictEqual([
       "qat.config.json",
       "qat.config.minimal.json",
+      "qat.config.profiles.json",
     ]);
   });
 });

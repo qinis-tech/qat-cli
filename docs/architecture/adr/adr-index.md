@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0030](0030-model-an-environment-as-a-typed-profile-rather-than-a-map-of.md) | Model an environment as a typed profile rather than a map of variables | Proposed | 2026-11-24 |
 | [ADR-0029](0029-require-declared-intent-for-a-destructive-configuration-writ.md) | Require declared intent for a destructive configuration write | Proposed | 2026-11-24 |
 | [ADR-0028](0028-create-a-new-configuration-exclusively-rather-than-by-renami.md) | Create a new configuration exclusively rather than by renaming over the target | Proposed | 2026-11-24 |
 | [ADR-0027](0027-apply-defaults-only-to-omitted-fields-and-resolve-paths-agai.md) | Apply defaults only to omitted fields and resolve paths against the project root | Proposed | 2026-11-24 |

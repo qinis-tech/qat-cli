@@ -11,8 +11,10 @@ import {
   LoadedConfigurationRequiredError,
   markLoaded,
 } from "~/config/resolver/index.js";
-import { OUTPUT_DEFAULTS } from "~/config/schema/config.js";
-import { SUPPORTED_CONFIG_VERSION } from "~/config/schema/index.js";
+import {
+  OUTPUT_DEFAULTS,
+  SUPPORTED_CONFIG_VERSION,
+} from "~/config/schema/index.js";
 import type { LoadedConfigurationDocument } from "~/core/application/configuration.js";
 import type { ExecutionRecord } from "~/core/application/ports.js";
 import { ErrorCode, InvalidArgumentError } from "~/core/errors/index.js";
@@ -86,6 +88,9 @@ async function loadFrom(root: string): Promise<LoadedConfigurationDocument> {
   const loaded = await loadConfiguration(join(root, "qat.config.json"));
 
   if (loaded.kind !== ConfigurationLoad.Loaded) {
+    // Parentheses, not a tagged template: without them this constructs an `Error` and discards it, so the function
+    // returns `undefined` from a signature that promised a document — and the failure surfaces at the caller with no
+    // message at all.
     throw new Error(`expected a loaded configuration, received ${loaded.kind}`);
   }
 
@@ -297,7 +302,13 @@ describe("the configuration adapter", () => {
       JSON.stringify({
         version: SUPPORTED_CONFIG_VERSION,
         framework: "cypress",
-        environments: { only: { A: "1" } },
+        environments: {
+          only: {
+            // A profile, not a bare map of variables: `{ A: "1" }` on its own is a profile whose only property is an
+            // unknown name, so the document is refused before the derivation is ever reached.
+            variables: { A: "1" },
+          },
+        },
       }),
     );
     const application = createApplication({
@@ -317,6 +328,12 @@ describe("the configuration adapter", () => {
       origin: "sole",
       name: "only",
     });
+
+    // The adapter reports the choice, not the profile. Variable values are the most likely place in a committed file to
+    // find something a log should not carry, and a port that forwarded them would put them one `console.log` away from
+    // every report.
+    expect("environments" in resolution.configuration).toBe(false);
+    expect("variables" in resolution.configuration).toBe(false);
   });
 
   it("reports a refused path as a finding rather than throwing", async () => {
@@ -375,11 +392,10 @@ describe("the configuration adapter", () => {
       logDestination: capture().stream,
     });
 
-    // Synchronous because resolution performs no I/O: a promise here would advertise work that never happens.
-    expect(
-      application.configuration.resolve,
-      "resolve must stay synchronous",
-    ).toBeTypeOf("function");
+    // Synchronous because resolution performs no I/O: a promise here would advertise work that never happens. Asserted
+    // by absence — a function that returned a promise would be `then`-able, and this is not.
+    expect(application.configuration.resolve).toBeTypeOf("function");
+    expect(application.configuration).not.toHaveProperty("then");
     expect(Object.keys(application.configuration)).toStrictEqual(["resolve"]);
   });
 });

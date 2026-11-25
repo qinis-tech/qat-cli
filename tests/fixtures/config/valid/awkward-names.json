@@ -1,6 +1,19 @@
 {
   "version": 1,
   "framework": "cypress",
-  "environments": { "e2e-2026": { "GREETING": "bonjour, ça va" } },
-  "output": { "reports": "rapports été/2026", "evidence": "evidence/run 01" }
+  "defaultEnvironment": "e2e-2026",
+  "environments": {
+    "e2e-2026": {
+      "baseUrl": "https://a-very-long-subdomain.staging.example.test:8443",
+      "variables": {
+        "GREETING": "grüße",
+        "API_URL_WITH_A_LONG_NAME_AND_UNDERSCORES": "https://example.test/api/v1?tenant=demo"
+      }
+    },
+    "x": {
+      "variables": {
+        "A": ""
+      }
+    }
+  }
 }

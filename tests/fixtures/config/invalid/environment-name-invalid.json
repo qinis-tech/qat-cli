@@ -2,6 +2,10 @@
   "version": 1,
   "framework": "cypress",
   "environments": {
-    "Staging": {}
+    "Staging": {
+      "variables": {
+        "A": "1"
+      }
+    }
   }
 }

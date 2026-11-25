@@ -1,8 +1,10 @@
 {
   "version": 1,
   "framework": "cypress",
-  "defaultEnvironment": "prod",
+  "defaultEnvironment": "production",
   "environments": {
-    "staging": {}
+    "staging": {
+      "baseUrl": "https://staging.example.test"
+    }
   }
 }

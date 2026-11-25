@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "framework": "cypress",
+  "defaultEnvironment": "staging",
+  "environments": {
+    "development": {
+      "baseUrl": "http://localhost:3000",
+      "variables": {
+        "API_URL": "http://localhost:8080",
+        "FEATURE_FLAGS": "beta,mock-payments"
+      }
+    },
+    "staging": {
+      "baseUrl": "https://staging.example.test",
+      "variables": {
+        "API_URL": "https://staging.example.test/api",
+        "FEATURE_FLAGS": "beta"
+      },
+      "secrets": {
+        "API_TOKEN": {
+          "from": "environment",
+          "name": "QAT_STAGING_API_TOKEN"
+        }
+      }
+    },
+    "production": {
+      "baseUrl": "https://example.test",
+      "secrets": {
+        "API_TOKEN": {
+          "from": "environment",
+          "name": "QAT_PRODUCTION_API_TOKEN"
+        }
+      }
+    }
+  }
+}

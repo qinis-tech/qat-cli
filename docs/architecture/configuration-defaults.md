@@ -11,15 +11,15 @@ prose around the table may be edited freely while the table itself may not.
 
 ## The table
 
-| Field                | Rule    | Default              | Rationale                                                                                                                                                      |
-| -------------------- | ------- | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `version`            | none    | _none_               | Identifies the schema the file was written against. Guessing it would silently reinterpret the document against different rules.                               |
-| `framework`          | none    | _none_               | Names the system under test. A default would let QAT assume a framework and appear to work on a project it does not understand.                                |
-| `cypress.configFile` | none    | _none_               | Supplied by project-layout detection. A default would create a second, drifting source of truth for a fact the project already states.                         |
-| `defaultEnvironment` | derived | _derived_            | An environment named "default" when the project declares one, otherwise the only declared environment, otherwise none. QAT never guesses which target to test. |
-| `environments`       | default | `{}`                 | No implicit variables, so anything a run depends on is visible in the file rather than inherited from the operator.                                            |
-| `output.reports`     | default | `"results/reports"`  | Deterministic and project-relative: no timestamp, hostname or working-directory fragment can make two runs of one configuration disagree.                      |
-| `output.evidence`    | default | `"results/evidence"` | The same reasoning as the reports directory, and deliberately beside it: output that lands in two unrelated trees is output nobody can archive.                |
+| Field                | Rule    | Default              | Rationale                                                                                                                                                                           |
+| -------------------- | ------- | -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `version`            | none    | _none_               | Identifies the schema the file was written against. Guessing it would silently reinterpret the document against different rules.                                                    |
+| `framework`          | none    | _none_               | Names the system under test. A default would let QAT assume a framework and appear to work on a project it does not understand.                                                     |
+| `cypress.configFile` | none    | _none_               | Supplied by project-layout detection. A default would create a second, drifting source of truth for a fact the project already states.                                              |
+| `defaultEnvironment` | derived | _derived_            | An environment named "default" when the project declares one, otherwise the only declared environment, otherwise none. QAT never guesses which target to test.                      |
+| `environments`       | default | `{}`                 | No profiles are invented: a project with no named environments is a legitimate state, and anything a run depends on is written in the file rather than inherited from the operator. |
+| `output.reports`     | default | `"results/reports"`  | Deterministic and project-relative: no timestamp, hostname or working-directory fragment can make two runs of one configuration disagree.                                           |
+| `output.evidence`    | default | `"results/evidence"` | The same reasoning as the reports directory, and deliberately beside it: output that lands in two unrelated trees is output nobody can archive.                                     |
 
 Every leaf field the schema declares appears exactly once. A field missing from this table is a field whose behaviour
 nobody has agreed on, and two tests fail the build in that case: one compares the catalogue against
@@ -32,8 +32,12 @@ that file is what decides a field may be omitted at all — and a default is par
 parsed, `output` arrives already filled.
 
 **The resolution stage owns the reasoning and the one group the schema leaves open.** `environments` is absent in a
-valid document, which is a legitimate state: a project with no named profiles. The resolution stage fills it with an
+valid document, which is a legitimate state: a project with no named environments. The resolution stage fills it with an
 empty map so no consumer has to distinguish "no environments" from "an empty set of them".
+
+That map's values are profiles — a target, non-sensitive variables and references to secrets — not bare maps of
+variables; the shape is described in `environment-profiles.md`. Defaulting does not reach inside one: nothing in this
+stage names a profile, chooses between them, or fills a field of one.
 
 The output paths are re-applied there as well. That is deliberate redundancy, not a second authority: the values are
 imported from `OUTPUT_DEFAULTS` rather than restated, and the operation is idempotent on a validated document. A test
@@ -105,8 +109,9 @@ Both defaulted paths obey four rules, and a test asserts them:
 ## Related
 
 - `configuration-schema.md` — what a configuration file may contain.
+- `environment-profiles.md` — what one named environment is, and what it may carry.
 - `configuration-precedence.md` — how environment, file and defaults rank.
 - `configuration-loading.md` — the six load outcomes, and why a failure carries no configuration.
 - `path-resolution.md` — how a project-relative path becomes an absolute one.
 - `adr/0026-stop-at-an-unsupported-version-rather-than-listing-field-err.md`
-- `adr/0028-apply-defaults-only-to-omitted-fields-and-resolve-paths-against-the-project-root.md`
+- `adr/0027-apply-defaults-only-to-omitted-fields-and-resolve-paths-against-the-project-root.md`
