@@ -21,7 +21,7 @@
  * something can be "constructed" would add a layer that exists only to be injected, and every caller would then need
  * the wrapper instead of the function. They are imported where they are used.
  *
- * What *is* adapted here is only what the port's shape requires, and the six adaptations fall into three kinds:
+ * What *is* adapted here is only what the port's shape requires, and the six adaptations fall into four kinds:
  *
  * | Port member | Implementation | Adaptation |
  * | --- | --- | --- |
@@ -32,11 +32,10 @@
  * | `configuration.resolve(root, loaded)` | `resolveConfiguration({ loaded, projectRoot })` | Reshaped, and the result translated into the port's own vocabulary |
  * | `initialisation.initialise(root)` | `createInitialisationService({ assess: assessProject, readConfiguration, createFile })` | Composed — three existing operations, assigned directly |
  *
- * Four narrow a test seam or reshape an argument. One translates a vocabulary. One composes three operations into a
- * service. That is the rule worth keeping: **narrow a test seam, reshape an argument, translate a vocabulary, or
- * compose a workflow — and know which of the four you are doing.** A member that needed none of them should be
- * assigned directly rather than wrapped for symmetry, because an adapter with no translation in it is a second name
- * for the same thing.
+ * Every member does one of those four, and two do a pair; that is the rule worth keeping: **narrow a test seam,
+ * reshape an argument, translate a vocabulary, or compose a workflow — and know which of them you are doing.** A
+ * member that needed none of them should be assigned directly rather than wrapped for symmetry, because an adapter
+ * with no translation in it is a second name for the same thing.
  *
  * The narrowing is deliberate rather than incidental. A command should not be able to tune the parent search depth:
  * the engine's default is right for every real invocation, and putting it on a port turns a constant into a decision
@@ -59,6 +58,19 @@
  *
  * The verdict is identical either way, because attaching a configuration adds a field rather than changing a gate. If a
  * command ever needs both, it calls `discovery.assess` and gets both from one read.
+ *
+ * ## What is deliberately not wired
+ *
+ * `replaceFileWithBackup` lives in `core/filesystem` and is named in no other file. It replaces a configuration after
+ * copying the previous contents aside and reading the copy back, and it is the mechanism a replacement command would be
+ * built on — once a replacement command is approved.
+ *
+ * It is not wired because there is no approved intent to pass to it. A replacement a command line can produce is a
+ * replacement somebody types after a long day, and `qat init` deliberately has no flag for one. Wiring it later takes
+ * three things in a single change: an approved flag whose semantics are written down, a caller that has read the file
+ * and therefore holds the hash of what it is replacing, and a test proving the backup verified before the target
+ * changed. Until then it is exercised by its own suite and reachable from nowhere, which is the safest state for a
+ * destructive operation to wait in.
  *
  * ## What is still not orchestrated
  *
@@ -241,6 +253,11 @@ export function createApplication(
    * them out of reach. That is the same narrowing the ports achieve by wrapping, obtained for free from the signature;
    * an adapter here would be a second name for the same function. If one of them ever needs a translation, that is the
    * moment to wrap it, and the moment will be visible as a type error rather than as a judgement call.
+   *
+   * `writeNewFile` is the create-only half of a module that also knows how to replace, and the type is what enforces the
+   * distinction: `replaceFileWithBackup` returns different outcomes and demands a hash of the content it is replacing, so
+   * it cannot be bound to this dependency at all. Replacement is not withheld from initialisation by discipline; it does
+   * not fit.
    */
   const initialisation = createInitialisationService({
     assess: assessProject,
