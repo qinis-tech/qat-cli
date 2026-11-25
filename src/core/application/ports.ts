@@ -22,13 +22,14 @@
  * ## Sibling modules
  *
  * A contract group large enough to have its own vocabulary lives in its own file in this directory and is imported
- * from here, rather than being inlined. Three do:
+ * from here, rather than being inlined. Four do:
  *
  * - `./diagnostics.js` — a diagnosis has statuses, a code set and a finding shape.
  * - `./validation.js` — an assessment adds operations, readiness and a second code vocabulary.
  * - `./configuration.js` — a resolved configuration has paths, findings and two outcomes.
+ * - `./initialisation.js` — creating a configuration has four outcomes, three of which are refusals.
  *
- * Inlining any of them would put three vocabularies in one namespace, and a reader checking "what can a finding say"
+ * Inlining any of them would put four vocabularies in one namespace, and a reader checking "what can a finding say"
  * would find it a hundred lines below the interface that mentions it. The rule as this file grows is that a group
  * moves out when its *vocabulary* is independent, not when the file gets long.
  */
@@ -50,6 +51,7 @@ import type {
 
 import type { ConfigurationResolver } from "./configuration.js";
 import type { ProjectDiagnosis } from "./diagnostics.js";
+import type { InitialisationService } from "./initialisation.js";
 import type { ProjectAssessment } from "./validation.js";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -530,6 +532,25 @@ export interface Application {
    * would advertise I/O that does not happen and every caller would begin handling a failure that cannot occur.
    */
   readonly configuration: ConfigurationResolver;
+
+  /**
+   * Creates a project's configuration.
+   *
+   * One operation, because there is one thing a caller can want. The nine steps a workflow needs — resolve, detect,
+   * judge, check, generate, validate, write — are the implementation's business, and publishing them would let a
+   * command run four of the nine and report a result that never happened.
+   *
+   * The only member of this interface that writes inside the project. It is create-only by contract: a refusal to
+   * touch an existing file is not a policy a caller can opt out of, because the alternative is a command that can
+   * destroy settings nobody asked it to change.
+   *
+   * Three outcomes are refusals and one is a creation, so the answer is a value rather than an exception — the same
+   * rule as `diagnose`. The exception is a machine that could not answer: a permission failure, a full disk, a
+   * filesystem that cannot create a file atomically.
+   *
+   * @throws {ApplicationError} only when the filesystem could not answer or refused to create the file.
+   */
+  readonly initialisation: InitialisationService;
 
   /** Releases everything the application holds. Safe to call more than once. */
   dispose(): Promise<void>;

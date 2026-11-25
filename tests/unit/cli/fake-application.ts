@@ -17,17 +17,24 @@
  *
  * ## Every collaborator that is not provided fails loudly
  *
- * `repository` and `discovery` reject, and `configuration.resolve` throws, each with a message naming the collaborator
- * that was reached for. A test that accidentally calls one fails loudly instead of silently succeeding against a stub
- * that returned nothing — and the silent success is the worse failure, because it looks like a passing test and hides an
- * assertion that never ran.
+ * Three reject — `repository`, `discovery` and `initialisation` — and `configuration.resolve` throws, each with a message
+ * naming the collaborator that was reached for. A test that accidentally calls one fails loudly instead of silently
+ * succeeding against a stub that returned nothing — and the silent success is the worse failure, because it looks like a
+ * passing test and hides an assertion that never ran.
  *
- * The two shapes follow the port: `configuration.resolve` is synchronous, because resolution is a pure function of a
- * document and a project root, so a fake that rejected a promise from it would be describing a different interface. The
- * asymmetry is the port's, not an oversight here.
+ * The two shapes follow the port rather than a preference here: `configuration.resolve` is synchronous, because
+ * resolution is a pure function of a document and a project root, so a fake that rejected a promise from it would be
+ * describing an interface nobody implements.
  *
  * The logger is the exception, and deliberately: a handler is entitled to log, and a rejecting logger would fail a test
  * for doing something correct. Its methods discard.
+ *
+ * ## What to do instead of loosening a trap
+ *
+ * A test that genuinely needs one of these should give it something real, not a stub. A handler needing a resolved
+ * configuration reads the one attached to its assessment, produced from a temporary project; a handler needing to
+ * initialise one belongs in the end-to-end suite, where the file either appears on disk or does not. A stub that returns
+ * a plausible value turns either of those into a test of the stub.
  */
 import type { Application } from "~/core/application/ports.js";
 
@@ -41,13 +48,15 @@ export interface FakeApplicationOptions {
  *
  * One message per collaborator rather than per method. A message like `discovery.diagnose is unused in this test` is
  * more precise and ends up in a rendered error, where an assertion on that exact text is the kind of coupling that
- * breaks for a reason nobody looks at. The stack names the call site; the message only has to say which collaborator
- * was touched, and the phrase below is the one the existing suites already match on.
+ * breaks for a reason nobody looks at. The stack names the call site; the message only has to say which collaborator was
+ * touched, and the phrase below is the one the existing suites already match on.
  *
  * Returning `Promise<never>` rather than `Promise<unknown>` is what lets each member keep its declared return type: a
- * promise that never resolves is assignable to every result type this port has.
+ * promise that never resolves is assignable to every result type these ports have.
  */
-function unused(collaborator: "discovery" | "repository"): Promise<never> {
+function unused(
+  collaborator: "discovery" | "initialisation" | "repository",
+): Promise<never> {
   return Promise.reject(new Error(`${collaborator} is unused in this test`));
 }
 
@@ -104,6 +113,13 @@ export function fakeApplication(
     // reports.
     configuration: {
       resolve: () => unusedImmediately("configuration"),
+    },
+
+    // One operation, and it rejects rather than returning an outcome, because no arrangement of a fake makes an
+    // initialisation test meaningful: the whole question is whether a file appeared on disk, and only the end-to-end
+    // suite can answer it. A stub returning `created` would let a handler test pass while nothing was ever written.
+    initialisation: {
+      initialise: () => unused("initialisation"),
     },
 
     dispose: () => {

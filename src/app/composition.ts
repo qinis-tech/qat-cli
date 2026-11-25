@@ -21,7 +21,7 @@
  * something can be "constructed" would add a layer that exists only to be injected, and every caller would then need
  * the wrapper instead of the function. They are imported where they are used.
  *
- * What *is* adapted here is only what the port's shape requires, and the five adaptations are one of three kinds:
+ * What *is* adapted here is only what the port's shape requires, and the six adaptations fall into three kinds:
  *
  * | Port member | Implementation | Adaptation |
  * | --- | --- | --- |
@@ -29,12 +29,14 @@
  * | `diagnose(root)` | `diagnoseProject(root, options?)` | Narrowed — the search depth is a test seam |
  * | `assess(root)` | `assessProject(root, options?)`, then the resolved configuration | Narrowed *and* composed — see below |
  * | `discover(root)` | `discoverProject({ cwd: root })` | Reshaped — the function takes options |
- * | `configuration.resolve(root, loaded)` | `resolveConfiguration({ loaded, projectRoot })` | Reshaped — one options object; the result is also translated into the port's own vocabulary |
+ * | `configuration.resolve(root, loaded)` | `resolveConfiguration({ loaded, projectRoot })` | Reshaped, and the result translated into the port's own vocabulary |
+ * | `initialisation.initialise(root)` | `createInitialisationService({ assess: assessProject, readConfiguration, createFile })` | Composed — three existing operations, assigned directly |
  *
- * Four of the five narrow a test seam or reshape an argument. The fifth changes a value's shape. That is the rule worth
- * keeping: **narrow a test seam, reshape an argument, or translate a vocabulary — and know which of the three you are
- * doing.** A member that needed none of them should be assigned directly rather than wrapped for symmetry, because an
- * adapter with no translation in it is a second name for the same thing.
+ * Four narrow a test seam or reshape an argument. One translates a vocabulary. One composes three operations into a
+ * service. That is the rule worth keeping: **narrow a test seam, reshape an argument, translate a vocabulary, or
+ * compose a workflow — and know which of the four you are doing.** A member that needed none of them should be
+ * assigned directly rather than wrapped for symmetry, because an adapter with no translation in it is a second name
+ * for the same thing.
  *
  * The narrowing is deliberate rather than incidental. A command should not be able to tune the parent search depth:
  * the engine's default is right for every real invocation, and putting it on a port turns a constant into a decision
@@ -42,16 +44,28 @@
  * from `configuration.resolve`: it exists so a test or a future profile can substitute a table, not so a command can
  * invent one.
  *
- * `assess` is the one member that does more than pass through, and it earns the exception: where a run would write is
- * part of "may I act on this project", the question that operation already answers. Composing it here means one read of
- * one tree and one place that decides what a usable project is. A command that read the configuration itself would
- * either repeat the assessment's work or form a second opinion about it.
+ * Two members do more than pass through, and both earn the exception the same way: they answer a question that the
+ * caller cannot answer alone. `assess` attaches the resolved configuration, because where a run would write is part of
+ * "may I act on this project". `initialisation` reads a file, judges a project and creates a configuration, because a
+ * command that did any of that itself would either repeat the assessment's work or form a second opinion about what a
+ * usable project is.
+ *
+ * ## Why initialisation does not go through the enriched assessment
+ *
+ * The service is handed `assessProject`, not `discovery.assess`. The difference between them is one attached field, and
+ * initialisation never reads it: its own question is about the gate's blocking findings, and its work is to decide
+ * whether to write a file at a path. Going through the port would therefore read `qat.config.json` twice on an ordinary
+ * run — once to attach output locations nobody asks for, once to answer "is a configuration already here".
+ *
+ * The verdict is identical either way, because attaching a configuration adds a field rather than changing a gate. If a
+ * command ever needs both, it calls `discovery.assess` and gets both from one read.
  *
  * ## What is still not orchestrated
  *
- * The loader's six outcomes are not published. A command that needs them — one that reports why a file could not be read
- * — calls the loader directly, where those messages are rendered. An assembly that swallowed that branch would be
- * choosing a user-visible sentence from inside a factory, which is the one thing this file refuses to do.
+ * The loader's six outcomes are not published to commands. A command that needs them — one that reports why a file
+ * could not be read — calls the loader directly, where those messages are rendered. The assembly reads files itself
+ * where an operation needs an answer, but it never hands a command that answer's raw shape and never chooses a
+ * user-visible sentence from inside a factory.
  */
 import { join } from "node:path";
 
@@ -75,6 +89,7 @@ import type {
 import type { ProjectAssessment } from "../core/application/validation.js";
 import type { EnvironmentSource } from "../core/environment/index.js";
 import { ErrorCode, InvalidArgumentError } from "../core/errors/index.js";
+import { writeNewFile } from "../core/filesystem/index.js";
 import {
   createLogger,
   isLogLevel,
@@ -82,6 +97,7 @@ import {
   resolveLogLevel,
   type LogLevel,
 } from "../core/logging/index.js";
+import { createInitialisationService } from "../init/index.js";
 import { InMemoryExecutionRepository } from "../persistence/index.js";
 import {
   assessProject,
@@ -208,6 +224,30 @@ export function createApplication(
     discover: (root) => discoverProject({ cwd: root }),
   };
 
+  /**
+   * Creating a project's configuration.
+   *
+   * Three existing operations, named here and nowhere else, and all three are handed over unchanged:
+   *
+   * - `assessProject` — the plain assessment, because initialisation reads no output locations. The enriched one from
+   *   `discovery.assess` would read the configuration file a second time to attach a field this workflow never looks at,
+   *   and the gate it does read is identical either way.
+   * - `loadConfiguration` — takes a path, answers whether one is usable. Exactly what the workflow asks for.
+   * - `writeNewFile` — takes a path and contents, reports whether it created the file or found one. Also exactly what
+   *   the workflow asks for, including the answer rather than only the effect.
+   *
+   * None of the three needs an adapter, and none gets one. Each implementation's declared type is wider than the
+   * workflow's — the optional second parameters are test seams — so the narrower type on the dependency is what keeps
+   * them out of reach. That is the same narrowing the ports achieve by wrapping, obtained for free from the signature;
+   * an adapter here would be a second name for the same function. If one of them ever needs a translation, that is the
+   * moment to wrap it, and the moment will be visible as a type error rather than as a judgement call.
+   */
+  const initialisation = createInitialisationService({
+    assess: assessProject,
+    readConfiguration: loadConfiguration,
+    createFile: writeNewFile,
+  });
+
   let disposed = false;
 
   return {
@@ -215,6 +255,7 @@ export function createApplication(
     repository,
     discovery,
     configuration,
+    initialisation,
 
     async dispose(): Promise<void> {
       if (disposed) return;
