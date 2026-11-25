@@ -7,9 +7,21 @@
  * on it stops matching without anything failing. A code is permanent — quoted in a bug report, grepped in a CI log,
  * and never reused once withdrawn.
  *
- * The prefix is the third in this codebase and each answers a different question: `QAT-D` is what detection found
- * wrong with a project, `QAT-V` is whether that stops an operation, and `QAT-C` is what is wrong with a *configuration
- * file*. A reader seeing one in a terminal knows which of the three they are being told about.
+ * One of four prefixes in this codebase, each answering a different question: `QAT-D` is what detection found wrong
+ * with a project, `QAT-V` is whether that stops an operation, `QAT-C` is what is wrong with a *configuration
+ * document*, and `QAT-H` is what is wrong with the machine or the run. A reader seeing one in a terminal knows which
+ * layer is speaking.
+ *
+ * ## Where the codes are declared, and why not here
+ *
+ * `ConfigurationDiagnosticCode` lives in `core/application/configuration.ts`. The identifiers are vocabulary: a layer
+ * above this one has to name them — the doctor reports a configuration condition alongside conditions it found
+ * itself — and a contract is what a layer above may depend on. Importing an implementation path to reach a permanent
+ * identifier would make the application layer depend on how this module is built.
+ *
+ * Only the identifiers moved. The rules and every sentence behind them stay here and in `./guidance.ts`, because only
+ * prose is this layer's business. Nothing in this file re-exports the code set: a second route to one name is the
+ * route that goes stale.
  *
  * ## Why the value never appears
  *
@@ -18,31 +30,8 @@
  * validation library's own message for an enum or a literal echoes the received value, so the message is authored here
  * rather than passed through. See §5 of the validation document.
  */
+import type { ConfigurationDiagnosticCode } from "../../core/application/configuration.js";
 import type { QatConfig } from "../schema/index.js";
-
-/** Conditions a configuration file can be in. Permanent: a withdrawn code is retired, never reused. */
-export const ConfigurationDiagnosticCode = {
-  /** The document is not a JSON object at all — an array, a string, a number, or `null`. */
-  NotAnObject: "QAT-C001",
-  /** The document declares a schema version this build does not read. */
-  UnsupportedVersion: "QAT-C002",
-  /** A required field is absent. */
-  Missing: "QAT-C003",
-  /** A field holds the wrong kind of value — a string where an object belongs, a number where a string does. */
-  WrongType: "QAT-C004",
-  /** A field holds a value outside the set the schema allows. */
-  UnsupportedValue: "QAT-C005",
-  /**
-   * A field holds a value the rules refuse: too long, too short, the wrong shape, a path that escapes the project, a
-   * name the language reserves.
-   */
-  RefusedValue: "QAT-C006",
-  /** A key the schema does not declare. */
-  UnknownField: "QAT-C007",
-} as const;
-
-export type ConfigurationDiagnosticCode =
-  (typeof ConfigurationDiagnosticCode)[keyof typeof ConfigurationDiagnosticCode];
 
 /**
  * One thing wrong with a configuration file.
@@ -50,6 +39,10 @@ export type ConfigurationDiagnosticCode =
  * Carries no value from the file, by rule rather than by convention — see the header. The path is enough to find the
  * line, and it is not sensitive in the way a value is: a variable *name* has to be named for the diagnostic to be
  * actionable at all.
+ *
+ * `remediation` rather than `remedy`, which is the field name every other finding in the project uses and the one a
+ * renderer should read. `ConfigurationFinding.remedy` is a duplicate of this idea that survives in the resolution
+ * vocabulary; it should be retired rather than taught to a third consumer.
  */
 export interface ConfigurationDiagnostic {
   readonly code: ConfigurationDiagnosticCode;
