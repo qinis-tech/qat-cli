@@ -5,12 +5,12 @@
  *
  * The library's own messages are good and two of its codes echo the received value — an unrecognised member of a value
  * set and a failed literal both quote what was found. For a configuration that is not acceptable: the field could be an
- * environment variable whose value is a credential, and a diagnostic is the one thing guaranteed to be logged, pasted into
- * an issue and shown in a terminal.
+ * environment variable whose value is a credential, and a diagnostic is the one thing guaranteed to be logged, pasted
+ * into an issue and shown in a terminal.
  *
- * So every message below is written by this project, from the rule and the path, and never from the value. The library's
- * text is used in exactly two cases, both of which are messages *this* project wrote and attached to a refinement: a path
- * rule, a name rule, and the cross-field check.
+ * So every message below is written by this project, from the rule and the path, never from the value. The library's own
+ * text is used under exactly two issue codes — `custom` and `invalid_format` — and both carry messages *this* project
+ * wrote: a path rule, a name rule, and the cross-field check.
  *
  * ## The third source: findings from the resolution stage
  *
@@ -18,6 +18,13 @@
  * `PathIssue` instead of a parse issue. That finding is *presented* rather than re-authored: the stage that produced it
  * knows the field, the root and the specific remedy, and restating its sentence here would give the project two wordings
  * for one problem — one of which would drift.
+ *
+ * ## Where the codes come from
+ *
+ * `ConfigurationDiagnosticCode` is declared in `core/application/configuration.ts` and imported from there. A code is
+ * vocabulary, and vocabulary is what a layer above this one may name without depending on how this module is built. The
+ * config barrel deliberately does not re-export it, so an import from `./contracts.js` resolves to nothing — which is
+ * exactly the error this file produced when the codes moved.
  *
  * ## Why the issue type is derived rather than named
  *
@@ -33,19 +40,17 @@
  * below means a code this mapping has never seen gets a generic sentence rather than a compile error — so a new code in a
  * future minor degrades the wording and not the build.
  *
- * The codes are Zod 4's. Zod 3 called these `invalid_string` and `invalid_literal`; Zod 4 has `invalid_format` and folds a
- * failed literal into `invalid_value` with a one-element `values`. A case name that does not exist is a compile error,
+ * The codes are Zod 4's. Zod 3 called these `invalid_string` and `invalid_literal`; Zod 4 has `invalid_format` and folds
+ * a failed literal into `invalid_value` with a one-element `values`. A case name that does not exist is a compile error,
  * which is how a major upgrade announces that this mapping needs reading.
  */
 import type { ZodError } from "zod";
 
+import { ConfigurationDiagnosticCode } from "../../core/application/configuration.js";
 import type { PathIssue } from "../resolver/contracts.js";
 import { SUPPORTED_CONFIG_VERSION } from "../schema/index.js";
 
-import {
-  ConfigurationDiagnosticCode,
-  type ConfigurationDiagnostic,
-} from "./contracts.js";
+import type { ConfigurationDiagnostic } from "./contracts.js";
 
 /** One entry of a parse error's issue list, as the library types it. */
 type ValidationIssue = ZodError["issues"][number];
@@ -61,8 +66,8 @@ function describe(path: string): string {
  * ## Why this asks the document rather than the issue
  *
  * The obvious way to tell "missing" from "wrong" is to read what the parser attached to the issue. That was tried, and it
- * was wrong twice over. The property carrying the received value changed name between library majors, and — the part that
- * actually bites — the *issue code* depends on what the field holds: a missing string is a type error, a missing enum
+ * was wrong twice over. The property carrying the received value changed name between library majors, and — the part
+ * that actually bites — the *issue code* depends on what the field holds: a missing string is a type error, a missing enum
  * member is a value error, a missing literal is a value error too. Three codes, one situation, one next step for the
  * reader.
  *
@@ -76,7 +81,7 @@ function describe(path: string): string {
  *
  * ## Why `hasOwnProperty`
  *
- * A configuration is JSON. `toString` is not a supplied key, and an inherited property is not a field, so the prototype is
+ * A configuration is JSON. `toString` is not a supplied key and an inherited property is not a field, so the prototype is
  * not consulted.
  */
 function isAbsent(document: unknown, path: readonly PropertyKey[]): boolean {
@@ -95,17 +100,20 @@ function isAbsent(document: unknown, path: readonly PropertyKey[]): boolean {
 /**
  * A size bound as a parenthetical, or nothing.
  *
- * The leading space is part of the string rather than part of each message: every caller appends this to a sentence, and a
- * bound that runs into the word before it — `allows(4096)` — is worse than no bound at all.
+ * **The leading space is part of the returned string.** Every caller appends this directly to a sentence that ends in
+ * `allows` or `requires`, so a bound that ran into the word before it — `allows(4096)` — would be worse than no bound at
+ * all. Returning the space here rather than in each of the callers is what stops one of them forgetting it.
  *
  * The value is a number, a bigint, or absent depending on what was measured and on the version. A stringified `undefined`
  * in a message is the other wording defect this avoids.
  */
 function boundText(value: number | bigint | undefined): string {
-  return value === undefined ? "" : `(${String(value)})`;
+  return value === undefined ? "" : ` (${String(value)})`;
 }
 
 /**
+ * Renders one parse issue.
+ *
  * @param issue One entry from a parse error's issue list.
  * @param document The value that was parsed, so absence can be decided by looking for the key rather than by trusting an
  *   encoding.

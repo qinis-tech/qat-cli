@@ -14,6 +14,13 @@
  *
  * The documents are written as JSON and read back through `loadConfiguration`, never constructed in memory: a test that
  * built a document directly would prove the resolver works and would not prove that a reader's file reaches it.
+ *
+ * ## Where the codes come from
+ *
+ * `ConfigurationDiagnosticCode` is declared in `core/application/configuration.ts` and imported from there. The config
+ * barrel publishes the diagnostic *shape* and not the identifiers, because the identifiers are vocabulary a layer above
+ * needs to name — so an import from `~/config/validation/index.js` resolves to nothing, which is the failure this file
+ * produced when the codes moved.
  */
 import { mkdir, mkdtemp, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -35,10 +42,11 @@ import {
 } from "~/config/resolver/index.js";
 import {
   OUTPUT_DEFAULTS,
-  SUPPORTED_CONFIG_VERSION,
   SecretSource,
+  SUPPORTED_CONFIG_VERSION,
 } from "~/config/schema/index.js";
-import { ConfigurationDiagnosticCode } from "~/config/validation/index.js";
+import type { ConfigurationDiagnostic } from "~/config/validation/index.js";
+import { ConfigurationDiagnosticCode } from "~/core/application/configuration.js";
 
 /* -------------------------------------------------------------------------- */
 /* A project on disk                                                          */
@@ -119,6 +127,27 @@ async function resolveIn(root: string): Promise<ConfigurationResolution> {
   return resolveConfiguration({ loaded: loaded.config, projectRoot: root });
 }
 
+/**
+ * Load and require the *invalid* outcome, returning its diagnostics.
+ *
+ * The shape is asserted once here rather than in each case, so a case that is about *which* field was refused is not
+ * also a case about whether the load failed. It throws rather than returning an empty list, because a configuration
+ * that unexpectedly loaded would otherwise make every assertion below vacuous.
+ */
+async function invalidIn(
+  root: string,
+): Promise<readonly ConfigurationDiagnostic[]> {
+  const loaded = await loadConfiguration(join(root, "qat.config.json"));
+
+  if (loaded.kind !== ConfigurationLoad.Invalid) {
+    throw new Error(
+      `expected an invalid configuration, received ${loaded.kind}`,
+    );
+  }
+
+  return loaded.diagnostics;
+}
+
 /** The resolved half of a successful resolution, or a failure naming what was reported instead. */
 function resolvedOrFail(
   resolution: ConfigurationResolution,
@@ -128,7 +157,18 @@ function resolvedOrFail(
       `expected a resolution, received ${resolution.issues.map((issue) => issue.code).join(", ")}`,
     );
   }
+
   return resolution.resolved;
+}
+
+/** The codes present, so an assertion names what it is looking for rather than a whole array. */
+function codesOf(diagnostics: readonly ConfigurationDiagnostic[]): string[] {
+  return diagnostics.map((diagnostic) => diagnostic.code);
+}
+
+/** The paths present, so a case about a field does not restate the mapping. */
+function pathsOf(diagnostics: readonly ConfigurationDiagnostic[]): string[] {
+  return diagnostics.map((diagnostic) => diagnostic.path);
 }
 
 afterEach(async () => {
@@ -206,15 +246,18 @@ describe("anchoring", () => {
     const before = process.cwd();
 
     try {
+      // Moved to a directory that is neither the project nor an ancestor of it, so a cwd-relative resolution would produce
+      // `<tmpdir>/results/reports` — which does not start with the root, and fails the assertion below.
       process.chdir(tmpdir());
+
       const resolved = resolvedOrFail(await resolveIn(root));
 
-      // The defect this whole stage exists to remove: resolving from a different directory would put output beside the
-      // process rather than beside the project.
       expect(resolved.paths.reportsDirectory.absolute.startsWith(root)).toBe(
         true,
       );
     } finally {
+      // Restored in a `finally`, because a failing assertion above would otherwise leave every later case in this file
+      // running from the temporary directory.
       process.chdir(before);
     }
   });
@@ -277,18 +320,13 @@ describe("a path that must be refused", () => {
       "qat.config.json": withOutput({ evidence: "../outside" }),
     });
 
-    const loaded = await loadConfiguration(join(root, "qat.config.json"));
+    const diagnostics = await invalidIn(root);
 
     // The schema owns admissibility: whether a path is relative and inside the project is decided while the document is
     // being read, with a diagnostic that names the field. Resolution never runs, which is why the field name in the
     // message matches the one in the file.
-    expect(loaded.kind).toBe(ConfigurationLoad.Invalid);
-    if (loaded.kind !== ConfigurationLoad.Invalid) return;
-
-    expect(loaded.diagnostics.map((diagnostic) => diagnostic.path)).toContain(
-      "output.evidence",
-    );
-    expect(loaded.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    expect(pathsOf(diagnostics)).toContain("output.evidence");
+    expect(codesOf(diagnostics)).toContain(
       ConfigurationDiagnosticCode.RefusedValue,
     );
   });
@@ -298,14 +336,9 @@ describe("a path that must be refused", () => {
       "qat.config.json": withOutput({ reports: "/var/reports" }),
     });
 
-    const loaded = await loadConfiguration(join(root, "qat.config.json"));
+    const diagnostics = await invalidIn(root);
 
-    expect(loaded.kind).toBe(ConfigurationLoad.Invalid);
-    if (loaded.kind !== ConfigurationLoad.Invalid) return;
-
-    expect(loaded.diagnostics.map((diagnostic) => diagnostic.path)).toContain(
-      "output.reports",
-    );
+    expect(pathsOf(diagnostics)).toContain("output.reports");
   });
 
   it("is refused by the resolver as well, when the document did not come through the schema", async () => {
@@ -347,14 +380,11 @@ describe("a path that must be refused", () => {
       }),
     });
 
-    const loaded = await loadConfiguration(join(root, "qat.config.json"));
+    const diagnostics = await invalidIn(root);
 
     // A misspelled or outdated key is named while the document is read. If it reached resolution, this stage would fill
     // fields nobody wrote and validation would later reject every project for them.
-    expect(loaded.kind).toBe(ConfigurationLoad.Invalid);
-    if (loaded.kind !== ConfigurationLoad.Invalid) return;
-
-    expect(loaded.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    expect(codesOf(diagnostics)).toContain(
       ConfigurationDiagnosticCode.UnknownField,
     );
   });
@@ -420,9 +450,7 @@ describe("an environment", () => {
 
   it("uses the only environment declared", async () => {
     const root = await project({
-      "qat.config.json": withEnvironments({
-        only: { variables: { A: "1" } },
-      }),
+      "qat.config.json": withEnvironments({ only: { variables: { A: "1" } } }),
     });
 
     expect(
@@ -455,16 +483,11 @@ describe("an environment", () => {
       "qat.config.json": withEnvironments({ staging: {} }),
     });
 
-    const loaded = await loadConfiguration(join(root, "qat.config.json"));
+    const diagnostics = await invalidIn(root);
 
     // A profile that validates as an object and applies nothing would be selected, reported, and change no behaviour —
     // so it is refused while the document is read, at the profile's own path.
-    expect(loaded.kind).toBe(ConfigurationLoad.Invalid);
-    if (loaded.kind !== ConfigurationLoad.Invalid) return;
-
-    expect(loaded.diagnostics.map((diagnostic) => diagnostic.path)).toContain(
-      "environments.staging",
-    );
+    expect(pathsOf(diagnostics)).toContain("environments.staging");
   });
 
   it("refuses a reserved profile name read from a real file", async () => {
@@ -475,14 +498,9 @@ describe("an environment", () => {
       "qat.config.json": `{"version": ${String(SUPPORTED_CONFIG_VERSION)}, "framework": "cypress", "environments": {"__proto__": {"baseUrl": "https://example.test"}}}`,
     });
 
-    const loaded = await loadConfiguration(join(root, "qat.config.json"));
+    const diagnostics = await invalidIn(root);
 
-    expect(loaded.kind).toBe(ConfigurationLoad.Invalid);
-    if (loaded.kind !== ConfigurationLoad.Invalid) return;
-
-    expect(loaded.diagnostics.map((diagnostic) => diagnostic.path)).toContain(
-      "environments.__proto__",
-    );
+    expect(pathsOf(diagnostics)).toContain("environments.__proto__");
   });
 });
 
@@ -494,10 +512,10 @@ describe("a document that did not come through the loader", () => {
   it("is refused, whatever it contains", async () => {
     const root = await project({});
 
-    // No assertion here, and that is the point of the test. The brand property is optional, so this object genuinely
-    // satisfies `LoadedConfigurationDocument`: the compiler cannot tell a forged document from a loaded one, and does not
-    // try. What refuses it is the non-enumerable marker that only `markLoaded` sets, checked inside the resolver — which
-    // is why the check exists at runtime rather than in the type.
+    // The type cannot refuse this. The brand property is optional, so the object genuinely satisfies
+    // `LoadedConfigurationDocument` and the compiler does not object — it cannot tell a forged document from a loaded one
+    // and does not try. What refuses it is the non-enumerable marker that only `markLoaded` sets, checked inside the
+    // resolver, which is why the guard exists at runtime rather than in the type.
     const forged: LoadedConfigurationDocument = {
       document: { version: 1, framework: "cypress" },
       source: join(root, "qat.config.json"),

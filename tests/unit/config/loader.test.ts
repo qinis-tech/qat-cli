@@ -11,7 +11,8 @@ import {
 } from "~/config/loader/index.js";
 import { isLoadedDocument } from "~/config/resolver/index.js";
 import { SUPPORTED_CONFIG_VERSION } from "~/config/schema/index.js";
-import { ConfigurationDiagnosticCode } from "~/config/validation/index.js";
+import type { ConfigurationDiagnostic } from "~/config/validation/index.js";
+import { ConfigurationDiagnosticCode } from "~/core/application/configuration.js";
 import {
   isApplicationError,
   type ApplicationError,
@@ -29,16 +30,23 @@ import {
  *
  * ## `config` is a branded wrapper, not the document
  *
- * A successful load returns `{ document, source }`, where the marker on the wrapper is set only by this module. That is
+ * A successful load returns `{ document, source }`, where the marker on the wrapper is set only by the loader. That is
  * what makes "apply defaults to a file that never loaded" a compile error rather than a review note, so the document is
- * read as `result.config.document`. The extra hop is the price of the guarantee and is asserted here rather than assumed.
+ * read as `result.config.document`. The extra hop is the price of the guarantee and is asserted here rather than
+ * assumed.
  *
  * ## Narrowing a load result in a test
  *
  * `expect(result.kind).toBe(ConfigurationLoad.Loaded)` does not narrow anything: Vitest's `expect` returns void, so the
- * following `if` is what tells the compiler which variant is in hand. Where a case has already asserted the kind, the
+ * `if` that follows is what tells the compiler which variant is in hand. Where a case has already asserted the kind, the
  * guard is a formality. Where it has not, the guard throws — because a bare `return` there turns a fixture that stopped
  * being valid into a test that passes without asserting anything, which is how a stale fixture survives a green run.
+ *
+ * ## Where the codes come from
+ *
+ * `ConfigurationDiagnosticCode` is declared in `core/application/configuration.ts` and imported from there. The config
+ * barrel publishes the diagnostic *shape* and not the identifiers, because the identifiers are vocabulary a layer above
+ * needs to name — so importing them from `~/config/validation/index.js` resolves to nothing.
  */
 let created: string[] = [];
 
@@ -66,6 +74,16 @@ async function failure(run: Promise<unknown>): Promise<ApplicationError> {
   }
 
   return caught;
+}
+
+/** The codes present, so an assertion names the condition rather than restating the mapping. */
+function codesOf(diagnostics: readonly ConfigurationDiagnostic[]): string[] {
+  return diagnostics.map((diagnostic) => diagnostic.code);
+}
+
+/** The paths present, sorted, so a case about fields compares two lists rather than two mappings. */
+function pathsOf(diagnostics: readonly ConfigurationDiagnostic[]): string[] {
+  return diagnostics.map((diagnostic) => diagnostic.path).sort();
 }
 
 /** The two required fields, at the version this build reads. Built from the constant so a version bump does not break it. */
@@ -166,8 +184,8 @@ describe("the loaded document", () => {
     expect(result.kind).toBe(ConfigurationLoad.Loaded);
     if (result.kind !== ConfigurationLoad.Loaded) return;
 
-    // The marker is what the resolution stage requires before it will fill anything in. Without this assertion the
-    // brand could be dropped in a refactor and every downstream test would still pass.
+    // The marker is what the resolution stage requires before it will fill anything in. Without this assertion the brand
+    // could be dropped in a refactor and every downstream test would still pass.
     expect(isLoadedDocument(result.config)).toBe(true);
   });
 
@@ -244,12 +262,14 @@ describe("a file that is not there", () => {
 });
 
 describe("a file with nothing in it", () => {
-  it.each([
+  const BLANK: readonly [label: string, contents: string][] = [
     ["empty", ""],
     ["whitespace only", "  \n\t\n "],
-  ])(
+  ];
+
+  it.each(BLANK)(
     "reports an %s file as empty rather than as malformed",
-    async (_case, contents) => {
+    async (_label, contents) => {
       const result = await loadConfiguration(
         await makeFile("qat.config.json", contents),
       );
@@ -282,20 +302,25 @@ describe("a file that is not JSON", () => {
     expect(result.reason.length).toBeGreaterThan(0);
   });
 
-  it("reports a location for every malformed case, not only the convenient ones", async () => {
-    for (const contents of ["{", '{"a": }', "[]]", "nul"]) {
+  const MALFORMED: readonly string[] = ["{", '{"a": }', "[]]", "nul"];
+
+  it.each(MALFORMED)(
+    "reports a location for %j, not only the convenient cases",
+    async (contents) => {
+      // One case per input rather than a loop: a loop reports "the body failed", which is the same message for four
+      // different documents, and the difference between them is the whole subject.
       const result = await loadConfiguration(
         await makeFile("qat.config.json", contents),
       );
 
       expect(result.kind).toBe(ConfigurationLoad.Malformed);
-      if (result.kind !== ConfigurationLoad.Malformed) continue;
+      if (result.kind !== ConfigurationLoad.Malformed) return;
 
       expect(result.location.line).toBeGreaterThanOrEqual(1);
       expect(result.location.column).toBeGreaterThanOrEqual(1);
       expect(result.location.position).toBeLessThanOrEqual(contents.length);
-    }
-  });
+    },
+  );
 
   it("does not apply defaults to a malformed file", async () => {
     const result = await loadConfiguration(
@@ -350,20 +375,23 @@ describe("a file that is JSON but not a configuration", () => {
 
     // Two independent problems, collected in one pass — which is what a reader fixing a file needs. Every diagnostic
     // carries a code, so a caller branches on the category rather than on the sentence.
-    expect(
-      result.diagnostics.map((diagnostic) => diagnostic.path).sort(),
-    ).toStrictEqual(["framework", "output.reports"]);
-    expect(result.diagnostics.map((diagnostic) => diagnostic.code)).toContain(
+    expect(pathsOf(result.diagnostics)).toStrictEqual([
+      "framework",
+      "output.reports",
+    ]);
+    expect(codesOf(result.diagnostics)).toContain(
       ConfigurationDiagnosticCode.UnsupportedValue,
     );
   });
 
-  it.each([
+  const ROOTS: readonly [label: string, contents: string][] = [
     ["an array", "[]"],
     ["null", "null"],
     ["a string", '"hello"'],
     ["a number", "42"],
-  ])("rejects %s at the root", async (_case, contents) => {
+  ];
+
+  it.each(ROOTS)("rejects %s at the root", async (_label, contents) => {
     // Valid JSON and not a document. One diagnostic with no path, because there are no fields to point at.
     const result = await loadConfiguration(
       await makeFile("qat.config.json", contents),

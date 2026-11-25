@@ -12,6 +12,42 @@
 import type { ConfigurationResult } from "../domain/index.js";
 
 /**
+ * Every condition a configuration document can be in.
+ *
+ * ## Why these identifiers live here
+ *
+ * A code is vocabulary. Vocabulary is what a contract may mention and what a layer above may name without depending on
+ * how the layer below is built — and the doctor is the first consumer that has to say "this is a configuration code"
+ * from further up than `src/config`. Importing an implementation path to do it would make the application layer depend
+ * on one.
+ *
+ * Only the identifiers move. The *shape* of a configuration diagnostic, and every sentence behind a code, stay where
+ * they are produced, because only the identifiers are vocabulary and only the prose is the schema's business.
+ *
+ * Codes are permanent. A withdrawn condition leaves its code unused rather than reusing it, so a code quoted in a bug
+ * report keeps the meaning it had when it was quoted.
+ */
+export const ConfigurationDiagnosticCode = {
+  /** The document is not a JSON object at all — an array, a string, a number, or `null`. */
+  NotAnObject: "QAT-C001",
+  /** The document declares a schema version this build does not read. */
+  UnsupportedVersion: "QAT-C002",
+  /** A required field is absent. */
+  Missing: "QAT-C003",
+  /** A field holds the wrong kind of value — a string where an object belongs, a number where a string does. */
+  WrongType: "QAT-C004",
+  /** A field holds a value outside the set the schema allows. */
+  UnsupportedValue: "QAT-C005",
+  /** A field holds a value the rules refuse: too long, wrong shape, a path escaping the project, a reserved name. */
+  RefusedValue: "QAT-C006",
+  /** A key the schema does not declare. */
+  UnknownField: "QAT-C007",
+} as const;
+
+export type ConfigurationDiagnosticCode =
+  (typeof ConfigurationDiagnosticCode)[keyof typeof ConfigurationDiagnosticCode];
+
+/**
  * One configured path: what was written, and the absolute location it became.
  *
  * Both halves are kept. The absolute form is what a writer uses; the source form is

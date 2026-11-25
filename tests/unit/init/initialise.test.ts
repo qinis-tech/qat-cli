@@ -6,12 +6,19 @@
  * other modules' business and are covered by their own suites, so the fixtures here stay as small as the types allow.
  *
  * Every case asserts the calls that were made, not only the result. A service that produced the right outcome by reading
- * the file twice, or by writing before it judged, would pass a result-only assertion and fail a reader who has to
- * reason about it later.
+ * the file twice, or by writing before it judged, would pass a result-only assertion and fail a reader who has to reason
+ * about it later.
  *
  * The stubs are plain functions returning settled promises, not `async` functions. `async` on a body with no `await`
  * says nothing, and it hides the one distinction that matters here: `async () => { throw }` rejects, while `() => { throw }`
  * throws synchronously. A stub that has to fail uses `Promise.reject`, because that is what the real dependency does.
+ *
+ * ## Where the codes come from
+ *
+ * `ConfigurationDiagnosticCode` is declared in `core/application/configuration.ts` and imported from there. It is
+ * vocabulary — a layer above the configuration module has to name a configuration code without depending on how that
+ * module is built — so the config barrel does not re-export it, and an import from `~/config/validation/index.js` no
+ * longer resolves.
  */
 import { join } from "node:path";
 
@@ -24,7 +31,7 @@ import {
 } from "~/config/loader/index.js";
 import { markLoaded } from "~/config/resolver/index.js";
 import { qatConfigSchema } from "~/config/schema/index.js";
-import { ConfigurationDiagnosticCode } from "~/config/validation/index.js";
+import { ConfigurationDiagnosticCode } from "~/core/application/configuration.js";
 import {
   DiagnosticCode,
   DiagnosticSeverity,
@@ -53,11 +60,22 @@ import { createInitialisationService } from "~/init/initialise.js";
 const ROOT = "/project";
 const CONFIG_PATH = join(ROOT, CONFIG_FILE_NAME);
 
-function finding(code: AnyDiagnosticFinding["code"]): AnyDiagnosticFinding {
+/**
+ * A finding with a sentence derived from its own code.
+ *
+ * The sentence is deliberately meaningless. An earlier version hard-coded "Cypress is declared in devDependencies but is
+ * not installed", so a case that raised `FrameworkNotDetected` produced a finding contradicting its own code — and every
+ * assertion passed, because they read codes.
+ */
+function finding(
+  code: AnyDiagnosticFinding["code"],
+  severity: DiagnosticSeverity = DiagnosticSeverity.Error,
+): AnyDiagnosticFinding {
   return {
     code,
-    severity: DiagnosticSeverity.Error,
-    explanation: "Cypress is declared in devDependencies but is not installed.",
+    severity,
+    explanation: `${code} applies.`,
+    remediation: "Correct it.",
   };
 }
 
@@ -87,18 +105,32 @@ function diagnosis(): ProjectDiagnosis {
   };
 }
 
-/** An assessment whose execute gate holds whatever the case needs. */
+/**
+ * An assessment whose two gates say different things, because they do.
+ *
+ * Inspection is never blocked — reporting the blockers is what it is for — so a fixture that gave both gates the same
+ * readiness would let a service read the inspection gate and still look correct. That is the failure this shape exists
+ * to prevent, and it costs one ternary.
+ */
 function assessment(
   blocking: readonly AnyDiagnosticFinding[] = [],
+  warnings: readonly AnyDiagnosticFinding[] = [],
 ): ProjectAssessment {
+  const execute =
+    blocking.length > 0
+      ? OperationReadiness.Blocked
+      : warnings.length > 0
+        ? OperationReadiness.ReadyWithWarnings
+        : OperationReadiness.Ready;
+
   const gate = (operation: QatOperation): OperationGate => ({
     operation,
     readiness:
-      blocking.length === 0
-        ? OperationReadiness.Ready
-        : OperationReadiness.Blocked,
+      operation === QatOperation.Inspect
+        ? OperationReadiness.ReadyWithWarnings
+        : execute,
     blocking,
-    warnings: [],
+    warnings,
   });
 
   return {
@@ -122,6 +154,7 @@ const notFound = (): ConfigurationLoadResult => ({
 /** A configuration that loaded: parsed through the schema, so the fixture is a real document and not a cast. */
 const loaded = (): ConfigurationLoadResult => {
   const parsed = qatConfigSchema.safeParse(generateDefaultConfiguration());
+
   if (!parsed.success)
     throw new Error("fixture: the generated configuration must be valid");
 
@@ -258,22 +291,25 @@ describe("initialising a usable project with no configuration", () => {
     ]);
   });
 
-  it("puts the file beside the project, not beside the process", async () => {
+  it("writes inside the directory it was given, not beside the process", async () => {
     const { initialise, written } = harness();
 
     await initialise(ROOT);
 
-    expect(written[0]?.path.startsWith(ROOT)).toBe(true);
-    expect(written[0]?.path).not.toContain(process.cwd());
+    // The same expression the fixture uses, which is the assertion's weakness and its point: the service must derive the
+    // path from the root it was handed, and a service that reached for the working directory would produce something
+    // else here even though `/project` looks like a plausible place to write.
+    expect(written[0]?.path).toBe(join(ROOT, CONFIG_FILE_NAME));
   });
 
   it("proceeds when the only blocking findings are about the machine", async () => {
-    // The journey this protects: clone, `qat init`, `npm ci`, `qat run`.
+    // The journey this protects: clone, `qat init`, `npm ci`, `qat run`. A dependency that is not installed yet cannot
+    // stop the configuration from being written, because writing it is what makes the install worthwhile.
     const { initialise, calls } = harness({
-      assessment: assessment([
-        finding(DiagnosticCode.DependencyNotInstalled),
-        finding(DiagnosticCode.ManifestMissing),
-      ]),
+      assessment: assessment(
+        [finding(DiagnosticCode.DependencyNotInstalled)],
+        [finding(DiagnosticCode.ManifestMissing, DiagnosticSeverity.Warning)],
+      ),
     });
 
     expect((await initialise(ROOT)).outcome).toBe("created");
@@ -341,12 +377,17 @@ describe("a project QAT cannot configure", () => {
 });
 
 describe("something already at the configuration path", () => {
-  it.each([
+  const EXISTING: readonly [
+    label: string,
+    make: () => ConfigurationLoadResult,
+  ][] = [
     ["an empty file", empty],
     ["a malformed file", malformed],
     ["an invalid file", invalid],
     ["an oversized file", tooLarge],
-  ])("refuses to replace %s", async (_case, make) => {
+  ];
+
+  it.each(EXISTING)("refuses to replace %s", async (_label, make) => {
     const answer = make();
     const { initialise, written } = harness({ loads: [answer] });
 
@@ -394,11 +435,12 @@ describe("something already at the configuration path", () => {
     if (result.outcome !== "existing-configuration")
       throw new Error("expected a refusal");
 
-    // A configuration can carry environment variables, so the finding repeats the rule's message and not the value that
-    // failed it. Asserted as a property rather than as one string, because the guarantee is about all findings.
-    for (const one of result.findings) {
-      expect(one.explanation).not.toContain("API_URL=");
-    }
+    // A configuration can carry environment variables, so a finding repeats the rule's message and not the value that
+    // failed it. Joined into one string rather than asserted per finding, so the property holds for the whole list in a
+    // single comparison.
+    const text = result.findings.map((one) => one.explanation).join(" | ");
+
+    expect(text).not.toContain("API_URL=");
   });
 });
 
