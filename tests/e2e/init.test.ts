@@ -8,19 +8,23 @@
  *
  * ## What the assertions are careful about
  *
- * Two of them are easy to write in a way that passes for the wrong reason:
+ * Four are easy to write in a way that passes for the wrong reason:
  *
  * - **"Nothing else changed"** is asserted by listing the directory before and after and comparing the two lists, not by
  *   comparing whole-tree snapshots. A snapshot comparison can only say "different"; the list says *one entry was added
  *   and its name is this one*.
  * - **"The framework's configuration is untouched"** is asserted by reading that file's bytes before and after. A
  *   snapshot would pass even if the file had moved, since a move changes two entries into two others.
+ * - **"Nothing was written"** is asserted by reading the bytes at the path, not by checking an exit code. The code says
+ *   the command refused; the bytes say it refused without touching anything.
+ * - **"Replacement is impossible"** is asserted by asking for one and being told the option does not exist. A guarantee
+ *   that is only stated in documentation is a guarantee that a future flag can quietly contradict.
  *
  * The fixtures are assumed to be a Cypress project with **no** QAT configuration — the state this command exists for. If
  * `temporaryProject` ever starts writing one, the first case below fails loudly (it would report `exists`), which is the
  * right place for that discovery.
  */
-import { readFile, readdir, stat } from "node:fs/promises";
+import { readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 import { afterAll, describe, expect, it } from "vitest";
@@ -43,6 +47,7 @@ afterAll(removeTemporaryDirectories);
 /* -------------------------------------------------------------------------- */
 
 const CONFIG_NAME = "qat.config.json";
+const BACKUP_NAME = `${CONFIG_NAME}.backup`;
 
 /** The file `qat init` is expected to write, byte for byte. */
 const EXPECTED_FILE = `{\n  "version": ${String(SUPPORTED_CONFIG_VERSION)},\n  "framework": "${Framework.Cypress}"\n}\n`;
@@ -83,6 +88,13 @@ async function exists(path: string): Promise<boolean> {
   return stat(path).then(
     () => true,
     () => false,
+  );
+}
+
+/** Every name in the directory that is not a file this command is expected to write. */
+async function strays(root: string): Promise<readonly string[]> {
+  return (await readdir(root)).filter(
+    (entry) => entry.endsWith(".tmp") || entry.endsWith(".backup"),
   );
 }
 
@@ -136,6 +148,16 @@ describe("initialising a supported project", () => {
     expect(await exists(join(root, "results"))).toBe(false);
   });
 
+  it("leaves no temporary and no backup behind", async () => {
+    const root = await temporaryProject();
+
+    await qat(["init", root]);
+
+    // The create path is exclusive: it hard-links a temporary into place and removes the temporary. A `.backup` here would
+    // mean something took a copy before a write — which is a replacement, and this command does not do one.
+    expect(await strays(root)).toStrictEqual([]);
+  });
+
   it("keeps standard error clean when it succeeds", async () => {
     const root = await temporaryProject();
 
@@ -167,9 +189,9 @@ describe("initialising a supported project", () => {
     expect(await exists(join(option, CONFIG_NAME))).toBe(false);
   });
 
-  it("initialises a project whose manifest is missing, and says nothing about it here", async () => {
-    // A missing manifest is advice, not a reason to refuse: the state this command is for is a fresh clone, which has
-    // no installed dependencies either.
+  it("initialises a project whose manifest is missing", async () => {
+    // A missing manifest is advice, not a reason to refuse: the state this command is for is a fresh clone, which has no
+    // installed dependencies either.
     const root = await temporaryWarningProject();
 
     const result = await qat(["init", root]);
@@ -197,7 +219,7 @@ describe("initialising an already initialised project", () => {
     expect(result.stdout).toContain("Nothing was changed");
   });
 
-  it("leaves the file byte-identical", async () => {
+  it("leaves the file byte-identical, and takes no backup of it", async () => {
     const root = await temporaryProject();
     const path = join(root, CONFIG_NAME);
 
@@ -206,6 +228,8 @@ describe("initialising an already initialised project", () => {
     await qat(["init", root]);
 
     expect(await readFile(path, "utf8")).toBe(first);
+    // A backup would mean the second run had decided to replace something. It decided not to write at all.
+    expect(await strays(root)).toStrictEqual([]);
   });
 
   it("keeps a configuration the reader edited", async () => {
@@ -226,6 +250,20 @@ describe("initialising an already initialised project", () => {
     // The most damaging thing this command could do. A reader's edits survive a re-run, spaces and all.
     expect(result.exitCode).toBe(ExitCode.Success);
     expect(await readFile(path, "utf8")).toBe(before);
+  });
+
+  it("is not confused by a temporary file left by an interrupted run", async () => {
+    const root = await temporaryProject();
+    const stray = join(root, `.${CONFIG_NAME}.4242.0f0f0f0f.tmp`);
+    await writeFile(stray, "partial");
+
+    const result = await qat(["init", root]);
+
+    // A crash can leave one of these; it is named so that nothing which reads a configuration will open it. This run
+    // therefore proceeds, and does not remove something it did not create.
+    expect(result.exitCode).toBe(ExitCode.Success);
+    expect(await readFile(join(root, CONFIG_NAME), "utf8")).toBe(EXPECTED_FILE);
+    expect(await exists(stray)).toBe(true);
   });
 });
 
@@ -251,8 +289,7 @@ describe("a project that is not ready to be configured", () => {
   });
 
   it("names an absent framework", async () => {
-    // A bare directory: no manifest, no Cypress, no configuration. This is the case `QAT-D001` describes, and the one
-    // whose remedy is "run this in the right directory" rather than "create a file".
+    // A bare directory: no manifest, no Cypress, no configuration. This is the case `QAT-D001` describes.
     const root = await temporaryDirectory();
 
     const result = await qat(["init", root]);
@@ -310,7 +347,7 @@ describe("something already at the configuration path", () => {
     ],
   ])(
     "refuses to replace %s, and leaves it byte-identical",
-    async (_case, contents) => {
+    async (__case__, contents) => {
       const root = await temporaryProject({
         extra: { [CONFIG_NAME]: contents },
       });
@@ -320,7 +357,8 @@ describe("something already at the configuration path", () => {
 
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
       expect(valueOf(result.stdout, "unusable")).toBe(path);
-      // Nothing was written and nothing was removed: the reader decides what happens to their file.
+      // Nothing was written and nothing was removed: the reader decides what happens to their file. The bytes are read
+      // back rather than compared with a snapshot, because "identical" is the claim.
       expect(await readFile(path, "utf8")).toBe(contents);
     },
   );
@@ -334,7 +372,7 @@ describe("something already at the configuration path", () => {
 
     // A refusal that said only "invalid" would send the reader looking at every line.
     expect(result.stdout).toContain("not valid JSON");
-    expect(result.stdout).toMatch(/line \d+ column \d+/);
+    expect(result.stdout).toMatch(/line \d+ column \d+/u);
   });
 
   it("passes a schema code through rather than inventing one", async () => {
@@ -377,6 +415,40 @@ describe("a directory that does not exist", () => {
     expect(result.exitCode).toBe(ExitCode.InvalidInput);
     expect(result.stderr).toContain("QAT1001");
     expect(result.stderr).toContain("is not a directory");
+  });
+});
+
+/* -------------------------------------------------------------------------- */
+/* A replacement that does not exist                                          */
+/* -------------------------------------------------------------------------- */
+
+describe("replacement", () => {
+  it.each(["--force", "--replace", "--overwrite"])(
+    "has no %s option",
+    async (flag) => {
+      const root = await temporaryProject();
+
+      const result = await qat(["init", root, flag]);
+
+      // The guarantee is the absence, so the absence is what is asserted. A flag that silently did nothing would pass a
+      // test that only checked the file; an unknown option is rejected by the parser before the command runs, so the file
+      // is not created and the message names what was refused.
+      expect(result.exitCode).not.toBe(ExitCode.Success);
+      expect(result.stderr).toContain(flag.replace(/^--/u, ""));
+      expect(await exists(join(root, CONFIG_NAME))).toBe(false);
+    },
+  );
+
+  it("does not replace a file when asked through the only option it has", async () => {
+    // `init` takes a directory and nothing else. Running it again on an initialised project is the closest thing to a
+    // replacement request a caller can make, and it writes nothing.
+    const root = await temporaryProject({ extra: { [CONFIG_NAME]: "{" } });
+    const path = join(root, CONFIG_NAME);
+
+    await qat(["init", root]);
+
+    expect(await readFile(path, "utf8")).toBe("{");
+    expect(await exists(join(root, BACKUP_NAME))).toBe(false);
   });
 });
 

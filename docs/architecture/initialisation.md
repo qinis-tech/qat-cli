@@ -1,11 +1,11 @@
 # Initialisation
 
-|                  |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| ---------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Status**       | Normative                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
-| **Module**       | `src/init/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
-| **Entry points** | `Application.initialisation.initialise(root)`, `generateDefaultConfiguration()`, `unusableProjectFindings(assessment)`                                                                                                                                                                                                                                                                                                                                                                          |
-| **Companion**    | [configuration-loading.md](configuration-loading.md), [configuration-defaults.md](configuration-defaults.md), [validation.md](validation.md), [cli-output.md](../development/cli-output.md), [cli-commands.md](../development/cli-commands.md), [ADR-0006](./adr/0006-write-files-through-a-temporary-file-and-rename.md), [ADR-0013](./adr/0013-register-a-command-only-when-its-capability-exists.md), [ADR-0028](./adr/0028-create-a-new-configuration-exclusively-rather-than-by-renami.md) |
+|                  |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| ---------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Status**       | Normative                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| **Module**       | `src/init/`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Entry points** | `Application.initialisation.initialise(root)`, `generateDefaultConfiguration()`, `unusableProjectFindings(assessment)`                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| **Companion**    | [configuration-loading.md](configuration-loading.md), [configuration-defaults.md](configuration-defaults.md), [safe-writes.md](safe-writes.md), [validation.md](validation.md), [cli-output.md](../development/cli-output.md), [cli-commands.md](../development/cli-commands.md), [ADR-0013](./adr/0013-register-a-command-only-when-its-capability-exists.md), [ADR-0028](./adr/0028-create-a-new-configuration-exclusively-rather-than-by-renami.md), [ADR-0029](./adr/0029-require-declared-intent-for-a-destructive-configuration-writ.md) |
 
 Creating a project's QAT configuration, or explaining why it did not.
 
@@ -22,8 +22,8 @@ advice, and the write itself is the guarantee.
 | `existing-configuration` | Something is at the path and cannot be used. Nothing was written, and nothing was removed   | 2      |
 | `project-not-usable`     | The directory is not a project QAT can configure. Nothing was inspected for a configuration | 2      |
 
-Four sentences rather than one because they send the reader to four places, and one of them — "fix or delete the file
-you already have" — is not advice any other outcome should give.
+Four sentences rather than one because they send the reader to four places, and one of them — "fix or delete the file you
+already have" — is not advice any other outcome should give.
 
 Two things throw, and neither is a property of the project:
 
@@ -48,18 +48,19 @@ The order is the safety argument, not a sequence somebody happened to write.
 | 8   | Present the result                          | `cli/output/initialisation.ts`                 | —                                                        |
 | 9   | Return the status                           | The command                                    | —                                                        |
 
-Two orderings carry weight. **Judging precedes reading**: reading a file before deciding the directory is a usable
-project produces a refusal that names the wrong problem. **Validating precedes writing**: a generator defect must stop the
+Two orderings carry weight. **Judging precedes reading**: reading a file before deciding the directory is a usable project
+produces a refusal that names the wrong problem. **Validating precedes writing**: a generator defect must stop the
 command, not leave a file on disk that the next command refuses to read.
 
 ## 3. Create-only, and the one window it cannot close
 
 `writeNewFile` writes the contents to a temporary file beside the target, flushes it, and then **hard-links** it to the
-final name.
+final name. The mechanics, and the reason each one is not the obvious alternative, are in [safe-writes.md](safe-writes.md)
+§2 and §3.
 
 Not `rename`. `rename` is atomic and it _replaces_ whatever is at the destination without a word — which is exactly right
-for an edit and exactly wrong for a create, because a file that appeared between the caller's check and this call would
-be destroyed and the caller would be told the write succeeded. `link` performs the same test the caller made earlier, and
+for an edit and exactly wrong for a create, because a file that appeared between the caller's check and this call would be
+destroyed and the caller would be told the write succeeded. `link` performs the same test the caller made earlier, and
 fails with `EEXIST` if the name is taken: the check and the effect are one operation, performed by the filesystem.
 
 That leaves one window, which the design names rather than hides. If the link reports `EEXIST`, `initialise` **re-reads**
@@ -71,8 +72,19 @@ the path and answers with what is actually there:
 | A file that does not load          | `existing-configuration`, with its own reason                                                             |
 | Nothing (it appeared and vanished) | `existing-configuration` with code `QAT-INIT-EXISTING-DISAPPEARED` and the remedy "Run the command again" |
 
-The third row is not padding. A file that appeared and disappeared leaves nothing to fix, and telling the reader to edit
-it would send them looking for a file that is not there.
+The third row is not padding. A file that appeared and disappeared leaves nothing to fix, and telling the reader to edit it
+would send them looking for a file that is not there.
+
+### Replacement exists, and this command cannot reach it
+
+The same module that provides `writeNewFile` also provides `replaceFileWithBackup`, which replaces a file after copying
+the previous contents aside and proving the copy is readable. It is not withheld from this workflow by discipline.
+
+The dependency this service is given is typed `(path, contents) => Promise<NewFileWriteOutcome>`. The replacing function
+returns a different union _and_ demands a SHA-256 of the content it is replacing, so it cannot be bound to that dependency
+at all — it is a type error, not a review note. Widening the dependency is therefore the visible change that would have to
+precede any replacement feature, and [safe-writes.md](safe-writes.md) §8 says what else that change would need: an approved
+flag, a caller that has read the file, and a test proving the backup verified before the target moved.
 
 ## 4. What the generated document says
 
@@ -117,17 +129,17 @@ wrongly accepting is a configuration file in a project that cannot use it.
 
 Two gates were available and neither was right on its own. The inspect gate is never blocked, so gating on it would accept
 every directory. The execute gate whole would demand an installed framework — refusing exactly where the command is most
-useful. Subracting the installation-only conditions from the execute gate is the smallest statement that is also true.
+useful. Subtracting the installation-only conditions from the execute gate is the smallest statement that is also true.
 
 ## 6. Statuses
 
-`created` and `already-initialised` both exit `0`. The status answers **"is this project configured"**, not "did this
-call do the work": after either outcome the postcondition holds, and a provisioning script that runs the command twice
-must not fail on the second run. A distinct non-zero status for a re-run would make `qat init && qat run` unusable in
-every script that is not run exactly once.
+`created` and `already-initialised` both exit `0`. The status answers **"is this project configured"**, not "did this call
+do the work": after either outcome the postcondition holds, and a provisioning script that runs the command twice must not
+fail on the second run. A distinct non-zero status for a re-run would make `qat init && qat run` unusable in every script
+that is not run exactly once.
 
-`existing-configuration` and `project-not-usable` exit `2` — the same code a blocked `qat doctor` returns, because both
-mean "this directory cannot be used as it stands", which is the category scripts already branch on. No new exit code is
+`existing-configuration` and `project-not-usable` exit `2` — the same code a blocked `qat doctor` returns, because both mean
+"this directory cannot be used as it stands", which is the category scripts already branch on. No new exit code is
 introduced for initialisation.
 
 ## 7. What it does not do
@@ -180,40 +192,50 @@ stream separation and the ASCII rule are in [cli-output.md](../development/cli-o
 | A directory on the configuration name | `refuses a directory sitting on the configuration name`                                                |
 | A missing directory                   | `reports an argument defect on standard error` — `QAT1001`                                             |
 | `--json`, three outcomes              | the outcome, the path, the reason, the findings, one line on stdout                                    |
-| Determinism, cwd                      | `is deterministic`; `does not depend on the working directory`                                         |
+| Determinism, working directory        | `is deterministic`; `does not depend on the working directory`                                         |
 
-Unit level, against stubbed dependencies: the call order (`judges, then reads, then writes`), the generator's document
+Unit level, against stubbed dependencies: the call order (judges, then reads, then writes), the generator's document
 written byte for byte, the race branch in three shapes, and propagation of failures that are not outcomes.
+
+The writer itself is tested separately, including the property this command depends on and cannot test from above: that a
+create finding an occupied path leaves the existing bytes alone, and that two concurrent creates produce exactly one
+`"created"`. See [safe-writes.md](safe-writes.md) §11.
 
 ## 10. Known limits
 
-| Limit                                                        | Why it is one                                                                                                                                                                                                                                                                                                                          |
-| ------------------------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| The refusal codes are bespoke                                | `QAT-INIT-EXISTING-EMPTY`, `-MALFORMED`, `-TOO-LARGE`, `-DISAPPEARED` and `-UNUSABLE` are authored in `initialise.ts` rather than registered in the diagnostics catalogue with a permanent range. Every other code in the product is minted in one place, and these violate that; they need a `QAT-I` range and a catalogue entry each |
-| Filesystems without hard links are refused                   | `link` fails with `EPERM` or `ENOSYS` on some network mounts and FAT volumes. That is reported with its own message rather than silently degrading to a direct write, because degrading would trade crash atomicity for portability without telling anybody                                                                            |
-| A crash can leave a temporary file                           | `.<name>.<pid>.<uuid>.tmp` beside the target. It is named so it is attributable, and the next run does not read it — but nothing sweeps it                                                                                                                                                                                             |
-| No interactive mode                                          | The command takes a directory and does what the project requires. Anything a prompt would ask is either derivable or belongs in an edit of the file it just wrote                                                                                                                                                                      |
-| An invalid configuration produces no finding in `qat doctor` | The assessment attaches a resolved configuration when the file loads and nothing when it does not. Closing that means merging the loader's diagnostics into the assessment's gate, which decides an exit status and therefore needs its own decision                                                                                   |
+| Limit                                                        | Why it is one                                                                                                                                                                                                                                                                                                                               |
+| ------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| The refusal codes are bespoke                                | `QAT-INIT-EXISTING-EMPTY`, `-MALFORMED`, `-TOO-LARGE`, `-DISAPPEARED` and `-UNUSABLE` are authored in `initialise.ts` rather than registered in the diagnostics catalogue with a permanent range. Every other code in the product is minted in one place, and these are the exception; they need a `QAT-I` range and a catalogue entry each |
+| Replacement is not available to this command                 | The mechanism exists and is tested; nothing can reach it, and the dependency's type is what enforces that rather than an intention to avoid it. See §3                                                                                                                                                                                      |
+| Filesystems without hard links are refused                   | `link` fails with `EPERM` or `ENOSYS` on some network mounts and FAT volumes. That is reported with its own message rather than silently degrading to a direct write, because degrading would trade crash atomicity for portability without telling anybody                                                                                 |
+| A crash can leave a temporary file                           | `.<name>.<pid>.<uuid>.tmp` beside the target. It is named so it is attributable, and the next run does not read it — but nothing sweeps it                                                                                                                                                                                                  |
+| No interactive mode                                          | The command takes a directory and does what the project requires. Anything a prompt would ask is either derivable or belongs in an edit of the file it just wrote                                                                                                                                                                           |
+| An invalid configuration produces no finding in `qat doctor` | The assessment attaches a resolved configuration when the file loads and nothing when it does not. Closing that means merging the loader's diagnostics into the assessment's gate, which decides an exit status and therefore needs its own decision                                                                                        |
 
 ## 11. Things that will bite
 
 **The check is advice; the write is the rule.** The load at step 4 and the create at step 7 are two moments, and only the
-second one commits. Anyone who "simplifies" the writer back to `writeFileAtomic` — which is right for every other caller
-in the product — reintroduces a silent overwrite under a race, and the test that catches it is the one asserting that a
+second one commits. Anyone who "simplifies" the writer back to `writeFileAtomic` — which is right for every other caller in
+the product — reintroduces a silent overwrite under a race, and the test that catches it is the one asserting that a
 concurrent create leaves the existing bytes alone.
 
-**A relative path in a refusal.** Every path this command prints is absolute and built from the resolved project root.
-A message naming a relative path would be a message the reader has to interpret, and in a CI log there is nothing to
+**A relative path in a refusal.** Every path this command prints is absolute and built from the resolved project root. A
+message naming a relative path would be a message the reader has to interpret, and in a CI log there is nothing to
 interpret it against.
 
 **The generated file is deliberately small.** It will look incomplete to a reader who expects a scaffold, and the
 temptation to "fill it in so they can see the options" is the one change that quietly converts every documented default
 into a value nobody chose. The options are in the architecture document, which does not go stale when a default changes.
 
-**`already-initialised` exiting zero.** This is a decision, not an accident. If a pipeline needs to distinguish "I created
-it" from "it was already there", the answer is the `--json` document's `outcome`, not the status — the status is a
-question about the project, and the document is a question about the run.
+**`already-initialised` exiting zero is a decision, not an accident.** If a pipeline needs to distinguish "I created it"
+from "it was already there", the answer is the `--json` document's `outcome`, not the status — the status is a question
+about the project, and the document is a question about the run.
 
 **A re-read after `EEXIST` is not redundant work.** It is the only place the check-then-write gap is observable, and it
 turns a race into the outcome the reader expected. Removing it would make a concurrent second run fail with a filesystem
 error about a name being taken — accurate, and useless to whoever is running two deploys.
+
+**Do not "upgrade" step 7 to `replaceFileWithBackup` when a reader asks for a re-init.** The function is right there, it
+takes the same arguments plus a hash, and wiring it would take ten minutes. It would also make `qat init --replace`
+possible, which is the one thing §7 promises is not. If replacement is wanted, it is a product decision with a written
+specification — [safe-writes.md](safe-writes.md) §5 lists the questions it has to answer — not an implementation shortcut.
