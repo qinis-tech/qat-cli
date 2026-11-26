@@ -1,0 +1,8 @@
+{
+  "name": "fixture-cypress-version-unreadable",
+  "version": "0.0.0",
+  "private": true,
+  "devDependencies": {
+    "cypress": "^13.6.0"
+  }
+}

@@ -1,46 +1,60 @@
 /**
  * The shapes the catalogue is written against.
  *
- * Internal to this layer. A check receives evidence and returns a verdict; it renders nothing except through
- * `guidance.ts`, so the prose still lives in one file and this one stays readable as logic.
+ * Internal to this layer. A check receives evidence and returns a verdict; it renders nothing
+ * except through `guidance.ts`, so the prose still lives in one file and this one stays readable
+ * as logic.
  *
  * ## Facts are grouped by source, not by check
  *
- * One source usually answers several checks: the assessment answers five, the configuration load result three. Grouping
- * by check would mean reading the same tree twice, and two readings of one tree are two readings that can disagree.
+ * One source usually answers several checks: the assessment answers five, the configuration load
+ * result three. Grouping by check would mean reading the same tree twice, and two readings of one
+ * tree are two readings that can disagree.
+ *
+ * The Cypress group is the clearest case of the rule: three checks read one assessment of one
+ * installation, so the installation is captured once and the conditions are decided once. A group
+ * per check would have meant three captures, three chances to see three different filesystems and
+ * three findings that contradict each other about what is installed.
  *
  * ## Absent is not the same as empty
  *
- * A group being absent means *nobody gathered it* — a defect in the assembly, reported as a named skip. Gathering it
- * and finding nothing is a different thing entirely, which is why `PackageManagerFacts` discriminates on its own status
- * rather than the group itself being optional: "no package manager could be identified" is a finding, and a check that
- * skipped on it would have nothing to say about exactly the case it exists for.
+ * A group being absent means *nobody gathered it* — a defect in the assembly, reported as a named
+ * skip. Gathering it and finding nothing is a different thing entirely, which is why
+ * `PackageManagerFacts` discriminates on its own `selection.status` rather than the group itself
+ * being optional: "no package manager could be identified" is a finding, and a check that skipped
+ * on it would have nothing to say about exactly the case it exists for.
  *
- * `RuntimeFacts.nodeVersion` follows the same rule for the same reason: a host that reports no version is not a group
- * nobody gathered, it is an answer — and one worth reporting. Leaving it required would have forced the assembly to
- * invent a string or throw, and both of those hide the condition the check exists to describe.
+ * `RuntimeFacts.nodeVersion` follows the same rule for the same reason. Absence of the property is
+ * itself an answer — "the host reported no version" — and never a quiet "the gatherer forgot".
+ * Leaving it required would have forced the assembly to invent a string or throw, and both of
+ * those hide the condition the check exists to describe. The convention holds because the gatherer
+ * is the only writer: whoever builds `RuntimeFacts` has just asked the question, so a missing field
+ * can only mean a missing answer.
  *
  * ## Why the runtime group carries a requirement as well as a version
  *
- * A check is data with one input: `evaluate(facts)`. It has no constructor, no injected dependency bag, no second
- * channel. So the supported range must arrive as evidence or not at all — and "not at all" would mean the rule
- * importing a constant, which is precisely how the same range ends up written in a check, a README and a CI matrix,
- * with three different values after the first release that forgets two of them.
+ * A check is data with one input: `evaluate(facts)`. It has no constructor, no injected dependency
+ * bag, no second channel. So the supported range must arrive as evidence or not at all — and "not
+ * at all" would mean the rule importing a constant, which is precisely how the same range ends up
+ * written in a check, a README and a CI matrix, with three different values after the first release
+ * that forgets two of them.
  *
- * Treating the policy as evidence is honest rather than convenient: the range is *gathered* from the package's own
- * declaration, exactly as the version is gathered from the running process. Both are things the check is told and
- * must not assume. The two are kept in the same group because they are answered by the same question — "what is the
- * runtime situation here?" — and splitting them would add a group that no other check will ever read.
+ * Treating the policy as evidence is honest rather than convenient: the range is *gathered* from
+ * the package's own declaration, exactly as the version is gathered from the running process. Both
+ * are things the check is told and must not assume. The two are kept in the same group because they
+ * are answered by the same question — "what is the runtime situation here?" — and splitting them
+ * would add a group that no other check will ever read.
  *
  * ## Why gathering stays outside this layer
  *
- * Nothing here knows how evidence is obtained: no ports, no filesystem, no process. The workflow that inspects a
- * project reads the directory, resolves a binary on PATH and hands over the results. That is what keeps every
- * definition a pure function of a value, testable with literals, and what stops a check from acquiring a second
- * opinion about what "installed" or "supported" means.
+ * Nothing here knows how evidence is obtained: no ports, no filesystem, no process. The workflow
+ * that inspects a project reads the directory, resolves a binary on PATH and hands over the
+ * results. That is what keeps every definition a pure function of a value, testable with literals,
+ * and what stops a check from acquiring a second opinion about what "installed" or "supported"
+ * means.
  *
- * Every field below is read by at least one check or by the sentence it produces. A fact nothing reads is a fact the
- * next person will assume is load-bearing.
+ * Every field below is read by at least one check or by the sentence it produces. A fact nothing
+ * reads is a fact the next person will assume is load-bearing.
  */
 
 import type { ConfigurationLoadResult } from "../../config/loader/index.js";
@@ -51,17 +65,23 @@ import type {
   CheckSeverity,
 } from "../../core/application/checks.js";
 import type { ProjectAssessment } from "../../core/application/validation.js";
-// The widened name. One shape serves the runtime QAT requires, the bound a project's framework release declares, and the
-// version a project pins for its package manager — which is why this layer narrows it once, by `Pick`, rather than
-// declaring three near-identical fact types and hoping they stay in step.
+// The widened name. One shape serves the runtime QAT requires, the bound a project's framework
+// release declares, and the version a project pins for its package manager — which is why this
+// layer narrows it once, by `Pick`, rather than declaring three near-identical fact types and
+// hoping they stay in step.
 import type { VersionRequirement } from "../../core/compatibility/index.js";
+// Framework health conditions are decided by a pure assessment inside the gatherer, so this layer
+// imports the *result* type only. Diagnostics depends on the project layer; the project layer
+// knows nothing about diagnostics, so the direction stays acyclic.
+import type { CypressConditionResult } from "../../project/cypress-health/index.js";
 
 /**
  * The evidence a check may declare that it needs.
  *
- * The values are labels rather than property names: a skip message reads "package-manager evidence was not gathered",
- * not "packageManager evidence", and a label quoted in a report should be the words a reader would use. `FACT_KEYS`
- * maps a label to the property that holds it, so the two can differ without either being wrong.
+ * The values are labels rather than property names: a skip message reads "package-manager evidence
+ * was not gathered", not "packageManager evidence", and a label quoted in a report should be the
+ * words a reader would use. `FACT_KEYS` maps a label to the property that holds it, so the two can
+ * differ without either being wrong.
  */
 export const FactGroup = {
   Runtime: "runtime",
@@ -70,6 +90,8 @@ export const FactGroup = {
   Configuration: "configuration",
   Environment: "environment",
   Output: "output",
+  /** The installed framework's health conditions, already decided. */
+  Cypress: "cypress",
 } as const;
 
 export type FactGroup = (typeof FactGroup)[keyof typeof FactGroup];
@@ -77,17 +99,19 @@ export type FactGroup = (typeof FactGroup)[keyof typeof FactGroup];
 /**
  * A version requirement, as a check needs it: range and provenance only.
  *
- * Narrowed from core's requirement by `Pick`, so the two cannot drift about what a range is — and so the fields that
- * are deliberately *not* here stay visibly not-here rather than being quietly present and unused.
+ * Narrowed from core's requirement by `Pick`, so the two cannot drift about what a range is — and
+ * so the fields that are deliberately *not* here stay visibly not-here rather than being quietly
+ * present and unused.
  *
- * `severityWhenUnsatisfied` is the field that is dropped, and dropping it is the point. How badly a failed requirement
- * matters is declared once, on the check's `severity`, decided with every other check in one catalogue. Carrying it
- * here too would give the same decision two homes and leave a reader guessing which one wins.
+ * `severityWhenUnsatisfied` is the field that is dropped, and dropping it is the point. How badly a
+ * failed requirement matters is declared once, on the check's `severity`, decided with every other
+ * check in one catalogue. Carrying it here too would give the same decision two homes and leave a
+ * reader guessing which one wins.
  *
- * Named for the shape rather than for the runtime because three different owners now supply one: the runtime QAT
- * requires, the bound a project's framework release declares, and the version a project pins for its package manager.
- * They are compared by the same engine, so they are described by the same type — anything narrower would be three
- * copies of one idea.
+ * Named for the shape rather than for the runtime because three different owners now supply one:
+ * the runtime QAT requires, the bound a project's framework release declares, and the version a
+ * project pins for its package manager. They are compared by the same engine, so they are described
+ * by the same type — anything narrower would be three copies of one idea.
  */
 export type VersionRequirementFact = Pick<
   VersionRequirement,
@@ -97,42 +121,48 @@ export type VersionRequirementFact = Pick<
 /**
  * The Node runtime situation: what the host reports, and what is required of it.
  *
- * Both halves are needed to produce a finding a reader can act on. `detected` without `required` is a number with no
- * context; `required` without `detected` is a rule with no subject. A finding needs the pair, which is why the group
- * holds the pair rather than leaving the caller to join them.
+ * Both halves are needed to produce a finding a reader can act on. `detected` without `required` is
+ * a number with no context; `required` without `detected` is a rule with no subject. A finding needs
+ * the pair, which is why the group holds the pair rather than leaving the caller to join them.
  */
 export interface RuntimeFacts {
   /**
    * The version as the host reports it, e.g. `v24.4.0`.
    *
-   * Unparsed here, on purpose: parsing happens once, inside the comparison, so there is exactly one opinion about what
-   * a version is. A layer that pre-parsed would be a second opinion, and the two would eventually disagree about
-   * something like a pre-release suffix.
+   * Unparsed here, on purpose: parsing happens once, inside the comparison, so there is exactly one
+   * opinion about what a version is. A layer that pre-parsed would be a second opinion, and the two
+   * would eventually disagree about something like a pre-release suffix.
    *
-   * Absent when the host reported nothing — reported as a warning finding rather than as a pass, because "I could not
-   * read the runtime" must never be mistaken for "the runtime is fine" (see the note at the top of this file).
+   * Absent when the host reported nothing — reported as a warning finding rather than as a pass,
+   * because "I could not read the runtime" must never be mistaken for "the runtime is fine" (see the
+   * note at the top of this file).
    */
   readonly nodeVersion?: string;
 
   /**
    * What QAT itself requires.
    *
-   * Required, not optional, because every run has an authority even when that authority declared nothing: an absent
-   * `engines` field arrives here as an empty `range`, which the check reports as unreadable policy. Modelling it as
-   * optional would make "no policy" indistinguishable from "policy not gathered", and the check would then skip on the
-   * one condition it most needs to speak about.
+   * Required, not optional, because every run has an authority even when that authority declared
+   * nothing: an absent `engines` field arrives here as an empty `range`, which the check reports as
+   * unreadable policy. Modelling it as optional would make "no policy" indistinguishable from "policy
+   * not gathered", and the check would then skip on the one condition it most needs to speak about.
    */
   readonly required: VersionRequirementFact;
 
   /**
    * An additional runtime bound declared by the project's framework release.
    *
-   * Absent when nothing declares one, and absence emits nothing — an advisory invented from a missing declaration is
-   * worse than no advisory. Named for the concept rather than for the framework, which is the same rule that keeps
-   * this layer free of framework names: the next adapter supplies the same shape.
+   * Absent when nothing declares one, and absence emits nothing — an advisory invented from a missing
+   * declaration is worse than no advisory. Deliberately named for the concept rather than for the
+   * product, so the next adapter supplies the same field and no check changes: this is the *runtime*
+   * bound, which is a property of any framework release, not of one vendor's.
    *
-   * Reported separately from `required`, never merged into its finding, because the two have different owners and
-   * different urgency. A file that said only "unsupported runtime" would not tell a reader whose requirement failed.
+   * (The framework's own installation health is a different question and lives in `CypressFacts`,
+   * where the conditions genuinely are framework-specific.)
+   *
+   * Reported separately from `required`, never merged into its finding, because the two have different
+   * owners and different urgency. A file that said only "unsupported runtime" would not tell a reader
+   * whose requirement failed.
    */
   readonly frameworkRequired?: VersionRequirementFact;
 }
@@ -140,9 +170,10 @@ export interface RuntimeFacts {
 /**
  * How far a previous dependency installation got, and by whose hand.
  *
- * A closed vocabulary rather than a boolean because the four answers send a reader to four different places, and
- * `foreign` in particular is invisible to a boolean: dependencies *are* installed, by a different tool, which
- * explains a whole class of "works on my machine" failures without anyone reading a log.
+ * A closed vocabulary rather than a boolean because the four answers send a reader to four different
+ * places, and `foreign` in particular is invisible to a boolean: dependencies *are* installed, by a
+ * different tool, which explains a whole class of "works on my machine" failures without anyone
+ * reading a log.
  */
 export type PackageManagerInstallState =
   "installed" | "absent" | "foreign" | "unknown";
@@ -164,10 +195,11 @@ export interface PackageManagerExecutableFact {
 /**
  * What detection concluded, as four mutually exclusive answers.
  *
- * A discriminated union rather than optional fields, for the same reason the domain uses one: `status` alone tells a
- * reader which of the four stories applies, and no combination like "unsupported *and* undeclared" can be built. The
- * four are exactly the four fixes a user might be sent to — change tool, install tool, declare a tool, or reconcile
- * two lockfiles — which is why they are not collapsed into "package manager problem".
+ * A discriminated union rather than optional fields, for the same reason the domain uses one: `status`
+ * alone tells a reader which of the four stories applies, and no combination like "unsupported *and*
+ * undeclared" can be built. The four are exactly the four fixes a user might be sent to — change tool,
+ * install tool, declare a tool, or reconcile two lockfiles — which is why they are not collapsed into
+ * "package manager problem".
  */
 export type PackageManagerSelection =
   | {
@@ -197,16 +229,19 @@ export type PackageManagerSelection =
 /**
  * The package-manager situation: identity, tooling, declared expectation and installation state.
  *
- * Widened from identity alone, because identity alone cannot answer the question this group exists for. "Which manager
- * is this?" and "is that manager's environment healthy?" are different questions, and a group that answered only the
- * first would force the check to shrug at the two conditions users actually hit: a missing binary, and a tree nobody
- * installed.
+ * Widened from identity alone, because identity alone cannot answer the question this group exists for.
+ * "Which manager is this?" and "is that manager's environment healthy?" are different questions, and a
+ * group that answered only the first would force the check to shrug at the two conditions users
+ * actually hit: a missing binary, and a tree nobody installed.
  *
  * Each member earns its place by being read by the check or by the sentence it produces:
  *
- * - `selection` decides which story is told, and is the only required member: without it there is nothing to say.
- * - `executable` distinguishes "tool missing" from "tool present but silent", which have different fixes.
- * - `required` turns an installed version into a comparable statement; absent when the project declared nothing.
+ * - `selection` decides which story is told, and is the only required member: without it there is
+ *   nothing to say.
+ * - `executable` distinguishes "tool missing" from "tool present but silent", which have different
+ *   fixes.
+ * - `required` turns an installed version into a comparable statement; absent when the project
+ *   declared nothing.
  * - `installState` separates "your tooling is wrong" from "you simply have not installed yet".
  */
 export interface PackageManagerFacts {
@@ -220,8 +255,9 @@ export interface PackageManagerFacts {
   /**
    * The manager version the project expects: a `packageManager` pin or an `engines` range.
    *
-   * Same narrowed shape as the runtime requirement, for the same reason: the check must not be able to reach a policy
-   * constant, so whatever it compares against arrives as evidence with its provenance attached.
+   * Same narrowed shape as the runtime requirement, for the same reason: the check must not be able to
+   * reach a policy constant, so whatever it compares against arrives as evidence with its provenance
+   * attached.
    */
   readonly required?: VersionRequirementFact;
 
@@ -230,13 +266,34 @@ export interface PackageManagerFacts {
   /**
    * Who created `node_modules`, when `installState` is `foreign`.
    *
-   * Carried separately rather than folded into the state string, because the answer itself is not the useful part —
-   * naming the other tool is. "Dependencies were installed by npm" is actionable; "foreign" is jargon.
+   * Carried separately rather than folded into the state string, because the answer itself is not the
+   * useful part — naming the other tool is. "Dependencies were installed by npm" is actionable;
+   * "foreign" is jargon.
    */
   readonly foreignMarker?: {
     readonly marker: string;
     readonly createdBy: string;
   };
+}
+
+/**
+ * The installed framework's health conditions, already decided.
+ *
+ * Assessment is pure — evidence in, conditions out — so it runs inside the gatherer, which is the only
+ * layer allowed to read the filesystem, resolve a package or probe a binary. The checks then read
+ * decisions rather than raw observation, which is why three checks share one gather step and cannot
+ * disagree about what was installed.
+ *
+ * `results` always contains one entry per framework check, including the skipped ones. That is the
+ * point of carrying decisions rather than observations: a check that had to skip still says so in the
+ * group, and the finding can name the check that must be fixed first instead of the report showing a
+ * silent gap.
+ *
+ * A check absent from `results` is a defect in the gatherer, not a condition of the project — which is
+ * why the rules throw on it rather than inventing a pass.
+ */
+export interface CypressFacts {
+  readonly results: readonly CypressConditionResult[];
 }
 
 export interface EnvironmentFacts {
@@ -251,9 +308,9 @@ export interface OutputTarget {
   /**
    * The path as it was written, relative to the project root.
    *
-   * The source form rather than the resolved one, because a finding's `path` is relative to the root and echoing an
-   * absolute location back at the reader hides the typo they are looking for. The prober resolved the real path to
-   * decide `writable`; nobody downstream needs to print it.
+   * The source form rather than the resolved one, because a finding's `path` is relative to the root and
+   * echoing an absolute location back at the reader hides the typo they are looking for. The prober
+   * resolved the real path to decide `writable`; nobody downstream needs to print it.
    */
   readonly path: string;
   /** Whether a write to the resolved location would succeed. Probed, never inferred from a mode bit. */
@@ -268,8 +325,8 @@ export interface OutputFacts {
 /**
  * Everything a caller may supply.
  *
- * Every group optional, because gathering is somebody else's job and a partially gathered set is a real state —
- * reported as a skip, which is why an absent group is a value rather than a compile error.
+ * Every group optional, because gathering is somebody else's job and a partially gathered set is a real
+ * state — reported as a skip, which is why an absent group is a value rather than a compile error.
  */
 export interface CheckFacts {
   readonly runtime?: RuntimeFacts;
@@ -280,33 +337,46 @@ export interface CheckFacts {
   readonly configuration?: ConfigurationLoadResult;
   readonly environment?: EnvironmentFacts;
   readonly output?: OutputFacts;
+  /** The installed framework's health conditions, decided once for the checks that read them. */
+  readonly cypress?: CypressFacts;
 }
 
 /**
  * Where each group lives on `CheckFacts`.
  *
- * A named map rather than a convention, because the label and the property are deliberately different words —
- * `'package-manager'` in a message, `packageManager` in a type — and a runner that indexed `facts[group]` directly
- * would compile against nothing. One map means one place to look when a group is added.
+ * A named map rather than a convention, because the label and the property are deliberately different
+ * words — `'package-manager'` in a message, `packageManager` in a type — and a runner that indexed
+ * `facts[group]` directly would compile against nothing. One map means one place to look when a group
+ * is added.
+ *
+ * Frozen and literal-typed: this table is how the runner finds evidence, so it must not be rewritable at
+ * runtime, and a contract test can assert every mapped key really exists on `CheckFacts` and that every
+ * key on `CheckFacts` is reachable through it.
  */
-export const FACT_KEYS: Readonly<Record<FactGroup, keyof CheckFacts>> = {
+export const FACT_KEYS = Object.freeze({
   [FactGroup.Runtime]: "runtime",
   [FactGroup.PackageManager]: "packageManager",
   [FactGroup.Assessment]: "assessment",
   [FactGroup.Configuration]: "configuration",
   [FactGroup.Environment]: "environment",
   [FactGroup.Output]: "output",
-};
+  [FactGroup.Cypress]: "cypress",
+} as const satisfies Record<FactGroup, keyof CheckFacts>);
 
 /**
  * What a check concluded.
  *
- * Three values, not four: whether a `fail` stops the run is the check's declared severity, decided once in the
- * catalogue, rather than something the check gets to choose at the point of failure.
+ * Three values, not four: whether a `fail` stops the run is the check's declared severity, decided once
+ * in the catalogue, rather than something the check gets to choose at the point of failure.
  *
- * `warn` is also where "could not establish" belongs. A condition that could not be evaluated is not a pass — silence
- * must not read as consent — and it is not a `fail`, because a question we failed to answer must not block work we can
- * still perform. The finding then says which of the two it was, in words the reader can act on.
+ * `warn` is also where "could not establish" belongs. A condition that could not be evaluated is not a
+ * pass — silence must not read as consent — and it is not a `fail`, because a question we failed to
+ * answer must not block work we can still perform. The finding then says which of the two it was, in
+ * words the reader can act on.
+ *
+ * Because verdicts come from facts alone, `evaluate` is synchronous. That is the type doing real work: a
+ * check cannot reach for a filesystem, spawn a process or await a probe, so gathering has to happen
+ * before the catalogue runs, and every check stays a pure function testable with literals.
  */
 export type CheckVerdict =
   | { readonly verdict: "pass" }
@@ -327,9 +397,13 @@ export interface CheckDefinition {
   /**
    * The check that must have passed for this one to be meaningful.
    *
-   * Not an ordering dependency: a failed or skipped precondition makes this check `skipped` rather than failed,
-   * because reporting a consequence as a second problem hides the cause. Declaration order guarantees the precondition
-   * has already been concluded, which is what lets the runner resolve skips in one pass.
+   * Not an ordering dependency: a failed or skipped precondition makes this check `skipped` rather than
+   * failed, because reporting a consequence as a second problem hides the cause. Declaration order
+   * guarantees the precondition has already been concluded, which is what lets the runner resolve skips
+   * in one pass.
+   *
+   * Framework checks use it for their real dependency: a binary cache is keyed by version, so a check
+   * that inspects the cache declares the check that establishes the version.
    */
   readonly precondition?: CheckId;
   /** What an unfavourable answer means. The same value for every run, whatever condition fired. */
@@ -337,25 +411,26 @@ export interface CheckDefinition {
   /**
    * The scenario identifiers that verify this check.
    *
-   * At least one, prefixed by the check's own identifier, unique across the catalogue — all three asserted, because
-   * this list is the traceability artefact and a list nobody checks is a claim.
+   * At least one, prefixed by the check's own identifier, unique across the catalogue — all three
+   * asserted, because this list is the traceability artefact and a list nobody checks is a claim.
    */
   readonly scenarios: readonly string[];
   readonly evaluate: (facts: CheckFacts) => CheckVerdict;
 }
 
 /** The verdict for a check whose condition was met. Shared rather than rebuilt, so the happy path allocates nothing. */
-export const PASS: CheckVerdict = { verdict: "pass" };
+export const PASS: CheckVerdict = Object.freeze({ verdict: "pass" });
 
 /**
  * A fact group the runner has already guaranteed.
  *
- * Reaching the throw means this catalogue and the runner disagree about `requires` — the runner checks every declared
- * group before calling `evaluate`, so a group can only be missing here if a check read one it never declared.
+ * Reaching the throw means this catalogue and the runner disagree about `requires` — the runner checks
+ * every declared group before calling `evaluate`, so a group can only be missing here if a check read
+ * one it never declared.
  *
- * That is a defect in this layer, not a condition of a project, so it must be loud in both directions: reporting it as
- * a finding would put a programmer's mistake into a user's terminal, and passing would let a check claim something it
- * never examined.
+ * That is a defect in this layer, not a condition of a project, so it must be loud in both directions:
+ * reporting it as a finding would put a programmer's mistake into a user's terminal, and passing would
+ * let a check claim something it never examined.
  */
 export function present<T>(group: T | undefined): T {
   if (group === undefined) {
@@ -370,16 +445,18 @@ export function present<T>(group: T | undefined): T {
 /**
  * A fact the type says must be present.
  *
- * `present()` guards a whole group and its message is about `requires`. This guards a *field* inside a group, which is
- * a different defect with a different fix: the gatherer declared the group and then omitted the part that makes it
- * useful.
+ * `present()` guards a whole group and its message is about `requires`. This guards a *field* inside a
+ * group, which is a different defect with a different fix: the gatherer declared the group and then
+ * omitted the part that makes it useful.
  *
- * Both are loud, for the same reason. Reporting an absent field as a finding would put a programmer's mistake into a
- * user's terminal — "QAT could not confirm that Node 20.11.1 satisfies  (declared in )" — and passing on it would let a
- * check claim something it never examined. The only remaining option is a message that names the omission.
+ * Both are loud, for the same reason. Reporting an absent field as a finding would put a programmer's
+ * mistake into a user's terminal — the message would read "QAT could not confirm that Node 20.11.1
+ * satisfies <empty range> (declared in <empty origin>)" — and passing on it would let a check claim
+ * something it never examined. The only remaining option is a message that names the omission.
  *
- * The parameter is optional on purpose even though the property is not: the guard exists for the case where the type
- * was satisfied by a hand-built object that never went through the type, which is exactly how this was first found.
+ * The parameter is optional on purpose even though the property is not: the guard exists for the case
+ * where the type was satisfied by a hand-built object that never went through the compiler's checks,
+ * which is exactly how this gap was first found.
  */
 export function requireFact<T>(fact: T | undefined, what: string): T {
   if (fact === undefined) {

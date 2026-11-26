@@ -1,0 +1,8 @@
+{
+  "name": "fixture-cypress-healthy-dependencies",
+  "version": "0.0.0",
+  "private": true,
+  "dependencies": {
+    "cypress": "^13.6.0"
+  }
+}

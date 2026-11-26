@@ -1,0 +1,9 @@
+{
+  "name": "fixture-cypress-pnpm-layout",
+  "version": "0.0.0",
+  "private": true,
+  "devDependencies": {
+    "cypress": "^13.6.0"
+  },
+  "packageManager": "pnpm@9.1.0"
+}

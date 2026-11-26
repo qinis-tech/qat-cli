@@ -1,0 +1,8 @@
+{
+  "name": "fixture-cypress-version-below-minimum",
+  "version": "0.0.0",
+  "private": true,
+  "devDependencies": {
+    "cypress": "^11.2.0"
+  }
+}
