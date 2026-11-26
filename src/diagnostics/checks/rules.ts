@@ -2,52 +2,52 @@
  * The catalogue.
  *
  * Thirteen checks, keyed by identifier so a missing entry does not compile, in the order a reader fixes things in. Every
- * field the task asks for is a field on an entry, which is what makes "every check has a documented purpose" something
- * a test can hold rather than something a reviewer has to remember.
+ * field the task asks for is a field on an entry, which is what makes "every check has a documented purpose" something a
+ * test can hold rather than something a reviewer has to remember.
  *
  * ## Two kinds of check, and the difference is visible in the body
  *
  * Six **forward** a conclusion a lower layer already drew: they find the finding the assessment carries and carry it
- * onward unchanged. Seven **judge** something nothing else looks at — the runtime QAT requires, the runtime a
- * framework requires, the package manager, the configuration file, the selected environment, the two output
- * directories — and author a `QAT-H` finding of their own.
+ * onward unchanged. Seven **judge** something nothing else looks at — the runtime QAT requires, the runtime a framework
+ * requires, the package manager, the configuration file, the selected environment, the two output directories — and
+ * author a `QAT-H` finding of their own.
  *
  * The forwarding checks are deliberately thin. Their value is not the logic; it is that the question a *user* asks is
  * answered where they look for it, with the severity and the remedy the layer that noticed the condition chose.
  *
  * ## Why a check never re-derives a policy
  *
- * `cypress.version-supported` does not compare a version with a floor. It reads the finding the version policy
- * produced. A second arithmetic in a second place is the arithmetic that disagrees, and the doctor is the worst
- * possible home for a support decision — it would become the definition the moment somebody read it there.
+ * `cypress.version-supported` does not compare a version with a floor. It reads the finding the version policy produced.
+ * A second arithmetic in a second place is the arithmetic that disagrees, and the doctor is the worst possible home for a
+ * support decision — it would become the definition the moment somebody read it there.
  *
  * `runtime.node-version` *does* compare, and it is not an exception: it compares by delegating to the one compatibility
- * engine, using the range the package manifest declares, both supplied as evidence. The distinction is between *using*
- * an authority and *being* one. That check contributes no floor, no operator and no tolerance of its own — delete it
- * and the policy is unchanged; delete the engine and nothing compiles.
+ * engine, using the range the package manifest declares, both supplied as evidence. The distinction is between *using* an
+ * authority and *being* one. That check contributes no floor, no operator and no tolerance of its own — delete it and the
+ * policy is unchanged; delete the engine and nothing compiles.
  *
  * `environment.package-manager` is the third of those, and it compares a version for the same reason and by the same
  * engine: the installed tool's version against whatever the project declared, quoted back with its provenance. What it
- * contributes is the *ladder* — which of several conditions to report first — and nothing about what "supported"
- * means.
+ * contributes is the *ladder* — which of several conditions to report first — and nothing about what "supported" means.
  *
  * ## Why three checks are not defined in this file
  *
  * Because their comparisons have real branches, and a branch that lives inside a map literal is a branch nobody tests in
- * isolation. The runtime pair has a floor, a ceiling, gap alternatives, pre-release admission and three unreadable
- * states; the package-manager check has seven conditions that each send a reader somewhere different. All three live in
- * `./rules/*.js` and are registered here, so this file keeps its single job: decide *which* questions exist, in *what
- * order*, under *which* identifier.
+ * isolation. The runtime pair has a floor, a ceiling, gap alternatives, pre-release admission and three unreadable states;
+ * the package-manager check has seven conditions that each send a reader somewhere different. All three live in
+ * `./rules/*.js` and are registered here, so this file keeps its single job: decide *which* questions exist, in *what*
+ * order, under *which* identifier.
  *
  * ## Why the package manager is one check and not seven
  *
- * Its conditions are a ladder, and the rungs are mutually exclusive in practice: nothing identifies the tool, so there
- * is no version to compare; the binary is absent, so there is no version to read; the tree is foreign, so "not
- * installed" is not the story. Reporting every rung at once would present consequences of one cause as separate
- * problems — which is the same reasoning that makes a failed precondition skip a check rather than fail it.
+ * Its conditions are a ladder, and the rungs are mutually exclusive in practice: nothing identifies the tool, so there is
+ * no version to compare; the binary is absent, so there is no version to read; the tree is foreign, so "not installed" is
+ * not the story. Reporting every rung at once would present consequences of one cause as separate problems — the same
+ * reasoning that makes a failed precondition skip a check rather than fail it.
  *
  * The ladder's order is the order a reader fixes things in, so it is also the order the report tells the story in.
  */
+
 import { ConfigurationLoad } from "../../config/loader/index.js";
 import {
   CheckCategory,
@@ -117,8 +117,8 @@ const INSTALLATION_CODES: readonly DoctorDiagnosticCode[] = [
 /**
  * Every code the version policy can produce, from either layer.
  *
- * Two of them are advisory: a major above the known-good range warns and proceeds, which is why this set is read for
- * its *findings* rather than its codes — the severity travels with the finding instead of being re-decided here.
+ * Two of them are advisory: a major above the known-good range warns and proceeds, which is why this set is read for its
+ * *findings* rather than its codes — the severity travels with the finding instead of being re-decided here.
  */
 const VERSION_CODES: readonly DoctorDiagnosticCode[] = [
   DiagnosticCode.VersionIncompatible,
@@ -138,8 +138,8 @@ const MANIFEST_CODES: readonly DoctorDiagnosticCode[] = [
  * The severity-to-status mapping, once. An `error` finding is a failure and a `warning` finding is a warning, and every
  * forwarding check goes through this function so the mapping cannot vary between them.
  *
- * No cast: `DiagnosticFinding` is generic over its code set with a readonly `code`, so a finding from a narrower
- * vocabulary is assignable to this layer's wider one. That is what the parameter was added for.
+ * No cast: `DiagnosticFinding` is generic over its code set with a readonly `code`, so a finding from a narrower vocabulary
+ * is assignable to this layer's wider one. That is what the parameter was added for.
  */
 function verdictFrom(finding: AnyDiagnosticFinding): CheckVerdict {
   return {
@@ -149,10 +149,10 @@ function verdictFrom(finding: AnyDiagnosticFinding): CheckVerdict {
 }
 
 /**
- * The first blocking finding whose code is in a set, or `undefined` when there is none.
+ * The first blocking or advisory finding whose code is in a set, or `undefined` when there is none.
  *
- * The caller treats `undefined` as a pass. A check reports what the diagnosis carries and never invents a finding to
- * fill a silence: a sentence about a condition nothing observed is worse than saying nothing, and it would be
+ * The caller treats `undefined` as a pass. A check reports what the diagnosis carries and never invents a finding to fill
+ * a silence: a sentence about a condition nothing observed is worse than saying nothing, and it would be
  * indistinguishable from a real answer.
  */
 function firstOf(
@@ -162,8 +162,8 @@ function firstOf(
   const assessment = present(facts.assessment);
 
   // Both lists, not only `blocking`. A check that forwards a conclusion has to see the advisory ones too — a missing
-  // manifest and a Cypress major above the known-good range are findings, and a search of the blocking list alone
-  // would report both conditions as absent. `blocking` first, so an error still wins over a warning for one code.
+  // manifest and a Cypress major above the known-good range are findings, and a search of the blocking list alone would
+  // report both conditions as absent. `blocking` first, so an error still wins over a warning for one code.
   const { blocking, warnings } = assessment.gates[QatOperation.Execute];
 
   return [...blocking, ...warnings].find((finding) =>
@@ -177,7 +177,8 @@ function firstOf(
  * The map below is keyed by identifier and therefore holds entries without one: the key *is* the identity, and a
  * definition carrying its own copy would allow the two to disagree with nothing to catch it. Destructuring names the
  * discarded field explicitly, so the discard is visible rather than implied by an omission — and the lint config sets
- * `ignoreRestSiblings` precisely so this idiom is not reported as an unused variable.
+ * `ignoreRestSiblings` precisely so this idiom is not reported as an unused variable. The leading underscore is the
+ * house convention for a binding that exists only to be dropped.
  */
 function withoutId({
   id: _discardedId,
@@ -203,18 +204,18 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
   /**
    * Third, and advisory like the rest of the tooling questions.
    *
-   * Placed after both runtime checks and before anything about the project's shape, because every remedy below this
-   * point names a package manager: "install the dependencies" is advice a reader has to translate when nothing says
-   * which tool installs them. Answering it first is what makes the later messages actionable.
+   * Placed after both runtime checks and before anything about the project's shape, because every remedy below this point
+   * names a package manager: "install the dependencies" is advice a reader has to translate when nothing says which tool
+   * installs them. Answering it first is what makes the later messages actionable.
    *
    * Registered from `./rules/package-manager.js` because the check walks seven conditions — identification, conflicting
-   * lockfiles, an unusable declaration, an unsupported manager, a missing binary, a version that disagrees with the
-   * pin, an installation that never happened — and each of those is a branch with its own sentence. Defining that
-   * inside a map literal would make it the one check in this file nobody could test in isolation.
+   * lockfiles, an unusable declaration, an unsupported manager, a missing binary, a version that disagrees with the pin, an
+   * installation that never happened — and each of those is a branch with its own sentence. Defining that inside a map
+   * literal would make it the one check in this file nobody could test in isolation.
    *
-   * Carries no precondition on the runtime checks: a project can be un-runnable on this Node *and* still have a
-   * perfectly reportable package-manager problem, and the reader may well be able to fix the second on a machine that
-   * has no supported interpreter.
+   * Carries no precondition on the runtime checks: a project can be un-runnable on this Node *and* still have a perfectly
+   * reportable package-manager problem, and the reader may well be able to fix the second on a machine that has no
+   * supported interpreter.
    */
   [CheckId.PackageManager]: withoutId(packageManagerCheck),
 
@@ -406,8 +407,8 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
         case ConfigurationLoad.Invalid: {
           const [first] = result.diagnostics;
 
-          // The schema always reports at least one issue, so the fallback is unreachable — and the check reports
-          // nothing rather than inventing a sentence for a state that cannot occur.
+          // The schema always reports at least one issue, so the fallback is unreachable — and the check reports nothing
+          // rather than inventing a sentence for a state that cannot occur.
           return first === undefined
             ? PASS
             : {
@@ -437,9 +438,9 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
       "A run told to use an environment that does not exist fails at a point where nothing explains it; the doctor can explain it now.",
     procedure:
       "Compares the selected profile with the profiles the configuration declares. Nothing selected is a pass.",
-    // Only the environment facts. The precondition already guarantees a readable configuration, so requiring it again
-    // would declare a dependency this check does not read — and a check that lists a group it never touches makes the
-    // declaration untrustworthy for the ones that do.
+    // Only the environment facts. The precondition already guarantees a readable configuration, so requiring it again would
+    // declare a dependency this check does not read — and a check that lists a group it never touches makes the declaration
+    // untrustworthy for the ones that do.
     requires: [FactGroup.Environment],
     precondition: CheckId.QatConfigurationLoadable,
     severity: CheckSeverity.Error,
@@ -479,8 +480,8 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
     evaluate: (facts) => {
       const { reports } = present(facts.output);
 
-      // `unwritableFinding` rather than `healthFinding`: one code covers both directories, so the check supplies the
-      // path it probed instead of letting the message guess between two targets.
+      // `unwritableFinding` rather than `healthFinding`: one code covers both directories, so the check supplies the path it
+      // probed instead of letting the message guess between two targets.
       return reports.writable
         ? PASS
         : { verdict: "fail", finding: unwritableFinding(reports) };
@@ -515,13 +516,17 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
 /**
  * Every check, in the order a reader fixes things in.
  *
- * Declaration order is load-bearing twice: it is the report's order, and it guarantees that a precondition appears
- * before its dependant — which is what lets the runner resolve skips in a single pass rather than iterating to a fixed
- * point. The catalogue test asserts it rather than trusting it.
+ * Declaration order is load-bearing twice: it is the report's order, and it guarantees that a precondition appears before
+ * its dependant — which is what lets the runner resolve skips in a single pass rather than iterating to a fixed point. The
+ * catalogue test asserts it rather than trusting it.
  *
- * The `Record` annotation above is what makes the cast below safe: every key is a member of the union by construction,
- * and a missing member does not compile. Without it, a check could be deleted and the only symptom would be a question
- * that silently stopped being asked.
+ * The `Record` annotation above is what makes the cast below safe: every key is a member of the union by construction, and
+ * a missing member does not compile. Without it, a check could be deleted and the only symptom would be a question that
+ * silently stopped being asked.
+ *
+ * The cast is unavoidable because `Object.entries` widens keys to `string`; it is also the only one in this file, and it
+ * is annotated so a reader can see exactly what is being asserted — a tuple of the record's own key type and value type,
+ * nothing wider.
  */
 export const CHECKS: readonly CheckDefinition[] = (
   Object.entries(BY_ID) as readonly (readonly [

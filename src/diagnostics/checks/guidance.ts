@@ -20,39 +20,39 @@
  * ## Why this file no longer states a Node.js version
  *
  * It used to hold the supported floor as a constant, restated from `engines.node` because a module of pure functions
- * cannot open a manifest. The restatement was defended by a test asserting the number matched the manifest — which is a
- * good guard, and the wrong shape: it made every release that changed the supported runtime a two-place edit, and the
- * failure mode when someone forgot the second place was a message confidently quoting a requirement QAT no longer had.
+ * cannot open a manifest. The restatement was defended by a test asserting the number matched the manifest — a good
+ * guard and the wrong shape: it made every release that changed the supported runtime a two-place edit, and the failure
+ * mode when someone forgot the second place was a message confidently quoting a requirement QAT no longer had.
  *
  * The range now arrives as evidence. `RuntimeFacts.required` carries the declared range and its provenance, the check
- * compares against exactly that value, and these entries quote it back verbatim. There is nothing left to keep in
- * step, so there is nothing left to drift — and a test that used to compare two copies now asserts that the sentence
- * quotes the range it was given.
+ * compares against exactly that value, and these entries quote it back verbatim. There is nothing left to keep in step,
+ * so there is nothing left to drift — and the test that used to compare two copies now asserts that the sentence quotes
+ * the range it was given.
  *
  * ## Why the package-manager codes multiplied
  *
  * One `PackageManagerUnknown` entry used to stand for the whole group, and it could only ever describe one of them. The
  * conditions a reader actually hits — nothing identified the tool, two lockfiles disagree, the field is unusable, the
- * tool is not installed, the tool's version disagrees with the pin, the dependencies were never installed, someone
- * else installed them — have different fixes, and a single message naming one of them sends every other reader to the
- * wrong place.
+ * tool is not installed, the tool's version disagrees with the pin, the dependencies were never installed, someone else
+ * installed them — have different fixes, and a single message naming one of them sends every other reader to the wrong
+ * place.
  *
- * Splitting them is the cheap half of the fix; the expensive half is that the split is enforced. `HealthCode` gained
- * the members, and this `Record` will not compile until each has prose. A new condition cannot be added by quietly
- * reusing a neighbouring message. The order of work is therefore: add the member, then the union complains, then this
- * table complains — never the other way round.
+ * Splitting them is the cheap half of the fix; the expensive half is that the split is enforced. `HealthCode` gained the
+ * members, and this `Record` will not compile until each has prose. A new condition cannot be added by quietly reusing a
+ * neighbouring message. The order of work is therefore: add the member, then the union complains, then this table
+ * complains — never the other way round.
  *
  * ## Guarding evidence: extract the value, then test the parent
  *
- * Every entry below starts by lifting the value it needs through an optional chain and then testing both the value and
- * the object it came from. That looks like one test too many, and it is not: `facts.runtime?.nodeVersion === undefined`
- * cannot tell the compiler *why* the value was missing, so the parent stays unnarrowed and the good branch cannot read
+ * Several entries below lift a value through an optional chain and then test both the value and the object it came
+ * from. That looks like one test too many, and it is not: `facts.runtime?.nodeVersion === undefined` cannot tell the
+ * compiler *why* the value was missing, so the parent stays unnarrowed and the good branch cannot read
  * `facts.runtime.required`. Two separate facts, two separate tests, each of which also reads as a single question.
  *
  * ## Why the code-span helper is called `inlineCode`
  *
  * It was called `code`, which shadowed the `code` parameter of `healthFinding` and — more importantly — gave the word a
- * second meaning in a file where it already means a diagnostic code. The parameter kept the name because it mirrors
+ * second meaning in a file where it already means a diagnostic code. The parameter kept its name because it mirrors
  * `CheckFinding.code`; the helper was renamed because it produces markup, not identity.
  */
 
@@ -61,9 +61,9 @@ import {
   type CheckFinding,
 } from "../../core/application/checks.js";
 import { DiagnosticSeverity } from "../../core/application/diagnostics.js";
-// The install command is *policy*, not prose: which invocation respects a committed lockfile is a fact about a
-// package manager, kept in one table and asserted against its own documentation. Quoting it from there is the same
-// rule as quoting the supported range from evidence — a second copy is a copy that will drift.
+// The install command is *policy*, not prose: which invocation respects a committed lockfile is a fact about a package
+// manager, kept in one table and asserted against its own documentation. Quoting it from there is the same rule as
+// quoting the supported range from evidence — a second copy is a copy that will drift.
 import {
   installCommandFor,
   PACKAGE_MANAGER_POLICY,
@@ -72,9 +72,19 @@ import {
 
 import type { CheckFacts, OutputTarget } from "./contracts.js";
 
+/**
+ * One rendered message.
+ *
+ * `remediation` is required rather than optional: a finding exists only when something needs attention, and every
+ * condition in this table has a next step. Making it optional would let an entry ship without one and push an
+ * `undefined` into a contract that requires a string — a mistake this type can prevent instead of a reviewer having to.
+ *
+ * `path` stays optional because it is genuinely not always known: two output checks share a code and only the caller
+ * knows which directory failed.
+ */
 interface HealthText {
   readonly explanation: string;
-  readonly remediation?: string;
+  readonly remediation: string;
   readonly path?: string;
 }
 
@@ -94,9 +104,9 @@ const PROFILE_NAME = /^[a-z][a-z0-9-]*$/;
 /**
  * A token that is safe to echo back: a manager name, a declaration or a tool name.
  *
- * Deliberately conservative. Anything a reader typed could have been pasted from the wrong buffer, and a diagnostic
- * is the one artefact guaranteed to be printed, logged and attached to an issue. A value that does not look like a
- * name is described instead of quoted.
+ * Deliberately conservative. Anything a reader typed could have been pasted from the wrong buffer, and a diagnostic is
+ * the one artefact guaranteed to be printed, logged and attached to an issue. A value that does not look like a name is
+ * described instead of quoted.
  */
 const SAFE_TOKEN = /^[A-Za-z0-9@._+-]{1,64}$/;
 
@@ -107,9 +117,9 @@ function isQuotable(value: string | undefined): value is string {
 /**
  * Renders an inline code span.
  *
- * Exists because a backtick inside a template literal must be escaped, and doing that inline several times is how
- * three of the remediations below once ended up with unbalanced quotes. One function, one escape, and every command in
- * this file is built the same way.
+ * Exists because a backtick inside a template literal must be escaped, and doing that inline several times is how three
+ * of the remediations below once ended up with unbalanced quotes — and, in two cases, with a closing brace that ended up
+ * *inside* the command. One function, one escape, and every command in this file is built the same way.
  */
 function inlineCode(text: string): string {
   return `\`${text}\``;
@@ -126,15 +136,17 @@ function listOf(values: readonly string[]): string {
  *
  * The facts carry manager names as `string`, because the gathering layer should not have to import this module's
  * vocabulary. The policy table is the authority on which names are real, so the guard reads it rather than listing the
- * names again — and a name that is not in the table never reaches `installCommandFor`, which is why no cast is needed.
+ * names again — and a name that is not in the table never reaches `installCommandFor`, which is why the cast below is
+ * guarded rather than hopeful.
  */
 function asManagerName(
   value: string | undefined,
 ): PackageManagerName | undefined {
-  return value !== undefined &&
-    Object.prototype.hasOwnProperty.call(PACKAGE_MANAGER_POLICY, value)
-    ? (value as PackageManagerName)
-    : undefined;
+  if (value === undefined) return undefined;
+  if (!Object.prototype.hasOwnProperty.call(PACKAGE_MANAGER_POLICY, value))
+    return undefined;
+
+  return value as PackageManagerName;
 }
 
 /** The install command for a manager, or a neutral phrase when the name is not one the policy knows. */
@@ -151,9 +163,9 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
   /**
    * The runtime is readable and outside the declared range.
    *
-   * Both numbers are printed — what is running and what is required — because a reader can act on a pair and cannot
-   * act on "unsupported". The provenance is printed too: it turns a disagreement with QAT into a file the reader can
-   * open, and it is the honest answer to "says who?" when the range has changed under them.
+   * Both numbers are printed — what is running and what is required — because a reader can act on a pair and cannot act
+   * on "unsupported". The provenance is printed too: it turns a disagreement with QAT into a file the reader can open,
+   * and it is the honest answer to "says who?" when the range has changed under them.
    *
    * The detected version is shown as the process reports it — `v18.19.0`, leading `v` and all — because that is the
    * string the reader will compare against `node --version`, and trimming it here would make the message and their
@@ -161,6 +173,7 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
    */
   [HealthCode.RuntimeUnsupported]: {
     severity: DiagnosticSeverity.Error,
+
     describe: (facts) => {
       const runtime = facts.runtime;
       // Lifted through the optional chain, then tested on its own line. `runtime === undefined ||
@@ -168,9 +181,9 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
       // fires — a reader has to work that out, and the lint rules refuse the shape outright.
       const version = runtime?.nodeVersion;
 
-      // Reachable only when a caller renders this code without the evidence it needs — a mistake in a check rather
-      // than a condition of the project. Say the honest minimum instead of composing a sentence around a value that
-      // is not there, and never print an empty range as though it were a requirement.
+      // Reachable only when a caller renders this code without the evidence it needs — a mistake in a check rather than
+      // a condition of the project. Say the honest minimum instead of composing a sentence around a value that is not
+      // there, and never print an empty range as though it were a requirement.
       if (runtime === undefined || version === undefined) {
         return {
           explanation:
@@ -190,20 +203,21 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
   /**
    * The condition could not be established.
    *
-   * Warning, not Error, and not silence. A question we failed to answer must not block work we can still perform, and
-   * it must not be counted as clean either — which is exactly what a warning is for.
+   * Warning, not Error, and not silence. A question we failed to answer must not block work we can still perform, and it
+   * must not be counted as clean either — which is exactly what a warning is for.
    *
    * The three cases share an entry because they share a remedy: get a readable interpreter and a readable requirement,
    * then ask again. They are not distinguished by a code of their own because the distinction lives on the verdict the
    * check already produced; if a future report needs to render it, it arrives as its own code rather than being
    * re-derived here by re-inspecting strings.
    *
-   * The two guards are separate statements rather than one chain, because they lead to different sentences. Merging
-   * them would force one message to cover an assembly defect and a runtime defect at once, which is how a diagnostic
-   * ends up saying nothing specific about either.
+   * The two guards are separate statements rather than one chain, because they lead to different sentences. Merging them
+   * would force one message to cover an assembly defect and a runtime defect at once, which is how a diagnostic ends up
+   * saying nothing specific about either.
    */
   [HealthCode.RuntimeUnknown]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const runtime = facts.runtime;
       const version = runtime?.nodeVersion;
@@ -235,11 +249,12 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
    * The project's framework release needs a runtime QAT's own requirement does not describe.
    *
    * Its own code, on purpose. The two requirements have different owners — one is fixed by moving QAT, the other by
-   * moving the project — and a finding that merged them would name a problem without naming whose it is. QAT's own
-   * range is repeated here so the reader can see whether the two overlap before deciding anything.
+   * moving the project — and a finding that merged them would name a problem without naming whose it is. QAT's own range
+   * is repeated here so the reader can see whether the two overlap before deciding anything.
    */
   [HealthCode.FrameworkRuntimeUnsupported]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const runtime = facts.runtime;
       const version = runtime?.nodeVersion;
@@ -277,8 +292,8 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
   /**
    * Nothing identifies the manager: no lockfile, no `packageManager` field.
    *
-   * A warning rather than an error. The project may run perfectly; we simply cannot say how it installs, and a
-   * question we could not answer must not block work we can still perform.
+   * A warning rather than an error. The project may run perfectly; we simply cannot say how it installs, and a question
+   * we could not answer must not block work we can still perform.
    */
   [HealthCode.PackageManagerUnknown]: {
     severity: DiagnosticSeverity.Warning,
@@ -294,14 +309,15 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
    * Something was declared, but it cannot be used as written.
    *
    * The two problems share this code because they share a fix — read the field, correct it — and because they are the
-   * same sentence with a different clause. `missing-version` is by far the common one: Corepack needs an exact
-   * version, and `"pnpm"` alone looks like a declaration without being one.
+   * same sentence with a different clause. `missing-version` is by far the common one: the package manager needs an
+   * exact version, and `"pnpm"` alone looks like a declaration without being one.
    *
    * The raw value is quoted only when it looks like a name. It is user text from a file that a diagnostic may print
    * anywhere, and a pasted token in the wrong field must not be echoed back as if it were a version.
    */
   [HealthCode.PackageManagerDeclarationInvalid]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const selection = facts.packageManager?.selection;
       const declaration =
@@ -350,6 +366,7 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
    */
   [HealthCode.PackageManagerUnsupported]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const selection = facts.packageManager?.selection;
       const name =
@@ -374,6 +391,7 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
    */
   [HealthCode.PackageManagerConflicting]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const group = facts.packageManager;
       const selection = group?.selection;
@@ -393,7 +411,8 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
         };
       }
 
-      // The leading space is part of the value: the clause is spliced directly after a filename list.
+      // The leading space belongs inside the value: the clause is spliced directly after the filename list, and a
+      // missing space there produces "pnpm-lock.yaml, package-lock.json(npm, pnpm)".
       const namedBy = managers.length === 0 ? "" : ` (${listOf(managers)})`;
 
       return {
@@ -407,12 +426,13 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
   /**
    * The manager is identified and supported, but its binary is not on PATH.
    *
-   * The remediation names the two realistic routes: enable the shim that ships with Node, or install the tool
-   * globally. Both are given because the correct one depends on how the reader manages their toolchain, and a single
-   * answer would be wrong for half of them.
+   * The remediation names the two realistic routes: enable the shim that ships with Node, or install the tool globally.
+   * Both are given because the correct one depends on how the reader manages their toolchain, and a single answer would
+   * be wrong for half of them.
    */
   [HealthCode.PackageManagerExecutableMissing]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const selection = facts.packageManager?.selection;
       const name =
@@ -429,12 +449,13 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
   /**
    * The binary answered, and its version disagrees with what the project declared.
    *
-   * The expectation and its provenance are both printed, because "wrong version" without saying *whose* version sends
-   * the reader to the wrong file. The pin and the engines range are different documents, and only the one that decided
-   * the outcome is quoted.
+   * The expectation and its provenance are both printed, because "wrong version" without saying *whose* version sends the
+   * reader to the wrong file. The pin and the engines range are different documents, and only the one that decided the
+   * outcome is quoted.
    */
   [HealthCode.PackageManagerVersionMismatch]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const group = facts.packageManager;
       const selection = group?.selection;
@@ -458,7 +479,7 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
 
       return {
         explanation: `${managerLabel} ${installed} is installed, and the project declares ${required.range} (${required.origin}).`,
-        remediation: `Install a version inside ${required.range} — ${inlineCode(`corepack use ${useTarget}`)} rewrites nothing else — then re-run ${inlineCode("qat doctor")}.`,
+        remediation: `Install a version inside ${required.range} — ${inlineCode(`corepack use ${useTarget}`)} changes only the pin — then re-run ${inlineCode("qat doctor")}.`,
       };
     },
   },
@@ -466,12 +487,13 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
   /**
    * A version was expected and none could be read.
    *
-   * Indeterminate, not a failure: the toolchain answered oddly, which is not the project's fault and must not be
-   * reported as though it were. The reason is named because "timed out" and "printed nothing usable" are different
-   * mornings for whoever has to debug it.
+   * Indeterminate, not a failure: the toolchain answered oddly, which is not the project's fault and must not be reported
+   * as though it were. The reason is named because "timed out" and "printed nothing usable" are different mornings for
+   * whoever has to debug it.
    */
   [HealthCode.PackageManagerVersionUnverified]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const group = facts.packageManager;
       const selection = group?.selection;
@@ -509,11 +531,12 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
    * The manager is fine; the installation never happened.
    *
    * The one entry in this group that names the command, because the reader's next action is exactly one command and
-   * guessing it is where people install with the wrong tool. The command comes from policy, so it is the invocation
-   * that respects the committed lockfile rather than one that rewrites it.
+   * guessing it is where people install with the wrong tool. The command comes from policy, so it is the invocation that
+   * respects the committed lockfile rather than one that rewrites it.
    */
   [HealthCode.PackageManagerNotInstalled]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const selection = facts.packageManager?.selection;
       const name =
@@ -529,11 +552,12 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
   /**
    * Dependencies exist, and a different tool created them.
    *
-   * Worth its own code and a warning: everything looks installed, so the failure surfaces later as a resolution error
-   * that names a package nobody edited. Naming both managers is the whole value of the message.
+   * Worth its own code and a warning: everything looks installed, so the failure surfaces later as a resolution error that
+   * names a package nobody edited. Naming both managers is the whole value of the message.
    */
   [HealthCode.PackageManagerForeignInstall]: {
     severity: DiagnosticSeverity.Warning,
+
     describe: (facts) => {
       const group = facts.packageManager;
       const selection = group?.selection;
@@ -564,9 +588,9 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
     severity: DiagnosticSeverity.Error,
     describe: () => ({
       // Deliberately does not name a directory. One code covers both output paths, and the check that raised it knows
-      // which one it was about — so the path is supplied by the caller rather than guessed here from a facts object
-      // that holds both. A message that said "the reports directory" while the evidence directory was the problem
-      // would be worse than saying nothing.
+      // which one it was about — so the path is supplied by the caller (`unwritableFinding`) rather than guessed here from
+      // a facts object that holds both. A message that said "the reports directory" while the evidence directory was the
+      // problem would be worse than saying nothing.
       explanation: "The configured output directory cannot be written to.",
       remediation:
         "Choose a writable output directory, or correct the permissions on it.",
@@ -591,6 +615,7 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
 
   [HealthCode.ConfigurationNotJson]: {
     severity: DiagnosticSeverity.Error,
+
     describe: (facts) => {
       // Line and column only. The excerpt would be a line of the file, and a line of a configuration file can hold an
       // environment value — which is exactly what a diagnostic must not carry.
@@ -622,6 +647,7 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
 
   [HealthCode.ConfigurationTooLarge]: {
     severity: DiagnosticSeverity.Error,
+
     describe: (facts) => {
       const result = facts.configuration;
 
@@ -651,15 +677,16 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
 
   [HealthCode.EnvironmentUndeclared]: {
     severity: DiagnosticSeverity.Error,
+
     describe: (facts) => {
       const selected = facts.environment?.selected;
       const declared = facts.environment?.declared ?? [];
 
       return {
-        // A name typed on a command line is quoted only when it is a name the schema would accept. Anything else could
-        // be a token pasted into the wrong field, and a diagnostic is the one thing guaranteed to be printed. The rule
-        // is restated rather than imported — the schema exposes a validator, not a pattern — and a test feeds a value
-        // the schema accepts and asserts it is quoted.
+        // A name typed on a command line is quoted only when it is a name the schema would accept. Anything else could be
+        // a token pasted into the wrong field, and a diagnostic is the one thing guaranteed to be printed. The rule is
+        // restated rather than imported — the schema exposes a validator, not a pattern — and a test feeds a value the
+        // schema accepts and asserts it is quoted.
         explanation:
           selected === undefined
             ? "A command selected an environment, and the configuration declares none."
@@ -678,13 +705,13 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
 /**
  * Renders one health code into a finding.
  *
- * Severity comes from the guidance entry rather than from the caller, so a check cannot report the same condition with
- * two different weights — and the text is rendered once, here, rather than assembled at the point of failure.
+ * Severity comes from the guidance entry rather than from the caller, so a check cannot report the same condition with two
+ * different weights — and the text is rendered once, here, rather than assembled at the point of failure.
  *
  * @param code Which condition was found.
  * @param facts What the check knew, which the entry uses to name the file, the version or the declared environments.
- * @param path Overrides the path the entry would set. Used by the two output checks alone: they share one code, the
- *   entry cannot know which directory failed, and the check that raised it does.
+ * @param path Overrides the path the entry would set. Used by the two output checks alone: they share one code, the entry
+ *   cannot know which directory failed, and the check that raised it does.
  */
 export function healthFinding(
   code: HealthCode,
@@ -699,9 +726,7 @@ export function healthFinding(
     code,
     severity: guidance.severity,
     explanation: text.explanation,
-    ...(text.remediation === undefined
-      ? {}
-      : { remediation: text.remediation }),
+    remediation: text.remediation,
     ...(resolved === undefined ? {} : { path: resolved }),
   };
 }
@@ -709,9 +734,9 @@ export function healthFinding(
 /**
  * The finding for an output directory that cannot be written.
  *
- * A second renderer for one code, because the shape it needs — the target, and nothing else — is narrower than the
- * fact set the other entries read. It exists so the path is exact rather than guessed: the check knows which
- * directory it probed, and a message that named the wrong one would send a reader to fix a directory that is fine.
+ * A second renderer for one code, because the shape it needs — the target, and nothing else — is narrower than the fact
+ * set the other entries read. It exists so the path is exact rather than guessed: the check knows which directory it
+ * probed, and a message that named the wrong one would send a reader to fix a directory that is fine.
  */
 export function unwritableFinding(target: OutputTarget): CheckFinding {
   const guidance = HEALTH_GUIDANCE[HealthCode.OutputUnwritable];
@@ -721,7 +746,7 @@ export function unwritableFinding(target: OutputTarget): CheckFinding {
     code: HealthCode.OutputUnwritable,
     severity: guidance.severity,
     explanation: text.explanation,
-    remediation: text.remediation ?? "Choose a writable output directory.",
+    remediation: text.remediation,
     path: target.path,
   };
 }

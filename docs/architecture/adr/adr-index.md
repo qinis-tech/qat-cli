@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0035](0035-verify-the-cypress-binary-by-inspecting-its-cache-before-inv.md) | Bound the binary check's execution surface to `cypress verify` | Accepted | 2026-11-26 |
 | [ADR-0034](0034-detect-the-package-manager-from-declared-metadata-and-lockfi.md) | Detect the package manager from declared metadata and lockfiles, never by executing it | Accepted | — |
 | [ADR-0033](0033-derive-the-supported-node-js-range-from-the-package-engine-d.md) | Derive the supported Node.js range from the package engine declaration | Accepted | 2026-11-25 |
 | [ADR-0032](0032-skip-a-check-whose-precondition-failed-rather-than-reporting.md) | Skip a check whose precondition failed rather than reporting it | Accepted | 2026-11-24 |

@@ -1,0 +1,10 @@
+# Fixtures are repositories as a user would commit them: an installation fixture that is not
+# installed tests nothing. The repository ignores node_modules everywhere else.
+!**/node_modules/
+!**/node_modules/**
+!**/node_modules/.pnpm/
+!**/node_modules/.pnpm/**
+
+# The shared cache roots are resources, not build output.
+!**/.cache/
+!**/.cache/**

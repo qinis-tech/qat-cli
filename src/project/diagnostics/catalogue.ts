@@ -1,71 +1,69 @@
 /**
  * The remediation catalogue.
  *
- * One entry per diagnostic code, and the entry is where the prose lives. A condition's explanation, its remedy and
- * its severity are written once, next to the code that identifies it, rather than at each of the places that might
- * report it.
+ * One entry per diagnostic code, and the entry is where the prose lives. A condition's explanation, its remedy and its
+ * severity are written once, next to the code that identifies it, rather than at each of the places that might report it.
  *
- * The table is a `Record` over the code union, so a code without an entry does not compile. That is the guarantee
- * behind "every diagnostic code has an understandable explanation" — it is not a promise anybody has to remember.
+ * The table is a `Record` over the code union, so a code without an entry does not compile. That is the guarantee behind
+ * "every diagnostic code has an understandable explanation" — it is not a promise anybody has to remember.
  *
  * ## "Configuration" in this file always means the framework's
  *
- * Every entry below is about finding and trusting a *Cypress* configuration file. That was unambiguous while the tool
- * had no configuration of its own; it is not any more. A project now normally contains `qat.config.json`, which is
- * required, versioned and validated separately — and a reader told that "no configuration file was found" while
- * looking at their own perfectly good one will create a second file and be no closer to a working project.
+ * Every entry below is about finding and trusting a *Cypress* configuration file. That was unambiguous while the tool had
+ * no configuration of its own; it is not any more. A project now normally contains `qat.config.json`, which is required,
+ * versioned and validated separately — and a reader told that "no configuration file was found" while looking at their own
+ * perfectly good one will create a second file and be no closer to a working project.
  *
  * So the prose below names the file it means. This is not pedantry about wording: a remedy that sends a reader to
  * `qat.config.json` is a remedy that fails, and the failure looks like the tool not recognising a file it just read.
  *
  * ## Severity here answers for the project, not for an operation
  *
- * An entry's severity says how serious the condition is, not whether it stops anything. Whether it stops something
- * depends on what the caller was about to do: a project with no configuration is blocked for a run and perfectly
- * reportable by an inspection, and one severity field cannot say both. The per-operation verdict belongs to the
- * validation layer's gate, which reads these severities rather than re-deciding them.
+ * An entry's severity says how serious the condition is, not whether it stops anything. Whether it stops something depends
+ * on what the caller was about to do: a project with no configuration is blocked for a run and perfectly reportable by an
+ * inspection, and one severity field cannot say both. The per-operation verdict belongs to the validation layer's gate,
+ * which reads these severities rather than re-deciding them.
  *
  * ## Why this catalogue holds no runtime entry
  *
- * The Node.js runtime conditions are `QAT-H` codes owned by `src/diagnostics/checks`. They are properties of the
- * machine a command happens to be running on, not of the project being inspected, and nothing here could describe them
- * without borrowing the wrong vocabulary: every entry below is a statement about a tree of files, and "your Node is too
- * old" is not one.
+ * The Node.js runtime conditions are `QAT-H` codes owned by `src/diagnostics/checks`. They are properties of the machine a
+ * command happens to be running on, not of the project being inspected, and nothing here could describe them without
+ * borrowing the wrong vocabulary: every entry below is a statement about a tree of files, and "your Node is too old" is not
+ * one.
  *
- * The near-miss case is a *project-declared* runtime bound — the range a project's framework release says it needs.
- * That genuinely is a property of the project, and it still does not belong here: it is compared against the running
- * interpreter, so its finding is a runtime finding, and it must name the framework's requirement separately from
- * QAT's. It is reported under `HealthCode.FrameworkRuntimeUnsupported`, from the same pair of checks that report the
- * blocking one.
+ * The near-miss case is a *project-declared* runtime bound — the range a project's framework release says it needs. That
+ * genuinely is a property of the project, and it still does not belong here: it is compared against the running
+ * interpreter, so its finding is a runtime finding, and it must name the framework's requirement separately from QAT's. It
+ * is reported under `HealthCode.FrameworkRuntimeUnsupported`, from the same pair of checks that report the blocking one.
  *
  * ## Why this catalogue holds no package-manager entry either
  *
- * The same argument, and it is worth writing out because the split here is finer. Package-manager *identity* really is
- * a property of the tree: which lockfile exists and what `packageManager` says are facts about files, and facts about
- * files are what this catalogue is made of.
+ * The same argument, and it is worth writing out because the split here is finer. Package-manager *identity* really is a
+ * property of the tree: which lockfile exists and what `packageManager` says are facts about files, and facts about files
+ * are what this catalogue is made of.
  *
  * But the question a reader actually asks — "is my package-manager environment healthy?" — cannot be answered from the
- * tree. It needs the installed tool's version, and whether the binary exists at all, which are properties of the
- * machine. One question with two sources belongs where both sources are available, so it lives in
- * `src/diagnostics/checks`, which is also where its prose lives (`HealthCode.PackageManager*`).
+ * tree. It needs the installed tool's version, and whether the binary exists at all, which are properties of the machine.
+ * One question with two sources belongs where both sources are available, so it lives in `src/diagnostics/checks`, which is
+ * also where its prose lives (`HealthCode.PackageManager*`).
  *
- * Putting identity here and health there was the alternative, and it is worse in a specific way: the same condition
- * would acquire two owners, and the day the two disagreed about what "the package manager" is, neither would be
- * obviously wrong.
+ * Putting identity here and health there was the alternative, and it is worse in a specific way: the same condition would
+ * acquire two owners, and the day the two disagreed about what "the package manager" is, neither would be obviously wrong.
  *
  * ## Why this file keeps a Cypress major while a sibling file deleted a Node major
  *
- * `MINIMUM_CYPRESS_MAJOR` is a fact about a file format. Cypress 10 introduced `cypress.config.*`, so an installation
- * older than that cannot read the file whose presence is what identified the project. It is not a support policy, it
- * is not restated from any manifest, and it changes only if Cypress changes its format again.
+ * `MINIMUM_CYPRESS_MAJOR` is a fact about a file format. Cypress 10 introduced `cypress.config.*`, so an installation older
+ * than that cannot read the file whose presence is what identified the project. It is not a support policy, it is not
+ * restated from any manifest, and it changes only if Cypress changes its format again.
  *
- * The Node floor that used to live in the checks layer's guidance was the opposite kind of number: a support policy,
- * derived from the package manifest, and therefore available as evidence. It was deleted, and the check now compares
- * against whatever the manifest declares.
+ * The Node floor that used to live in the checks layer's guidance was the opposite kind of number: a support policy, derived
+ * from the package manifest, and therefore available as evidence. It was deleted, and the check now compares against
+ * whatever the manifest declares.
  *
  * Both constants were integers and only one of them was a duplicate. That is why the rule is not "delete every version
  * constant" — it is "state no policy twice", and a format fact is not a policy.
  */
+
 import {
   DiagnosticCode,
   DiagnosticSeverity,
@@ -75,26 +73,24 @@ import type { FrameworkDeclaration } from "../../core/domain/index.js";
 /**
  * The first Cypress major that can read a `cypress.config.*` file.
  *
- * A fact about the configuration format rather than a support policy. Cypress 10 replaced `cypress.json` with a
- * module, so an installation older than that cannot read the file whose presence caused this project to be
- * identified at all.
+ * A fact about the configuration format rather than a support policy. Cypress 10 replaced `cypress.json` with a module, so
+ * an installation older than that cannot read the file whose presence caused this project to be identified at all.
  *
- * The number this tool will *drive* is a separate decision and lives in the validation layer's version policy. The
- * two coincide today and are deliberately not the same constant: one is a fact about a file, the other a choice
- * about support, and a single value serving both would make the next change to either look like a change to the
- * other.
+ * The number this tool will *drive* is a separate decision and lives in the validation layer's version policy. The two
+ * coincide today and are deliberately not the same constant: one is a fact about a file, the other a choice about support,
+ * and a single value serving both would make the next change to either look like a change to the other.
  *
- * This is also why it survived the removal of the Node floor that used to sit in the checks layer. That number was a
- * support policy restated from `engines.node`; this one is not restated from anything, because nothing declares it.
+ * This is also why it survived the removal of the Node floor that used to sit in the checks layer. That number was a support
+ * policy restated from `engines.node`; this one is not restated from anything, because nothing declares it.
  */
 export const MINIMUM_CYPRESS_MAJOR = 10;
 
 /**
  * Everything a catalogue entry may need in order to describe itself.
  *
- * Deliberately holds nothing about package managers, package-manager versions or installed tooling. Those entries do
- * not exist in this catalogue (see the note above), and adding a field for them would be the first step towards
- * creating them — a field nothing here reads is an invitation for the next person to use it.
+ * Deliberately holds nothing about package managers, package-manager versions or installed tooling. Those entries do not
+ * exist in this catalogue (see the note above), and adding a field for them would be the first step towards creating them —
+ * a field nothing here reads is an invitation for the next person to use it.
  */
 export interface DiagnosticFacts {
   readonly root: string;
@@ -107,10 +103,19 @@ export interface DiagnosticFacts {
   readonly hasCypressDirectory: boolean;
 }
 
-/** What an entry produces. */
+/**
+ * What an entry produces.
+ *
+ * `remediation` is required rather than optional: every condition in this table has a next step, and the finding this text
+ * becomes requires a string. Making it optional would only create the opportunity to publish a finding with nothing to do
+ * about it.
+ *
+ * `path` stays optional because it is genuinely not always known — several entries are about the directory as a whole
+ * rather than one file.
+ */
 export interface DiagnosticText {
   readonly explanation: string;
-  readonly remediation?: string;
+  readonly remediation: string;
   readonly path?: string;
 }
 
@@ -120,22 +125,36 @@ interface Guidance {
 }
 
 /**
+ * A bounded, readable list.
+ *
+ * A manifest can declare forty workspace patterns, and a sentence that quotes all of them is a sentence nobody finishes. The
+ * first few are enough to recognise the situation; the ellipsis says there is more.
+ */
+function listOf(values: readonly string[]): string {
+  const shown = values.slice(0, 4);
+  return shown.join(", ") + (values.length > shown.length ? ", …" : "");
+}
+
+/**
  * What to suggest when there is no usable Cypress configuration.
  *
- * A declared workspace changes the advice entirely: the reader is almost certainly one directory too high, and
- * telling them to create a configuration file would create a second project instead of finding the first. The
- * patterns are named and never expanded.
+ * A declared workspace changes the advice entirely: the reader is almost certainly one directory too high, and telling
+ * them to create a configuration file would create a second project instead of finding the first. The patterns are named
+ * and never expanded.
  *
- * The file is named in the first sentence because the alternative reading is now live: "create a configuration file"
- * in a project that already has `qat.config.json` sounds like advice to create a second one of those, which would
- * satisfy the instruction and change nothing about the condition being reported.
+ * The file is named in the first sentence because the alternative reading is now live: "create a configuration file" in a
+ * project that already has `qat.config.json` sounds like advice to create a second one of those, which would satisfy the
+ * instruction and change nothing about the condition being reported.
+ *
+ * Both common extensions are offered. Naming only `.ts` sends a JavaScript project looking for a TypeScript toolchain it
+ * does not need, and the condition is "no configuration", not "no TypeScript configuration".
  */
 function configurationRemedy(facts: DiagnosticFacts): string {
   if (facts.workspaces.length === 0) {
-    return "Create cypress.config.ts for Cypress, or run this in the right directory.";
+    return "Create cypress.config.ts (or cypress.config.js) for Cypress, or run this in the right directory.";
   }
 
-  return `This looks like a workspace root (${facts.workspaces.join(", ")}). Run the command from the package directory.`;
+  return `This looks like a workspace root (${listOf(facts.workspaces)}). Run the command from the package directory.`;
 }
 
 export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
@@ -149,25 +168,34 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
 
   [DiagnosticCode.ConfigurationMissing]: {
     severity: DiagnosticSeverity.Error,
+
     describe: (facts) => {
-      // Three causes, three explanations, because they have three different next steps: one file to create, the
-      // same file plus an install, or a configuration that was deleted.
+      // Four causes, four explanations, because they have four different next steps: one file to create, the same file
+      // plus an install, a configuration that was deleted, or a directory that never had one. The last branch exists so
+      // the message never claims a `cypress` directory was found when the facts do not say so.
       if (facts.installationVersion !== undefined) {
         return {
-          explanation: `Cypress ${facts.installationVersion} is installed in ${facts.root}, but no cypress.config.ts was found.`,
+          explanation: `Cypress ${facts.installationVersion} is installed in ${facts.root}, but no Cypress configuration file was found.`,
           remediation: configurationRemedy(facts),
         };
       }
 
       if (facts.declaration !== undefined) {
         return {
-          explanation: `Cypress is declared in ${facts.declaration.section}, but there is no cypress.config.ts in ${facts.root}.`,
+          explanation: `Cypress is declared in ${facts.declaration.section}, but there is no Cypress configuration file in ${facts.root}.`,
+          remediation: configurationRemedy(facts),
+        };
+      }
+
+      if (facts.hasCypressDirectory) {
+        return {
+          explanation: `A cypress directory was found in ${facts.root}, but no Cypress configuration file.`,
           remediation: configurationRemedy(facts),
         };
       }
 
       return {
-        explanation: `A cypress directory was found in ${facts.root}, but no Cypress configuration file.`,
+        explanation: `No Cypress configuration file was found in ${facts.root}.`,
         remediation: configurationRemedy(facts),
       };
     },
@@ -178,33 +206,43 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
     describe: (facts) => ({
       explanation: `More than one Cypress configuration was found in ${facts.root}.`,
       remediation:
-        "Keep one cypress.config.ts and delete the others; qat.config.json is a separate file and is not the ambiguity.",
+        "Keep one Cypress configuration file and delete the others; qat.config.json is a separate file and is not the ambiguity.",
     }),
   },
 
   [DiagnosticCode.ConfigurationUnsupported]: {
     severity: DiagnosticSeverity.Error,
-    describe: (facts) => ({
-      explanation: `${facts.root} uses ${facts.unsupportedConfigurations.join(", ")}, which this build cannot read as a Cypress configuration.`,
-      remediation:
-        "Upgrade to cypress.config.ts, which Cypress 10 and later use.",
-      // The first one, because a project with two unusable configurations has bigger problems than this message.
-      ...(facts.unsupportedConfigurations[0] === undefined
-        ? {}
-        : { path: facts.unsupportedConfigurations[0] }),
-    }),
+
+    describe: (facts) => {
+      // A list that is empty cannot be joined into a sentence. The condition implies a non-empty list, but a message
+      // reading "uses , which this build cannot read" is worse than a general one, and the general one is still true.
+      const explanation =
+        facts.unsupportedConfigurations.length === 0
+          ? `${facts.root} uses a Cypress configuration format this build cannot read.`
+          : `${facts.root} uses ${listOf(facts.unsupportedConfigurations)}, which this build cannot read as a Cypress configuration.`;
+
+      return {
+        explanation,
+        remediation:
+          "Upgrade to cypress.config.ts, which Cypress 10 and later use.",
+        // The first one, because a project with two unusable configurations has bigger problems than this message.
+        ...(facts.unsupportedConfigurations[0] === undefined
+          ? {}
+          : { path: facts.unsupportedConfigurations[0] }),
+      };
+    },
   },
 
   /**
    * Declared, configured, and not installed.
    *
-   * The remedy says *what* to do and deliberately not *how*, because "how" depends on which tool installs in this
-   * project and this catalogue has just argued that it cannot know that. The command that respects the committed
-   * lockfile is produced by the package-manager check's own guidance, keyed on the manager it identified — one owner
-   * per question: this file says "install the dependency", that one says "with this command".
+   * The remedy says *what* to do and deliberately not *how*, because "how" depends on which tool installs in this project
+   * and this catalogue has just argued that it cannot know that. The command that respects the committed lockfile is
+   * produced by the package-manager check's own guidance, keyed on the manager it identified — one owner per question: this
+   * file says "install the dependency", that one says "with this command".
    *
-   * Naming a command here would be the duplicate: two files, two invocations, and the day one of them learned about
-   * frozen lockfiles the other would still be advising the rewrite this tool exists to detect.
+   * Naming a command here would be the duplicate: two files, two invocations, and the day one of them learned about frozen
+   * lockfiles the other would still be advising the rewrite this tool exists to detect.
    */
   [DiagnosticCode.DependencyNotInstalled]: {
     severity: DiagnosticSeverity.Error,

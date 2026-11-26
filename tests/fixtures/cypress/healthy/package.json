@@ -1,0 +1,11 @@
+{
+  "name": "fixture-cypress-healthy",
+  "version": "0.0.0",
+  "private": true,
+  "devDependencies": {
+    "cypress": "^13.6.0"
+  },
+  "scripts": {
+    "test": "cypress run"
+  }
+}

@@ -12,6 +12,7 @@ import {
   parseRange,
   qatRuntimeRequirement,
 } from "~/core/compatibility/index.js";
+import type { CheckDefinition } from "~/diagnostics/checks/contracts.js";
 import { CHECKS, HEALTH_GUIDANCE } from "~/diagnostics/checks/index.js";
 
 /**
@@ -24,9 +25,9 @@ import { CHECKS, HEALTH_GUIDANCE } from "~/diagnostics/checks/index.js";
  *
  * ## What is deliberately not here
  *
- * Anything that requires evidence. That a healthy project passes every check, that a failure blocks, and that an
- * advisory check never returns `fail` all need facts, and facts live in `run.test.ts` — which also derives its case list
- * from the scenario identifiers asserted below. This file is the shape of the register; that file is its behaviour.
+ * Anything that requires evidence. That a healthy project passes every check, that a failure blocks, and that an advisory
+ * check never returns `fail` all need facts, and facts live in `run.test.ts` — which also derives its case list from the
+ * scenario identifiers asserted below. This file is the shape of the register; that file is its behaviour.
  *
  * ## The package-manager check, as a worked example of the three rules
  *
@@ -36,7 +37,20 @@ import { CHECKS, HEALTH_GUIDANCE } from "~/diagnostics/checks/index.js";
  * blocking would break the severity case, and a change that gave it a precondition would break the mandatory list, even
  * though both edits would look local in the catalogue.
  */
+
 const ids = CHECKS.map((check) => check.id);
+
+/**
+ * `[id, check]` pairs, typed as mutable tuples.
+ *
+ * Declared once rather than inlined in three `it.each` calls: an inline `.map(… as const)` produces readonly tuples, which
+ * makes `it.each` give up on its tuple overload and hand the callback `any` — the parameter types then stop being checked,
+ * quietly, across every case in the table.
+ */
+const entries: [CheckId, CheckDefinition][] = CHECKS.map((check) => [
+  check.id,
+  check,
+]);
 
 describe("the register", () => {
   it("declares every check exactly once", () => {
@@ -66,21 +80,18 @@ describe("the register", () => {
     expect(new Set(titles).size).toBe(titles.length);
   });
 
-  it.each(CHECKS.map((check) => [check.id, check] as const))(
-    "%s documents a purpose and a procedure",
-    (__id, check) => {
-      // The two fields a reader uses to decide whether the question is the one they had. An empty string passes a type
-      // check and tells nobody anything, which is why the length is asserted rather than the presence.
-      expect(check.purpose.length).toBeGreaterThan(0);
-      expect(check.procedure.length).toBeGreaterThan(0);
-    },
-  );
+  it.each(entries)("%s documents a purpose and a procedure", (_id, check) => {
+    // The two fields a reader uses to decide whether the question is the one they had. An empty string passes a type check
+    // and tells nobody anything, which is why the length is asserted rather than the presence.
+    expect(check.purpose.length).toBeGreaterThan(0);
+    expect(check.procedure.length).toBeGreaterThan(0);
+  });
 
-  it.each(CHECKS.map((check) => [check.id, check] as const))(
+  it.each(entries)(
     "%s declares the evidence it reads, without repeating a group",
-    (__id, check) => {
-      // A check that reads nothing cannot be judging a project. A repeated group doubles its weight in the skip
-      // explanation, which reads as two missing inputs rather than one.
+    (_id, check) => {
+      // A check that reads nothing cannot be judging a project. A repeated group doubles its weight in the skip explanation,
+      // which reads as two missing inputs rather than one.
       expect(check.requires.length).toBeGreaterThan(0);
       expect(new Set(check.requires).size).toBe(check.requires.length);
     },
@@ -88,14 +99,14 @@ describe("the register", () => {
 });
 
 describe("the scenario inventory", () => {
-  it.each(CHECKS.map((check) => [check.id, check] as const))(
+  it.each(entries)(
     "%s links at least one scenario, prefixed by its own identifier",
     (id, check) => {
       expect(check.scenarios.length).toBeGreaterThan(0);
 
       for (const scenario of check.scenarios) {
-        // The prefix is what makes a scenario id readable on its own: `output.reports-writable.unwritable` says which
-        // check it verifies and which condition it exercises, in the order a reader needs them.
+        // The prefix is what makes a scenario id readable on its own: `output.reports-writable.unwritable` says which check
+        // it verifies and which condition it exercises, in the order a reader needs them.
         //
         // The separator is a dot, not a colon, and that is not cosmetic: `run.test.ts` keys its fixtures by these exact
         // strings, so a different separator makes the rule and its verification disagree while both read correctly in
@@ -114,9 +125,9 @@ describe("the scenario inventory", () => {
   });
 
   it("gives the package-manager check a scenario per condition and per pass case", () => {
-    // Counted rather than named here: which scenarios exist is the contract test's business, and duplicating the list
-    // would give the register two places to disagree with itself. What this asserts is that the advisory ladder did not
-    // quietly lose a rung — nine conditions plus the two ways a project can pass.
+    // Counted rather than named here: which scenarios exist is the contract test's business, and duplicating the list would
+    // give the register two places to disagree with itself. What this asserts is that the advisory ladder did not quietly
+    // lose a rung — nine conditions plus the two ways a project can pass.
     const check = CHECKS.find(
       (candidate) => candidate.id === CheckId.PackageManager,
     );
@@ -146,12 +157,18 @@ describe("preconditions", () => {
       ids.map((id, index): [string, number] => [id, index]),
     );
 
+    const positionOf = (id: CheckId): number => {
+      const index = position.get(id);
+      if (index === undefined)
+        throw new Error(`${id} has no declaration position`);
+
+      return index;
+    };
+
     for (const check of CHECKS) {
       if (check.precondition === undefined) continue;
 
-      expect(position.get(check.precondition)).toBeLessThan(
-        position.get(check.id) ?? -1,
-      );
+      expect(positionOf(check.precondition)).toBeLessThan(positionOf(check.id));
     }
   });
 
@@ -193,10 +210,10 @@ describe("severity, mandatory-ness and blocking are three separate facts", () =>
   });
 
   it("keeps mandatory-ness independent of blocking", () => {
-    // The pair that proves the two are not the same question. A package manager must always be looked for, and naming
-    // none is advice; an unwritable output directory must block, and is only asked about once the configuration read.
-    // A design that collapsed the two would have to choose between refusing a run over a warning and never blocking on
-    // an output path.
+    // The pair that proves the two are not the same question. A package manager must always be looked for, and naming none
+    // is advice; an unwritable output directory must block, and is only asked about once the configuration read. A design
+    // that collapsed the two would have to choose between refusing a run over a warning and never blocking on an output
+    // path.
     const mandatory = new Set(
       CHECKS.filter((check) => check.precondition === undefined).map(
         (check) => check.id,
@@ -214,8 +231,8 @@ describe("severity, mandatory-ness and blocking are three separate facts", () =>
     expect(mandatory.has(CheckId.ReportsWritable)).toBe(false);
     expect(blocking.has(CheckId.ReportsWritable)).toBe(true);
 
-    // The same split inside one subject: both runtime questions are always asked, and only QAT's own requirement can
-    // refuse a run.
+    // The same split inside one subject: both runtime questions are always asked, and only QAT's own requirement can refuse
+    // a run.
     expect(mandatory.has(CheckId.CypressRuntimeSupported)).toBe(true);
     expect(blocking.has(CheckId.CypressRuntimeSupported)).toBe(false);
   });
@@ -240,7 +257,7 @@ describe("the guidance table", () => {
     for (const code of codes) {
       // `QAT-D` is a project condition, `QAT-V` whether it stops an operation, `QAT-C` a configuration document, and
       // `QAT-H` this machine or this run. A reader can tell which layer spoke from the code alone.
-      expect(code).toMatch(/^QAT-H\d{3}$/);
+      expect(code).toMatch(/^QAT-H\d{3}$/u);
     }
   });
 
@@ -249,12 +266,12 @@ describe("the guidance table", () => {
     (code) => {
       const text = HEALTH_GUIDANCE[code].describe({});
 
-      // The `Record` guarantees an entry exists. This asserts the entry says something when handed no facts at all —
-      // which is the state a caller reaches by passing a fact set gathered for a different check — and that no template
-      // hole printed the word `undefined` into a sentence a user will read.
+      // The `Record` guarantees an entry exists. This asserts the entry says something when handed no facts at all — which is
+      // the state a caller reaches by passing a fact set gathered for a different check — and that no template hole printed
+      // the word `undefined` into a sentence a user will read.
       //
-      // The package-manager entries are the ones most likely to fail here: each reads several optional facts, so every one
-      // of them has a degraded branch that must still compose a sentence. A single missing `??` in any of them surfaces as
+      // The package-manager entries are the ones most likely to fail here: each reads several optional facts, so every one of
+      // them has a degraded branch that must still compose a sentence. A single missing `??` in any of them surfaces as
       // `undefined` in the explanation, and this is the case that catches it.
       expect(text.explanation.length).toBeGreaterThan(0);
       expect(text.explanation).not.toContain("undefined");
@@ -271,8 +288,8 @@ describe("the guidance table", () => {
   });
 
   it("does not name an output directory, because the check that failed knows which one", () => {
-    // One code covers both output paths. If the entry guessed from the facts it would name whichever it found first,
-    // and a failure writing evidence could be reported as a failure writing reports.
+    // One code covers both output paths. If the entry guessed from the facts it would name whichever it found first, and a
+    // failure writing evidence could be reported as a failure writing reports.
     const text = HEALTH_GUIDANCE[HealthCode.OutputUnwritable].describe({
       output: {
         reports: { path: "results/reports", writable: false },
@@ -285,8 +302,8 @@ describe("the guidance table", () => {
   });
 
   it("quotes a line number rather than a line of the file", () => {
-    // A line of a configuration file can hold an environment value. Line and column find it in an editor; an excerpt
-    // would print it into whatever consumes the report.
+    // A line of a configuration file can hold an environment value. Line and column find it in an editor; an excerpt would
+    // print it into whatever consumes the report.
     const text = HEALTH_GUIDANCE[HealthCode.ConfigurationNotJson].describe({
       configuration: {
         kind: "malformed",
@@ -306,8 +323,8 @@ describe("the guidance table", () => {
   });
 
   it("quotes the declared range for an unsupported runtime, rather than a version of its own", () => {
-    // The entry used to name a floor it held as a constant. It now quotes what the facts carry, which is the only way
-    // the message cannot lag the policy — and this is the assertion that stops a constant being reintroduced here.
+    // The entry used to name a floor it held as a constant. It now quotes what the facts carry, which is the only way the
+    // message cannot lag the policy — and this is the assertion that stops a constant being reintroduced here.
     const text = HEALTH_GUIDANCE[HealthCode.RuntimeUnsupported].describe({
       runtime: {
         nodeVersion: "v18.19.0",
@@ -324,8 +341,8 @@ describe("the guidance table", () => {
   });
 
   it("quotes an executable version the project declared, not a support floor", () => {
-    // The package-manager equivalent of the case above: the expectation comes from evidence, so the message cannot
-    // claim a bound the project never wrote.
+    // The package-manager equivalent of the case above: the expectation comes from evidence, so the message cannot claim a
+    // bound the project never wrote.
     const text = HEALTH_GUIDANCE[
       HealthCode.PackageManagerVersionMismatch
     ].describe({
@@ -351,15 +368,17 @@ describe("the declared Node range", () => {
   it("is declared, and readable by the compatibility engine", async () => {
     const manifest = JSON.parse(
       await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
-    ) as { engines?: { node?: string } };
+    ) as {
+      engines?: { node?: string };
+    };
 
     // There used to be a constant here — the supported floor, restated from `engines.node` and compared against it. The
-    // comparison was the guard and the constant was the duplication: every support change meant two edits, and
-    // forgetting the second produced a message confidently quoting a requirement QAT no longer had.
+    // comparison was the guard and the constant was the duplication: every support change meant two edits, and forgetting
+    // the second produced a message confidently quoting a requirement QAT no longer had.
     //
-    // The range is now read from the manifest by the same function the check uses, so there is nothing left to compare
-    // the declaration against. What still needs a release gate is that the declaration exists and that the engine can
-    // parse it — an unreadable range is a warning at runtime, which is right for a user and useless as a build check.
+    // The range is now read from the manifest by the same function the check uses, so there is nothing left to compare the
+    // declaration against. What still needs a release gate is that the declaration exists and that the engine can parse it
+    // — an unreadable range is a warning at runtime, which is right for a user and useless as a build check.
     const requirement = qatRuntimeRequirement(manifest);
 
     expect(requirement.range).not.toBe("");
@@ -374,9 +393,9 @@ describe("the documentation", () => {
       "utf8",
     );
 
-    // A documented field list is a copy of the table, and a copy lags. This is the same guard the configuration format
-    // uses for its field table: a check added without a row fails here rather than being discovered by a reader who
-    // went looking for it and found nothing.
+    // A documented field list is a copy of the table, and a copy lags. This is the same guard the configuration format uses
+    // for its field table: a check added without a row fails here rather than being discovered by a reader who went looking
+    // for it and found nothing.
     const missing = ids.filter((id) => !document.includes(id));
 
     expect(missing).toStrictEqual([]);

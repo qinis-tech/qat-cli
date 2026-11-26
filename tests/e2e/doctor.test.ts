@@ -124,9 +124,13 @@ interface DoctorFinding {
 /**
  * The value printed beside a label.
  *
+ * Named `valueOfLabel` rather than `valueOf`, which it was: `valueOf` already means something on every object in the
+ * language, so a module-level function by that name reads as a mistake and is invisible in a search for its own call
+ * sites.
+ *
  * The value begins one column past the wider of the label and the column width. Kept in step with the presenter by the
  * unit suite, which pins the format with literal strings — this file reads values rather than re-asserting spacing,
- * because a `toContain('demo')` would pass whatever column the name happened to land in.
+ * because a `toContain("demo")` would pass whatever column the name happened to land in.
  *
  * The trailing space is implied by the column arithmetic rather than matched literally: a label that is a prefix of
  * another — `config` and, one day, something longer — cannot collide, because the slice starts past the padded column
@@ -136,10 +140,10 @@ interface DoctorFinding {
  * framework's configuration file, and once in the output block for the anchored path of one. The summary always comes
  * first, so asking for `config` keeps returning the summary.
  */
-function valueOf(stdout: string, label: string): string | undefined {
+function valueOfLabel(stdout: string, label: string): string | undefined {
   const line = stdout
     .split("\n")
-    .find((candidate) => candidate.startsWith(`${label} `));
+    .find((candidate) => candidate.startsWith(label));
 
   return line === undefined
     ? undefined
@@ -147,7 +151,11 @@ function valueOf(stdout: string, label: string): string | undefined {
 }
 
 function parseDocument(stdout: string): DoctorDocument {
-  return JSON.parse(stdout) as DoctorDocument;
+  // `JSON.parse` returns `any`; routing it through `unknown` keeps the cast honest and keeps an untyped value from
+  // travelling any further than this function.
+  const parsed: unknown = JSON.parse(stdout);
+
+  return parsed as DoctorDocument;
 }
 
 /** A configuration requiring nothing beyond the two fields with no default. */
@@ -170,19 +178,19 @@ describe("doctor", () => {
       // Nine labelled lines in the summary, read by label rather than by substring. The spec directory and the package
       // manager are deliberately not among them: they are facts about a project's shape, and the assessment carries the
       // correctness facts this command now reports.
-      expect(valueOf(result.stdout, "project")).toBe("demo");
-      expect(valueOf(result.stdout, "root")).toBe(root);
-      expect(valueOf(result.stdout, "package")).toBe("present");
-      expect(valueOf(result.stdout, "framework")).toBe(
+      expect(valueOfLabel(result.stdout, "project")).toBe("demo");
+      expect(valueOfLabel(result.stdout, "root")).toBe(root);
+      expect(valueOfLabel(result.stdout, "package")).toBe("present");
+      expect(valueOfLabel(result.stdout, "framework")).toBe(
         "cypress 13.15.0 (project install)",
       );
-      expect(valueOf(result.stdout, "declared")).toBe(
+      expect(valueOfLabel(result.stdout, "declared")).toBe(
         "devDependencies (^13.15.0)",
       );
-      expect(valueOf(result.stdout, "config")).toBe("cypress.config.ts");
-      expect(valueOf(result.stdout, "detection")).toBe("detected");
-      expect(valueOf(result.stdout, "compatibility")).toBe("consistent");
-      expect(valueOf(result.stdout, "result")).toBe("ready");
+      expect(valueOfLabel(result.stdout, "config")).toBe("cypress.config.ts");
+      expect(valueOfLabel(result.stdout, "detection")).toBe("detected");
+      expect(valueOfLabel(result.stdout, "compatibility")).toBe("consistent");
+      expect(valueOfLabel(result.stdout, "result")).toBe("ready");
     });
 
     it("reports a project with warnings, and still exits zero", async () => {
@@ -193,7 +201,7 @@ describe("doctor", () => {
       // A warning is advice, not a failure. A tool that fails on advice is a tool people pipe through `|| true`, and
       // then it fails on blockers too.
       expect(result.exitCode).toBe(ExitCode.Success);
-      expect(valueOf(result.stdout, "result")).toBe("ready-with-warnings");
+      expect(valueOfLabel(result.stdout, "result")).toBe("ready-with-warnings");
       expect(result.stdout).toContain("QAT-D010 warning");
       expect(result.stdout).toContain("No package.json was found");
     });
@@ -206,10 +214,10 @@ describe("doctor", () => {
       expect(result.exitCode).toBe(ExitCode.Success);
       // The version came from three directories up; the declaration came from nowhere. Both are true, and neither line
       // could be produced by the other.
-      expect(valueOf(result.stdout, "framework")).toBe(
+      expect(valueOfLabel(result.stdout, "framework")).toBe(
         "cypress 13.15.0 (workspace install)",
       );
-      expect(valueOf(result.stdout, "declared")).toBe(
+      expect(valueOfLabel(result.stdout, "declared")).toBe(
         "nowhere in this package",
       );
     });
@@ -236,14 +244,14 @@ describe("doctor", () => {
 
       // The visible consequence of defaulting and anchoring: the reader wrote nothing, and the report says where the run
       // will land. Absolute, and inside the project — never beside the process.
-      expect(valueOf(result.stdout, "reports")).toBe(
+      expect(valueOfLabel(result.stdout, "reports")).toBe(
         join(root, OUTPUT_DEFAULTS.reports),
       );
-      expect(valueOf(result.stdout, "evidence")).toBe(
+      expect(valueOfLabel(result.stdout, "evidence")).toBe(
         join(root, OUTPUT_DEFAULTS.evidence),
       );
       // No environments declared, so nothing is selected, and the line says what to do about it.
-      expect(valueOf(result.stdout, "env")).toContain("none selected");
+      expect(valueOfLabel(result.stdout, "env")).toContain("none selected");
     });
 
     it("keeps a path the configuration chose", async () => {
@@ -259,10 +267,10 @@ describe("doctor", () => {
 
       const result = await qat(["doctor", root]);
 
-      expect(valueOf(result.stdout, "reports")).toBe(
+      expect(valueOfLabel(result.stdout, "reports")).toBe(
         join(root, "artifacts/runs"),
       );
-      expect(valueOf(result.stdout, "evidence")).toBe(
+      expect(valueOfLabel(result.stdout, "evidence")).toBe(
         join(root, "artifacts/proof"),
       );
     });
@@ -296,7 +304,7 @@ describe("doctor", () => {
 
       // The origin is in the sentence on purpose: an operator who never named an environment should be able to see that
       // the tool took them at their word, rather than assuming it inferred one.
-      expect(valueOf(result.stdout, "env")).toBe(
+      expect(valueOfLabel(result.stdout, "env")).toBe(
         "staging (from defaultEnvironment)",
       );
 
@@ -313,8 +321,8 @@ describe("doctor", () => {
 
       // Not "nowhere", not a placeholder. A project with no configuration has no output location, and inventing one
       // would tell a reader their reports are going somewhere they are not.
-      expect(valueOf(result.stdout, "reports")).toBeUndefined();
-      expect(valueOf(result.stdout, "evidence")).toBeUndefined();
+      expect(valueOfLabel(result.stdout, "reports")).toBeUndefined();
+      expect(valueOfLabel(result.stdout, "evidence")).toBeUndefined();
       expect(result.stderr).toBe("");
     });
 
@@ -332,11 +340,11 @@ describe("doctor", () => {
 
       // Current behaviour, recorded rather than endorsed. An unusable configuration produces no finding and no output
       // block, so the report is indistinguishable from a project that was never initialised. Closing that means merging
-      // the loader's diagnostics into the assessment's gate, which changes this exit status — so this case exists to
-      // make that change a decision rather than an accident.
+      // the loader's diagnostics into the assessment's gate, which changes this exit status — so this case exists to make
+      // that change a decision rather than an accident.
       expect(result.exitCode).toBe(ExitCode.Success);
       expect(result.stdout).not.toContain("QAT-C002");
-      expect(valueOf(result.stdout, "reports")).toBeUndefined();
+      expect(valueOfLabel(result.stdout, "reports")).toBeUndefined();
     });
   });
 
@@ -349,10 +357,10 @@ describe("doctor", () => {
 
       const result = await qat(["doctor", root]);
 
-      // The case the previous design could not describe: a Cypress project QAT cannot drive, reported rather than
-      // thrown. The status still says the command failed, because a caller checking `$?` is entitled to know.
+      // The case the previous design could not describe: a Cypress project QAT cannot drive, reported rather than thrown.
+      // The status still says the command failed, because a caller checking `$?` is entitled to know.
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
-      expect(valueOf(result.stdout, "result")).toBe("blocked");
+      expect(valueOfLabel(result.stdout, "result")).toBe("blocked");
       expect(result.stdout).toContain("QAT-V001 error");
       // Detail lines hang two spaces beneath their code, so the codes stay one scannable column.
       expect(result.stdout).toContain("at:  cypress/cypress.config.ts");
@@ -360,8 +368,8 @@ describe("doctor", () => {
         "fix: Move it to the project root as cypress.config.ts.",
       );
 
-      // The failure *is* the report. Nothing was thrown for a project condition, so standard error stays clean — which
-      // is what lets a caller separate "found something to say" from "broke".
+      // The failure *is* the report. Nothing was thrown for a project condition, so standard error stays clean — which is
+      // what lets a caller separate "found something to say" from "broke".
       expect(result.stderr).toBe("");
     });
 
@@ -372,7 +380,7 @@ describe("doctor", () => {
 
       // Previously QAT2001 from a throw. Now the condition is described and the status carries the failure.
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
-      expect(valueOf(result.stdout, "detection")).toBe("not-detected");
+      expect(valueOfLabel(result.stdout, "detection")).toBe("not-detected");
       expect(result.stdout).toContain("QAT-D001 error");
       expect(result.stdout).toContain("Create cypress.config.ts");
       expect(result.stderr).toBe("");
@@ -403,8 +411,8 @@ describe("doctor", () => {
 
       expect(result.exitCode).toBe(ExitCode.Success);
 
-      // The published shape of the report, not a presentation of it: a consumer reads the same contract the command
-      // read, so a field added to the assessment appears without the document changing.
+      // The published shape of the report, not a presentation of it: a consumer reads the same contract the command read,
+      // so a field added to the assessment appears without the document changing.
       const document = parseDocument(result.stdout);
 
       expect(document.assessment?.diagnosis?.identity?.name).toBe("demo");
@@ -435,8 +443,8 @@ describe("doctor", () => {
 
       const document = parseDocument(result.stdout);
 
-      // A consumer reading the document gets the same anchors the command printed, from the same resolution — one read
-      // of one tree, not two.
+      // A consumer reading the document gets the same anchors the command printed, from the same resolution — one read of
+      // one tree, not two.
       expect(
         document.assessment?.configuration?.reportsDirectory?.absolute,
       ).toBe(join(root, OUTPUT_DEFAULTS.reports));
@@ -475,9 +483,9 @@ describe("doctor", () => {
       // Two conditions, both true: no configuration was found, and one exists where Cypress does not load it. A report
       // that named only the first would send its owner looking for a file they are looking at.
       //
-      // The order is the requirement table's, not the filesystem's: the forwarded diagnosis finding comes first, then
-      // the condition validation added. Pinned exactly, because a report whose findings moved would be a different
-      // report even though every code was present.
+      // The order is the requirement table's, not the filesystem's: the forwarded diagnosis finding comes first, then the
+      // condition validation added. Pinned exactly, because a report whose findings moved would be a different report even
+      // though every code was present.
       expect(blocking.map((finding) => finding.code)).toStrictEqual([
         "QAT-D002",
         "QAT-V001",
@@ -520,12 +528,12 @@ describe("doctor", () => {
 
       const result = await qat(["doctor", root]);
 
-      // A passing check produces no finding, so a healthy project's report is exactly what it was before the runtime
-      // work existed. The absence assertions below are the load-bearing ones: if the runtime check ever warned on a
-      // runtime this build supports, every clean project in every pipeline would start reporting noise, and this is the
-      // only case in the suite that would notice.
+      // A passing check produces no finding, so a healthy project's report is exactly what it was before the runtime work
+      // existed. The absence assertions below are the load-bearing ones: if the runtime check ever warned on a runtime
+      // this build supports, every clean project in every pipeline would start reporting noise, and this is the only case
+      // in the suite that would notice.
       expect(result.exitCode).toBe(ExitCode.Success);
-      expect(valueOf(result.stdout, "result")).toBe("ready");
+      expect(valueOfLabel(result.stdout, "result")).toBe("ready");
       expect(result.stdout).not.toContain("QAT-H001");
       expect(result.stdout).not.toContain("QAT-H008");
       expect(result.stderr).toBe("");
@@ -539,8 +547,8 @@ describe("doctor", () => {
       const document = parseDocument(result.stdout);
 
       // The gate the document exposes is the assessment's. A runtime finding would have to reach that gate to change an
-      // exit status, and on a supported interpreter there is none to reach it — so a consumer sees the same document it
-      // saw before the check existed.
+      // exit status, and on a supported interpreter there is none to reach it — so a consumer sees the same document it saw
+      // before the check existed.
       expect(document.assessment?.gates?.execute?.blocking).toStrictEqual([]);
       expect(JSON.stringify(document)).not.toContain("QAT-H");
     });
@@ -553,8 +561,8 @@ describe("doctor", () => {
 
       const result = await qat(["doctor", root]);
 
-      // One condition, one status. Adding a second possible blocker must not change what a caller sees for the first,
-      // and the code stays `InvalidInput` rather than becoming something runtime-specific — the exit-code contract is
+      // One condition, one status. Adding a second possible blocker must not change what a caller sees for the first, and
+      // the code stays `InvalidInput` rather than becoming something runtime-specific — the exit-code contract is
       // `core/errors`'s to own, and the runtime work adds no entry to it.
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
       expect(result.stdout).not.toContain("QAT-H001");
@@ -583,13 +591,13 @@ describe("doctor", () => {
 
       const result = await qat(["doctor", root]);
 
-      expect(valueOf(result.stdout, "reports")).toBe(
+      expect(valueOfLabel(result.stdout, "reports")).toBe(
         join(root, OUTPUT_DEFAULTS.reports),
       );
 
       // Asked of the filesystem directly, not of a snapshot: the directory the report just named must not exist. A
-      // snapshot comparison would also pass if the directory had never existed for an unrelated reason, which is the
-      // shape of assertion that proves nothing.
+      // snapshot comparison would also pass if the directory had never existed for an unrelated reason, which is the shape
+      // of assertion that proves nothing.
       await expect(stat(join(root, OUTPUT_DEFAULTS.reports))).rejects.toThrow();
       await expect(
         stat(join(root, OUTPUT_DEFAULTS.evidence)),
@@ -613,8 +621,8 @@ describe("doctor", () => {
         join(tmpdir(), "qat-absent-directory-7f3a"),
       ]);
 
-      // The one thing the command still throws for. A directory that does not exist is not a property of a project, so
-      // it is an error rather than a finding — and it never reaches the assessment.
+      // The one thing the command still throws for. A directory that does not exist is not a property of a project, so it
+      // is an error rather than a finding — and it never reaches the assessment.
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
       expect(result.stderr).toContain("QAT1001");
       expect(result.stderr).toContain("is not a directory");
