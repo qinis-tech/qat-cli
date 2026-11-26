@@ -51,6 +51,13 @@ import {
  * `CASES` is keyed by the identifiers the catalogue declares. The first case asserts the two sets are equal, so a
  * scenario declared without a fixture fails here, and a fixture for a scenario nobody declared fails too. That is the
  * traceability KPI made mechanical: the register cannot claim a case that does not exist.
+ *
+ * ## Fact groups are built by factories, never by literals in a spread
+ *
+ * `runtimeFacts` and `managerFacts` exist because a spread that replaces a whole group silently drops members the type
+ * requires: `{ ...facts, runtime: { nodeVersion } }` compiled, and then the comparison read `required.range` from
+ * `undefined`. A spread's result is never checked field-by-field, so nothing catches it — a factory is where the
+ * required members live, and an override can replace them but never omit them.
  */
 type AnyCode = DiagnosticCode | ValidationCode;
 
@@ -197,14 +204,36 @@ function runtimeFacts(overrides: Partial<RuntimeFacts> = {}): RuntimeFacts {
 }
 
 /**
+ * Package-manager evidence, in the shape the catalogue reads.
+ *
+ * The group is a discriminated selection plus three independent facts, so a literal is easy to write incompletely and
+ * the compiler's complaint ("missing `selection`, `lockfiles`, `installState`") arrives three errors down from the
+ * fixture that caused it. The factory makes the healthy default explicit and lets a case vary exactly one rung.
+ *
+ * The default carries a resolved executable because the ladder requires it once a manager is identified: a gatherer
+ * that named a manager and never looked for its binary is an assembly defect, and the rule says so loudly rather than
+ * reporting health it did not examine. Rungs *above* the tooling step return before that member is read, so carrying
+ * it there is inert rather than wrong.
+ */
+function managerFacts(
+  overrides: Partial<PackageManagerFacts> = {},
+): PackageManagerFacts {
+  return {
+    selection: { status: "identified", name: "npm", declared: true },
+    lockfiles: ["package-lock.json"],
+    executable: { resolved: true },
+    installState: "installed",
+    ...overrides,
+  };
+}
+
+/**
  * Each fact group named once, and non-optional, so a fact set that omits one can be written without setting a property
  * to `undefined` — which `exactOptionalPropertyTypes` forbids and rightly so: absent and present-and-undefined are
  * different states.
  */
 const RUNTIME: RuntimeFacts = runtimeFacts();
-const MANAGER: PackageManagerFacts = {
-  selected: { name: "npm", declared: true },
-};
+const MANAGER: PackageManagerFacts = managerFacts();
 const ENVIRONMENT: EnvironmentFacts = { declared: [] };
 const OUTPUT: OutputFacts = {
   reports: { path: "results/reports", writable: true },
@@ -319,7 +348,7 @@ describe("a healthy project", () => {
 describe("every declared scenario", () => {
   // The scenario name reaches the title through `%s`, so the parameter is unused inside the body. Named with the `_`
   // prefix the lint rules require rather than consumed by a tautological assertion.
-  it.each(Object.entries(CASES))("%s", (_scenario, expectation) => {
+  it.each(Object.entries(CASES))("%s", (__scenario, expectation) => {
     const outcome = outcomeOf(runChecks(expectation.facts), expectation.check);
 
     // One comparison per case, carrying the status and the code together. `QAT-V002` reaching the wrong check would
@@ -489,18 +518,56 @@ describe("boundaries", () => {
   });
 });
 
+describe("the package-manager ladder", () => {
+  it("reports the first applicable rung, not every rung that could be reached", () => {
+    // A manager whose binary is missing *and* whose dependencies were never installed. Both are true, and only the
+    // first is useful: telling someone to install dependencies with a tool they do not have is advice they cannot act
+    // on. The ladder order is the fix order.
+    const report = runChecks({
+      ...HEALTHY,
+      packageManager: managerFacts({
+        executable: { resolved: false },
+        installState: "absent",
+      }),
+    });
+
+    expect(outcomeOf(report, CheckId.PackageManager)).toMatchObject({
+      finding: { code: HealthCode.PackageManagerExecutableMissing },
+    });
+  });
+
+  it("does not report a version it chose not to read", () => {
+    // `not-probed` means nobody asked, or the platform needs a shell we refuse to enable. It is not a defect, and
+    // reporting it as "unverified" would teach readers to ignore the code that does matter.
+    const report = runChecks({
+      ...HEALTHY,
+      packageManager: managerFacts({
+        executable: { resolved: true, reason: "not-probed" },
+        required: {
+          range: ">=9.1.0 <10.0.0",
+          origin: "package.json#engines.npm",
+        },
+      }),
+    });
+
+    expect(outcomeOf(report, CheckId.PackageManager)?.status).toBe(
+      CheckStatus.Passed,
+    );
+  });
+});
+
 describe("the severity rule", () => {
   it.each(
     CHECKS.filter((check) => check.severity === CheckSeverity.Warning).flatMap(
       (check) =>
         check.scenarios.map((scenario) => [scenario, check.id] as const),
     ),
-  )("%s never fails a run", (_scenario, check) => {
+  )("%s never fails a run", (__scenario, check) => {
     // The invariant the runner relies on: `failed` is reserved for error-severity checks. Driven from the same
     // fixtures the inventory uses, so an advisory check that grew a `fail` branch is caught by the case that already
     // exists for it rather than by a new one nobody writes.
     expect(
-      fingerprint(outcomeOf(runChecks(caseOf(_scenario).facts), check)),
+      fingerprint(outcomeOf(runChecks(caseOf(__scenario).facts), check)),
     ).not.toBe(CheckStatus.Failed);
   });
 
@@ -547,6 +614,10 @@ interface Case {
  *
  * Grouped by category, in the catalogue's order, so a reader can see which conditions each check distinguishes without
  * following a reference.
+ *
+ * The package-manager group is ordered as the ladder is ordered — identification, agreement, tooling, version,
+ * installation — because that is the order in which a rung becomes reachable. Reading down the list is reading the
+ * check.
  */
 const CASES: Record<string, Case> = {
   // runtime compatibility — what QAT itself requires
@@ -665,7 +736,7 @@ const CASES: Record<string, Case> = {
     code: HealthCode.FrameworkRuntimeUnsupported,
   },
 
-  // package-manager availability
+  // package manager — identification
   "environment.package-manager.declared": {
     check: CheckId.PackageManager,
     facts: HEALTHY,
@@ -675,15 +746,150 @@ const CASES: Record<string, Case> = {
     check: CheckId.PackageManager,
     facts: {
       ...HEALTHY,
-      packageManager: { selected: { name: "npm", declared: false } },
+      packageManager: managerFacts({
+        selection: { status: "identified", name: "npm", declared: false },
+      }),
     },
+    // Inferred from a lockfile is a pass: the evidence is weaker than a declaration, but the answer is the same one a
+    // reader needs.
     status: CheckStatus.Passed,
   },
   "environment.package-manager.none": {
     check: CheckId.PackageManager,
-    facts: { ...HEALTHY, packageManager: {} },
+    facts: {
+      ...HEALTHY,
+      packageManager: managerFacts({
+        selection: { status: "undeclared" },
+        lockfiles: [],
+        installState: "unknown",
+      }),
+    },
     status: CheckStatus.Warned,
     code: HealthCode.PackageManagerUnknown,
+  },
+  "environment.package-manager.declaration-invalid": {
+    check: CheckId.PackageManager,
+    facts: {
+      ...HEALTHY,
+      packageManager: managerFacts({
+        selection: {
+          status: "undeclared",
+          declaration: { raw: "npm", problem: "missing-version" },
+        },
+        lockfiles: [],
+        installState: "unknown",
+      }),
+    },
+    // Distinct from `none`: the project tried to declare its tool, so the message quotes what the reader wrote and the
+    // fix is one field rather than a decision.
+    status: CheckStatus.Warned,
+    code: HealthCode.PackageManagerDeclarationInvalid,
+  },
+  "environment.package-manager.unsupported": {
+    check: CheckId.PackageManager,
+    facts: {
+      ...HEALTHY,
+      packageManager: managerFacts({
+        selection: { status: "unsupported", name: "bun" },
+        lockfiles: ["bun.lockb"],
+      }),
+    },
+    // Identified, not unidentified. Saying "no manager found" to a Bun user sends them looking for a file that is
+    // present.
+    status: CheckStatus.Warned,
+    code: HealthCode.PackageManagerUnsupported,
+  },
+
+  // package manager — agreement
+  "environment.package-manager.conflicting": {
+    check: CheckId.PackageManager,
+    facts: {
+      ...HEALTHY,
+      packageManager: managerFacts({
+        selection: {
+          status: "conflicting",
+          managers: ["npm", "pnpm"],
+          lockfiles: ["package-lock.json", "pnpm-lock.yaml"],
+        },
+        lockfiles: ["package-lock.json", "pnpm-lock.yaml"],
+      }),
+    },
+    // Reported before anything about the tool, because with two candidates "is pnpm installed" is true and irrelevant.
+    status: CheckStatus.Warned,
+    code: HealthCode.PackageManagerConflicting,
+  },
+
+  // package manager — tooling
+  "environment.package-manager.executable-missing": {
+    check: CheckId.PackageManager,
+    facts: {
+      ...HEALTHY,
+      packageManager: managerFacts({ executable: { resolved: false } }),
+    },
+    status: CheckStatus.Warned,
+    code: HealthCode.PackageManagerExecutableMissing,
+  },
+
+  // package manager — version
+  "environment.package-manager.version-mismatch": {
+    check: CheckId.PackageManager,
+    facts: {
+      ...HEALTHY,
+      packageManager: managerFacts({
+        executable: { resolved: true, version: "9.0.9" },
+        required: {
+          range: ">=9.1.0 <10.0.0",
+          origin: "package.json#engines.npm",
+        },
+      }),
+    },
+    status: CheckStatus.Warned,
+    code: HealthCode.PackageManagerVersionMismatch,
+  },
+  "environment.package-manager.version-unverified": {
+    check: CheckId.PackageManager,
+    facts: {
+      ...HEALTHY,
+      packageManager: managerFacts({
+        executable: { resolved: true, reason: "timeout" },
+        required: {
+          range: ">=9.1.0 <10.0.0",
+          origin: "package.json#engines.npm",
+        },
+      }),
+    },
+    // A version was expected and the binary would not answer. Reported rather than passed: an unread comparison is not
+    // an agreement.
+    status: CheckStatus.Warned,
+    code: HealthCode.PackageManagerVersionUnverified,
+  },
+
+  // package manager — installation
+  "environment.package-manager.not-installed": {
+    check: CheckId.PackageManager,
+    facts: {
+      ...HEALTHY,
+      packageManager: managerFacts({ installState: "absent" }),
+    },
+    status: CheckStatus.Warned,
+    code: HealthCode.PackageManagerNotInstalled,
+  },
+  "environment.package-manager.foreign-install": {
+    check: CheckId.PackageManager,
+    facts: {
+      ...HEALTHY,
+      packageManager: managerFacts({
+        installState: "foreign",
+        foreignMarker: {
+          marker: "node_modules/.package-lock.json",
+          createdBy: "npm",
+        },
+      }),
+    },
+    // Everything looks installed, so this is the case that would otherwise surface much later as a resolution error
+    // naming a package nobody edited.
+    status: CheckStatus.Warned,
+    code: HealthCode.PackageManagerForeignInstall,
   },
 
   // project structure

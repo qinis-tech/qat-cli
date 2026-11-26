@@ -37,7 +37,7 @@ import { DiagnosticSeverity } from "~/core/application/diagnostics.js";
 import {
   QAT_REQUIREMENT_ORIGIN,
   compareNodeVersions,
-  evaluateRequirement,
+  evaluateVersionRequirement,
   formatNodeVersion,
   parseNodeVersion,
   parseRange,
@@ -49,7 +49,7 @@ import {
   HEALTH_GUIDANCE,
   runChecks,
   type CheckFacts,
-  type RuntimeRequirementFact,
+  type VersionRequirementFact,
 } from "~/diagnostics/checks/index.js";
 import {
   frameworkRuntimeCheck,
@@ -99,7 +99,7 @@ const belowFloorText =
 /** Builds the evidence the checks read, using the declaration this build ships. */
 function factsFor(
   nodeVersion: string | undefined,
-  frameworkRequired?: RuntimeRequirementFact,
+  frameworkRequired?: VersionRequirementFact,
 ): CheckFacts {
   return {
     runtime: {
@@ -134,7 +134,7 @@ describe("the declared support range", () => {
   it("admits the lowest version it names", () => {
     // If this fails the policy is *inverted* — it refuses the very version it is written around — which no amount of
     // unit testing would reveal, because the unit tests use their own fixtures.
-    expect(evaluateRequirement(requirement, floorText).status).toBe(
+    expect(evaluateVersionRequirement(requirement, floorText).status).toBe(
       "satisfied",
     );
   });
@@ -142,7 +142,7 @@ describe("the declared support range", () => {
   it("refuses the major below the one it names", () => {
     // If this fails the policy is *vacuous*: it claims a floor and admits everything, so the check can never block and
     // the guarantee it exists for is decorative.
-    expect(evaluateRequirement(requirement, belowFloorText).status).toBe(
+    expect(evaluateVersionRequirement(requirement, belowFloorText).status).toBe(
       "unsatisfied",
     );
   });
@@ -206,7 +206,7 @@ describe("the report agrees with the declaration", () => {
     expect(isBlocked(report)).toBe(false);
   });
 
-  it("reports a framework bound on its own check, without touching QAT's verdict", () => {
+  it("reports a framework bound on its own check, without touching QAT’s verdict", () => {
     // A project declaring a higher floor than QAT's must not be reported as QAT being unsupported — and must not block.
     const report = runChecks(
       factsFor(floorText, {

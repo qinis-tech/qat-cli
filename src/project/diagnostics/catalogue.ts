@@ -38,6 +38,21 @@
  * QAT's. It is reported under `HealthCode.FrameworkRuntimeUnsupported`, from the same pair of checks that report the
  * blocking one.
  *
+ * ## Why this catalogue holds no package-manager entry either
+ *
+ * The same argument, and it is worth writing out because the split here is finer. Package-manager *identity* really is
+ * a property of the tree: which lockfile exists and what `packageManager` says are facts about files, and facts about
+ * files are what this catalogue is made of.
+ *
+ * But the question a reader actually asks — "is my package-manager environment healthy?" — cannot be answered from the
+ * tree. It needs the installed tool's version, and whether the binary exists at all, which are properties of the
+ * machine. One question with two sources belongs where both sources are available, so it lives in
+ * `src/diagnostics/checks`, which is also where its prose lives (`HealthCode.PackageManager*`).
+ *
+ * Putting identity here and health there was the alternative, and it is worse in a specific way: the same condition
+ * would acquire two owners, and the day the two disagreed about what "the package manager" is, neither would be
+ * obviously wrong.
+ *
  * ## Why this file keeps a Cypress major while a sibling file deleted a Node major
  *
  * `MINIMUM_CYPRESS_MAJOR` is a fact about a file format. Cypress 10 introduced `cypress.config.*`, so an installation
@@ -74,7 +89,13 @@ import type { FrameworkDeclaration } from "../../core/domain/index.js";
  */
 export const MINIMUM_CYPRESS_MAJOR = 10;
 
-/** Everything a catalogue entry may need in order to describe itself. */
+/**
+ * Everything a catalogue entry may need in order to describe itself.
+ *
+ * Deliberately holds nothing about package managers, package-manager versions or installed tooling. Those entries do
+ * not exist in this catalogue (see the note above), and adding a field for them would be the first step towards
+ * creating them — a field nothing here reads is an invitation for the next person to use it.
+ */
 export interface DiagnosticFacts {
   readonly root: string;
   /** Declared workspace patterns. Used only to improve one remedy, never to find anything. */
@@ -174,6 +195,17 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
     }),
   },
 
+  /**
+   * Declared, configured, and not installed.
+   *
+   * The remedy says *what* to do and deliberately not *how*, because "how" depends on which tool installs in this
+   * project and this catalogue has just argued that it cannot know that. The command that respects the committed
+   * lockfile is produced by the package-manager check's own guidance, keyed on the manager it identified — one owner
+   * per question: this file says "install the dependency", that one says "with this command".
+   *
+   * Naming a command here would be the duplicate: two files, two invocations, and the day one of them learned about
+   * frozen lockfiles the other would still be advising the rewrite this tool exists to detect.
+   */
   [DiagnosticCode.DependencyNotInstalled]: {
     severity: DiagnosticSeverity.Error,
     describe: (facts) => ({

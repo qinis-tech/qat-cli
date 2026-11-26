@@ -29,19 +29,20 @@
  * The logger is the exception, and deliberately: a handler is entitled to log, and a rejecting logger would fail a test
  * for doing something correct. Its methods discard.
  *
- * ## Why the runtime evidence is a value and not a trap
+ * ## Why the evidence is a value and not a trap
  *
- * `runtime` and `nodeRequirement` are the two members added for the runtime checks, and they are treated differently
- * from the collaborators above — because they are not collaborators. They are *evidence*: a version string and a
- * declared range, both of which a doctor run reads as a matter of course.
+ * `runtime`, `nodeRequirement` and `executables` are the three members the health checks were given, and they are
+ * treated differently from the collaborators above — because they are not collaborators. They are *evidence*: a version
+ * string, a declared range and a way to find a command, all of which a doctor run reads as a matter of course.
  *
  * Trapping them would make a legitimate read fail with "runtime is unused in this test", which is worse than useless: it
- * names the wrong problem, and it teaches whoever hits it to loosen the trap. A fixture that states a version and a range
- * admits itself is honest, visible at the call site, and overridable when a test needs a different answer.
+ * names the wrong problem, and it teaches whoever hits it to loosen the trap. A fixture that states a version, a range
+ * and a search result admits itself, is visible at the call site, and is overridable when a test needs a different
+ * answer.
  *
- * The default is a **fixture, not a claim about what this build supports**. The shipped policy is `engines.node`, and
- * the contract suite is the only place entitled to assert anything about it; a unit test must not depend on the machine
- * it runs on, which is why the default is a literal rather than `process.versions.node`.
+ * The defaults are **fixtures, not claims about this machine**. The shipped policy is `engines.node`, and the contract
+ * suite is the only place entitled to assert anything about it; a unit test must not depend on the machine it runs on,
+ * which is why the defaults are literals rather than `process.versions.node` or the real PATH.
  *
  * ## What to do instead of loosening a trap
  *
@@ -50,8 +51,15 @@
  * initialise one belongs in the end-to-end suite, where the file either appears on disk or does not. A stub that returns
  * a plausible value turns either of those into a test of the stub.
  */
-import type { Application, RuntimeProbe } from "~/core/application/ports.js";
-import type { RuntimeRequirement } from "~/core/compatibility/index.js";
+import type {
+  Application,
+  ExecutableLocator,
+  RuntimeProbe,
+} from "~/core/application/ports.js";
+// The widened name. This fake stands in for an assembly that produces one value of this shape, whatever owns the
+// requirement it describes — so naming the runtime-era alias here would put a deprecated spelling in the fixture every
+// other CLI test is built on.
+import type { VersionRequirement } from "~/core/compatibility/index.js";
 
 /**
  * The version a fake reports unless a test says otherwise, and a range that admits it.
@@ -63,12 +71,26 @@ import type { RuntimeRequirement } from "~/core/compatibility/index.js";
 const FAKE_VERSION = "v20.11.1";
 
 /** Frozen, like the real one, so a test cannot accidentally change what the next assertion reads. */
-const FAKE_REQUIREMENT: RuntimeRequirement = Object.freeze({
+const FAKE_REQUIREMENT: VersionRequirement = Object.freeze({
   source: "qat",
   range: ">=20.11.0 <21.0.0",
   origin: "package.json#engines.node",
   severityWhenUnsatisfied: "error",
 });
+
+/**
+ * Where a fake says a command lives.
+ *
+ * Under `/fake/` on purpose: the prefix makes it obvious in any rendered report or captured output that this path did
+ * not come from the machine the test ran on. A plausible-looking real path would be the kind of fixture that ends up
+ * quoted in a bug report as if it were evidence.
+ *
+ * The command name is echoed back rather than ignored, so an assertion can tell which command was asked for — which is
+ * the only thing a test asserting detection behaviour actually cares about.
+ */
+function fakeExecutablePath(command: string): string {
+  return `/fake/bin/${command}`;
+}
 
 export interface FakeApplicationOptions {
   /** Called when the handler disposes the application. Records the lifecycle without a spy. */
@@ -78,7 +100,16 @@ export interface FakeApplicationOptions {
   readonly runtime?: RuntimeProbe;
 
   /** Replaces the declared range. Supply one to exercise a policy the fixture range would not reach. */
-  readonly nodeRequirement?: RuntimeRequirement;
+  readonly nodeRequirement?: VersionRequirement;
+
+  /**
+   * Replaces the tool locator. Supply one to exercise a missing binary, or a tool that is present under another name.
+   *
+   * The default answers every command with a synthetic path — "found" — because that is the quiet case: a fake that
+   * reported every tool missing would make a doctor run emit advisory findings nobody asked for, and a test would be
+   * reading the fixture's opinion instead of the code's.
+   */
+  readonly executables?: ExecutableLocator;
 }
 
 /**
@@ -153,6 +184,14 @@ export function fakeApplication(
     // A value rather than a resolver, matching the port: the range is read once at composition and shared. Frozen so
     // that a test which mutated it could not silently change what a later assertion in the same file reads.
     nodeRequirement: options.nodeRequirement ?? FAKE_REQUIREMENT,
+
+    // Evidence, so a synthetic answer rather than a trap — see the note at the top of this file. Asynchronous because
+    // the real one stats the filesystem, and a fake that resolved synchronously would let a caller forget an `await`
+    // that the implementation requires.
+    executables: options.executables ?? {
+      locateExecutable: (command) =>
+        Promise.resolve(fakeExecutablePath(command)),
+    },
 
     // One member, and it throws rather than rejecting: see `unusedImmediately`. A command that needs a resolved
     // configuration does not call this — it reads the one attached to its assessment, which `discovery.assess` above

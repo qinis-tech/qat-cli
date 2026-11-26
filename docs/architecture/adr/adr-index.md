@@ -18,7 +18,8 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
-| [ADR-0033](0033-derive-the-supported-node-js-range-from-the-package-engine-d.md) | Derive the supported Node.js range from the package engine declaration | Proposed | 2026-11-25 |
+| [ADR-0034](0034-detect-the-package-manager-from-declared-metadata-and-lockfi.md) | Detect the package manager from declared metadata and lockfiles, never by executing it | Accepted | — |
+| [ADR-0033](0033-derive-the-supported-node-js-range-from-the-package-engine-d.md) | Derive the supported Node.js range from the package engine declaration | Accepted | 2026-11-25 |
 | [ADR-0032](0032-skip-a-check-whose-precondition-failed-rather-than-reporting.md) | Skip a check whose precondition failed rather than reporting it | Accepted | 2026-11-24 |
 | [ADR-0031](0031-resolve-one-approved-override-instead-of-merging-configurati.md) | Resolve one approved override instead of merging configuration | Proposed | 2026-11-24 |
 | [ADR-0030](0030-model-an-environment-as-a-typed-profile-rather-than-a-map-of.md) | Model an environment as a typed profile rather than a map of variables | Proposed | 2026-11-24 |

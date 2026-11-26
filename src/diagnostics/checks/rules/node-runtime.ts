@@ -41,12 +41,16 @@ import {
   CheckSeverity,
   HealthCode,
 } from "../../../core/application/checks.js";
+// The current names, not the aliases. The comparison function and the requirement it takes were both renamed when the
+// vocabulary widened to cover a package-manager pin as well as a runtime; the runtime-era names survive in
+// `core/compatibility` only so that call sites in flight keep compiling, and a rule that is itself about one of the three
+// sources is the last place that should be using them.
 import {
-  evaluateRequirement,
+  evaluateVersionRequirement,
   type CompatibilityVerdict,
-  type RuntimeRequirement,
-  type RuntimeRequirementSource,
   type UnsatisfiedSeverity,
+  type VersionRequirement,
+  type VersionRequirementSource,
 } from "../../../core/compatibility/index.js";
 import {
   FactGroup,
@@ -56,7 +60,7 @@ import {
   type CheckDefinition,
   type CheckFacts,
   type CheckVerdict,
-  type RuntimeRequirementFact,
+  type VersionRequirementFact,
 } from "../contracts.js";
 import { healthFinding } from "../guidance.js";
 
@@ -83,19 +87,19 @@ const FRAMEWORK_RUNTIME = CheckId.CypressRuntimeSupported;
 /**
  * Turns a gathered requirement into the shape the comparison expects.
  *
- * The two vocabularies differ in one field, and this is where the difference is settled. Core's requirement carries
- * the approved consequence of failing it; this layer declares that consequence once, on the definition. Translating
- * here — rather than inventing a severity at the call site — keeps the two in step: change a check's declared weight
- * and the requirement it builds changes with it, instead of a detail somewhere disagreeing with the catalogue.
+ * The two vocabularies differ in one field, and this is where the difference is settled. Core's requirement carries the
+ * approved consequence of failing it; this layer declares that consequence once, on the definition. Translating here —
+ * rather than inventing a severity at the call site — keeps the two in step: change a check's declared weight and the
+ * requirement it builds changes with it, instead of a detail somewhere disagreeing with the catalogue.
  *
  * A check declared `error` blocks; anything else is advisory. There is no third option because the comparison has no
  * third answer, and an "informational failure" would be neither reported nor blocking, which is the worst of both.
  */
 function requirementFrom(
-  fact: RuntimeRequirementFact,
-  source: RuntimeRequirementSource,
+  fact: VersionRequirementFact,
+  source: VersionRequirementSource,
   severity: CheckSeverity,
-): RuntimeRequirement {
+): VersionRequirement {
   const unsatisfied: UnsatisfiedSeverity =
     severity === CheckSeverity.Error ? "error" : "warning";
 
@@ -189,8 +193,8 @@ export const nodeRuntimeCheck: CheckDefinition = {
   ],
 
   evaluate(facts) {
-    // The runner guarantees the group because it is declared in `requires`; `present` turns a disagreement between
-    // this file and the runner into a loud defect rather than a finding in a user's terminal.
+    // The runner guarantees the group because it is declared in `requires`; `present` turns a disagreement between this
+    // file and the runner into a loud defect rather than a finding in a user's terminal.
     const runtime = present(facts.runtime);
 
     // The group is present, but the *requirement* inside it is what this check exists to compare against. Reading it
@@ -198,7 +202,7 @@ export const nodeRuntimeCheck: CheckDefinition = {
     // omission, instead of `Cannot read properties of undefined` from inside the translation helper.
     const required = requireFact(runtime.required, "RuntimeFacts.required");
 
-    const verdict = evaluateRequirement(
+    const verdict = evaluateVersionRequirement(
       requirementFrom(required, "qat", CheckSeverity.Error),
       // Passed through as reported. Parsing happens once, inside the comparison, so there is exactly one opinion about
       // what a version is — and `undefined` (the host reported nothing) is a value the comparison already handles.
@@ -260,18 +264,19 @@ export const frameworkRuntimeCheck: CheckDefinition = {
     // teaches people to ignore advisories.
     if (declared === undefined) return PASS;
 
-    const verdict = evaluateRequirement(
-      // `source` is the requirement's owner, and there are two: QAT and the project's framework. `"framework"` was
-      // never a member of that union, so the value would have been accepted by nothing but a wide string in a
-      // hand-written type — which is what a literal written at the call site tends to become.
+    const verdict = evaluateVersionRequirement(
+      // `source` is the requirement's owner, and there are three: QAT, a project's framework, and a project's
+      // package-manager pin. `"framework"` was never a member of that union, so the value would have been accepted by
+      // nothing but a wide string in a hand-written type — which is what a literal written at the call site tends to
+      // become. `"cypress"` is the member that means "the project's framework release".
       requirementFrom(declared, "cypress", CheckSeverity.Warning),
       runtime.nodeVersion,
     );
 
     // One code for both the mismatch and the unreadable case: the advisory's guidance entry already speaks to both,
-    // because for this requirement they lead the reader to the same place — check what the framework actually
-    // requires. Both land as `warn`, since this check is advisory; the finding's wording distinguishes how much is
-    // known, not the verdict.
+    // because for this requirement they lead the reader to the same place — check what the framework actually requires.
+    // Both land as `warn`, since this check is advisory; the finding's wording distinguishes how much is known, not the
+    // verdict.
     return toVerdict(verdict, facts, CheckSeverity.Warning, {
       unsupported: HealthCode.FrameworkRuntimeUnsupported,
       unknown: HealthCode.FrameworkRuntimeUnsupported,
@@ -283,8 +288,8 @@ export const frameworkRuntimeCheck: CheckDefinition = {
  * Both runtime checks, in report order.
  *
  * Exported as a list so the catalogue can spread it rather than naming each definition: adding a third runtime
- * requirement then touches this file only, and the ordering rule — blocking problem first, advisory second — is
- * declared where the checks are, not repeated at the registration site.
+ * requirement then touches this file only, and the ordering rule — blocking problem first, advisory second — is declared
+ * where the checks are, not repeated at the registration site.
  */
 export const RUNTIME_CHECKS: readonly CheckDefinition[] = [
   nodeRuntimeCheck,

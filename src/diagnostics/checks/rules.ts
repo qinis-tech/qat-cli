@@ -26,12 +26,27 @@
  * an authority and *being* one. That check contributes no floor, no operator and no tolerance of its own — delete it
  * and the policy is unchanged; delete the engine and nothing compiles.
  *
- * ## Why the runtime pair is not defined in this file
+ * `environment.package-manager` is the third of those, and it compares a version for the same reason and by the same
+ * engine: the installed tool's version against whatever the project declared, quoted back with its provenance. What it
+ * contributes is the *ladder* — which of several conditions to report first — and nothing about what "supported"
+ * means.
  *
- * Because the comparison has real branches — a floor, a ceiling, gap alternatives, pre-release admission, three
- * unreadable states — and a branch that lives inside a map literal is a branch nobody tests in isolation. The two
- * runtime definitions live in `./rules/node-runtime.js` and are registered here, so this file keeps its single job:
- * decide *which* questions exist, in *what order*, under *which* identifier.
+ * ## Why three checks are not defined in this file
+ *
+ * Because their comparisons have real branches, and a branch that lives inside a map literal is a branch nobody tests in
+ * isolation. The runtime pair has a floor, a ceiling, gap alternatives, pre-release admission and three unreadable
+ * states; the package-manager check has seven conditions that each send a reader somewhere different. All three live in
+ * `./rules/*.js` and are registered here, so this file keeps its single job: decide *which* questions exist, in *what
+ * order*, under *which* identifier.
+ *
+ * ## Why the package manager is one check and not seven
+ *
+ * Its conditions are a ladder, and the rungs are mutually exclusive in practice: nothing identifies the tool, so there
+ * is no version to compare; the binary is absent, so there is no version to read; the tree is foreign, so "not
+ * installed" is not the story. Reporting every rung at once would present consequences of one cause as separate
+ * problems — which is the same reasoning that makes a failed precondition skip a check rather than fail it.
+ *
+ * The ladder's order is the order a reader fixes things in, so it is also the order the report tells the story in.
  */
 import { ConfigurationLoad } from "../../config/loader/index.js";
 import {
@@ -66,6 +81,7 @@ import {
   frameworkRuntimeCheck,
   nodeRuntimeCheck,
 } from "./rules/node-runtime.js";
+import { packageManagerCheck } from "./rules/package-manager.js";
 
 /**
  * The codes that mean "this directory cannot be recognised as a project QAT could drive".
@@ -160,10 +176,11 @@ function firstOf(
  *
  * The map below is keyed by identifier and therefore holds entries without one: the key *is* the identity, and a
  * definition carrying its own copy would allow the two to disagree with nothing to catch it. Destructuring names the
- * discarded field explicitly, so the discard is visible rather than implied by an omission.
+ * discarded field explicitly, so the discard is visible rather than implied by an omission — and the lint config sets
+ * `ignoreRestSiblings` precisely so this idiom is not reported as an unused variable.
  */
 function withoutId({
-  id: _id,
+  id: _discardedId,
   ...definition
 }: CheckDefinition): Omit<CheckDefinition, "id"> {
   return definition;
@@ -183,28 +200,23 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
    */
   [CheckId.CypressRuntimeSupported]: withoutId(frameworkRuntimeCheck),
 
-  [CheckId.PackageManager]: {
-    category: CheckCategory.PackageManager,
-    title: "Package manager",
-    purpose:
-      "Every remedy for a missing dependency names a package manager, and a project that names none gets advice the reader has to translate.",
-    procedure:
-      "Reports whether a manager was declared in the manifest or inferred from a lockfile.",
-    requires: [FactGroup.PackageManager],
-    severity: CheckSeverity.Warning,
-    scenarios: [
-      "environment.package-manager.declared",
-      "environment.package-manager.inferred",
-      "environment.package-manager.none",
-    ],
-    evaluate: (facts) =>
-      present(facts.packageManager).selected === undefined
-        ? {
-            verdict: "warn",
-            finding: healthFinding(HealthCode.PackageManagerUnknown, facts),
-          }
-        : PASS,
-  },
+  /**
+   * Third, and advisory like the rest of the tooling questions.
+   *
+   * Placed after both runtime checks and before anything about the project's shape, because every remedy below this
+   * point names a package manager: "install the dependencies" is advice a reader has to translate when nothing says
+   * which tool installs them. Answering it first is what makes the later messages actionable.
+   *
+   * Registered from `./rules/package-manager.js` because the check walks seven conditions — identification, conflicting
+   * lockfiles, an unusable declaration, an unsupported manager, a missing binary, a version that disagrees with the
+   * pin, an installation that never happened — and each of those is a branch with its own sentence. Defining that
+   * inside a map literal would make it the one check in this file nobody could test in isolation.
+   *
+   * Carries no precondition on the runtime checks: a project can be un-runnable on this Node *and* still have a
+   * perfectly reportable package-manager problem, and the reader may well be able to fix the second on a machine that
+   * has no supported interpreter.
+   */
+  [CheckId.PackageManager]: withoutId(packageManagerCheck),
 
   [CheckId.ProjectRecognised]: {
     category: CheckCategory.ProjectStructure,

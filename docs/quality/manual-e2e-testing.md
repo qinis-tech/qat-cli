@@ -1,10 +1,10 @@
 # Manual end-to-end testing
 
-|                |                                                                                                                                                                                                                                                                                                                                                               |
-| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Status**     | Normative                                                                                                                                                                                                                                                                                                                                                     |
-| **Applies to** | The compiled binary, `dist/cli/index.js`                                                                                                                                                                                                                                                                                                                      |
-| **Companion**  | [testing-architecture.md](testing-architecture.md), [cli-output.md](../development/cli-output.md), [cli-commands.md](../development/cli-commands.md), [testing-standards.md](../development/testing-standards.md), [environment-profiles.md](../architecture/environment-profiles.md), [environment-resolution.md](../architecture/environment-resolution.md) |
+|                |                                                                                                                                                                                                                                                                                                                                                                                                                           |
+| -------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Status**     | Normative                                                                                                                                                                                                                                                                                                                                                                                                                 |
+| **Applies to** | The compiled binary, `dist/cli/index.js`                                                                                                                                                                                                                                                                                                                                                                                  |
+| **Companion**  | [testing-architecture.md](testing-architecture.md), [cli-output.md](../development/cli-output.md), [cli-commands.md](../development/cli-commands.md), [testing-standards.md](../development/testing-standards.md), [environment-profiles.md](../architecture/environment-profiles.md), [environment-resolution.md](../architecture/environment-resolution.md), [package-managers.md](../architecture/package-managers.md) |
 
 What a human checks that the automated suite cannot, and how to check it the same way twice.
 
@@ -23,22 +23,29 @@ It also cannot judge a reassurance. `already-initialised`, `nothing was changed`
 defaultEnvironment` — each is a sentence whose job is to stop somebody worrying, and whether it does that is not a
 property a string comparison can express.
 
-And it catches a class of defect the suite is blind to by construction: **anything platform-specific that the CI matrix
-does not run.** A legacy Windows code page, a terminal that wraps at 80 columns, a path with a space in it that a shell
+It catches a class of defect the suite is blind to by construction: **anything platform-specific that the CI matrix does
+not run.** A legacy Windows code page, a terminal that wraps at 80 columns, a path with a space in it that a shell
 mangles before the tool ever sees it.
+
+And it catches a class the suite deliberately neutralises: **the report depends on the machine.** The package-manager
+check reads `PATH` and asks nothing of a tool it did not find, so the same project reports differently on a host with
+pnpm installed and on one without. The suite fakes that away in order to be reproducible; a manual pass is where you see
+what a real person sees, which is why §3.5 records which tools were on the host.
 
 ## 2. When to run this
 
-| Trigger                                                     | Scope                                                                           |
-| ----------------------------------------------------------- | ------------------------------------------------------------------------------- |
-| A release candidate                                         | The whole procedure, on at least Windows and Linux                              |
-| Any change to the report's wording, labels or ordering      | Sections 4.3 to 4.7 and 4.11 — the reading checks                               |
-| Any change to the exit-status mapping                       | Sections 4.7 and 4.8                                                            |
-| Any change to defaults, path resolution or the output block | Sections 4.3, 4.4 and 4.7                                                       |
-| Any change to environment profiles, or to the `env` line    | Sections 4.4 and 4.11                                                           |
-| Any change to initialisation or the safe writer             | Sections 4.4, 4.9 and the `init` rows in §6                                     |
-| A CI platform failure you cannot reproduce                  | The platform section for that OS                                                |
-| Before quoting the README's example output                  | Section 4.3, because a README example that no longer matches is worse than none |
+| Trigger                                                         | Scope                                                                           |
+| --------------------------------------------------------------- | ------------------------------------------------------------------------------- |
+| A release candidate                                             | The whole procedure, on at least Windows and Linux                              |
+| Any change to the report's wording, labels or ordering          | Sections 4.3 to 4.7, 4.11 and 4.12 — the reading checks                         |
+| Any change to the exit-status mapping                           | Sections 4.7 and 4.8                                                            |
+| Any change to defaults, path resolution or the output block     | Sections 4.3, 4.4 and 4.7                                                       |
+| Any change to environment profiles, or to the `env` line        | Sections 4.4 and 4.11                                                           |
+| Any change to the package-manager policy, ladder or its wording | Section 4.12, plus the PATH note in §9                                          |
+| Any change to the executable probe, or to `PATH` handling       | Section 4.12 and the platform rows in §5                                        |
+| Any change to initialisation or the safe writer                 | Sections 4.4, 4.9 and the `init` rows in §6                                     |
+| A CI platform failure you cannot reproduce                      | The platform section for that OS                                                |
+| Before quoting the README's example output                      | Section 4.3, because a README example that no longer matches is worse than none |
 
 Not on every pull request. The suite already runs there, and a manual checklist applied to every diff stops being applied
 to any.
@@ -59,6 +66,15 @@ npm --version     # 10 or later
 `npm ci` **warns** rather than fails when the runtime is outside `engines`, and a warning is easy to scroll past. A pass
 on an unsupported Node proves nothing about a supported one: the build may succeed and behave subtly differently, and a
 finding from it cannot be reproduced where it matters. If `node --version` is below 24, fix that before going further.
+
+For the package-manager section specifically: **record which managers are on `PATH` before you start.**
+
+```bash
+command -v npm pnpm yarn bun 2>/dev/null || true
+```
+
+A host with pnpm installed produces a different report from one without, and the difference is the point of the check
+rather than a defect in it. Without this line in your notes, a reviewer cannot tell the two apart.
 
 ### 3.2 Install
 
@@ -113,8 +129,8 @@ the first thing to suspect if a later command behaves oddly.
 
 Two things besides the repository.
 
-**A scratch project.** Detection reads manifests and directory names, so a fabricated tree is enough and costs nothing to
-recreate:
+**A scratch project.** Detection reads manifests, lockfiles and directory names, so a fabricated tree is enough and costs
+nothing to recreate:
 
 ```bash
 mkdir -p /tmp/qat-manual/{cypress/e2e,node_modules/cypress}
@@ -122,20 +138,30 @@ cd /tmp/qat-manual
 printf '{"name":"demo","version":"1.0.0","devDependencies":{"cypress":"^13.15.0"}}' > package.json
 printf 'export default {};\n' > cypress.config.ts
 printf '{"name":"cypress","version":"13.15.0"}' > node_modules/cypress/package.json
+printf '{"name":"demo","lockfileVersion":3}\n' > package-lock.json
 ```
 
 It deliberately has **no `qat.config.json`**. That is the state a new project is in, and 4.3 checks the report a reader
 sees there; 4.4 is where one is created, and 4.11 is where it gains an environment.
 
+The lockfile is not decoration, and it is the one line in this fixture that exists for a product reason rather than for
+realism. The package-manager check is mandatory and advisory: with no lockfile and no `packageManager` field it reports
+`QAT-H002` and the verdict becomes `ready-with-warnings`. §4.3 expects `ready`, so a fixture without a lockfile makes
+that expectation wrong and the person running the pass spends ten minutes deciding whether the extra warning is a defect.
+It is not — it is the check working — and this paragraph exists so the next reader reads it instead of rediscovering it.
+
+Note what the lockfile does **not** need: contents. Identity is presence-based. A one-line file is a valid fixture, and
+using one is a quiet way of confirming that `doctor` never parses it.
+
 **A real Cypress project**, if you have one. A fabricated tree cannot surprise you, and the surprises are the point.
-Nothing in QAT should invoke Cypress, so the check is cheap: it either returns in under a second or it is doing something
-it promised not to.
+Nothing in QAT should invoke Cypress — or a package manager — so the check is cheap: it either returns in under a second
+or it is doing something it promised not to.
 
 ### 3.5 What to record
 
-Operating system and version, Node version, package version under test, and the terminal — `cmd.exe`, Windows Terminal,
-Git Bash, iTerm, GNOME Terminal. A rendering defect is not reproducible without the last one, and a rendering defect is
-the kind only this procedure finds.
+Operating system and version, Node version, package version under test, the terminal — `cmd.exe`, Windows Terminal, Git
+Bash, iTerm, GNOME Terminal — and **which package managers were on `PATH`**. A rendering defect is not reproducible
+without the last two, and a package-manager finding is not reproducible without the tools.
 
 ## 4. The procedure
 
@@ -191,6 +217,9 @@ node "$QAT" doctor ; echo "exit=$?"
 **Read for:** alignment. The values should sit in one column whatever the label's length; `compatibility` is the longest
 and takes a single space. A column that steps in by one is the kind of defect nobody reports and everybody notices.
 
+**Read for, second:** that `ready` is reachable on a project with no `qat.config.json` and a lockfile it never opens. If
+this line says `ready-with-warnings` and the finding is a `QAT-H` code, check §3.4's lockfile before filing anything.
+
 ### 4.4 Initialising that project
 
 ```bash
@@ -245,6 +274,9 @@ mv package.json.bak package.json
 **Read for:** whether the warning reads as advice rather than as an error. If you would not read past it, the wording is
 wrong — and the exit status is deliberately `0`, so the wording is the only thing telling the reader it is survivable.
 
+Note that removing the manifest removes the lockfile's companion, not the lockfile; the package-manager check still
+identifies npm and stays quiet. Two findings for one deletion is what you would see if it did not.
+
 ### 4.6 A project that is blocked
 
 Move the configuration where Cypress will not load it, run, restore:
@@ -290,6 +322,10 @@ node "$QAT" init /tmp/qat-manual >/dev/null 2>&1 ; echo "already initialised: $?
 
 **Expect** `0`, `2`, then `0`. And — importantly — `1` for none of them. `1` is reserved for a failing test, and a tool
 that spends it on a missing directory makes a pipeline unable to tell a bad change from a bad command.
+
+Repeat the first line after §4.12 has produced an advisory finding. It must still be `0`: an advisory condition is advice,
+and a tool that exits non-zero on advice is a tool people pipe through `|| true`, after which it exits zero on blockers
+too.
 
 ### 4.9 Nothing new appeared
 
@@ -401,24 +437,109 @@ Restore the disposable state when done:
 rm qat.config.json
 ```
 
+### 4.12 A project whose package-manager environment disagrees with itself
+
+Nine conditions, one reported at a time, in the order a reader would fix them: identity, agreement, tooling, version,
+installation. Each is a warning, so every case below exits `0` and the verdict moves to `ready-with-warnings` at most.
+
+**Two lockfiles, which is the case worth reading closely.** Add a second one, run, remove it:
+
+```bash
+printf 'lockfileVersion: 9.0\n' > pnpm-lock.yaml
+node "$QAT" doctor ; echo "exit=$?"
+rm pnpm-lock.yaml
+```
+
+**Expect** `result     ready-with-warnings`, a `QAT-H012 warning`, exit `0`, and a sentence naming **both**
+`package-lock.json` and `pnpm-lock.yaml` — and a `fix:` that tells the reader to delete one and not to install first.
+
+**Read for:** whether the finding leaves the decision with the reader. QAT cannot know which file the team means, and a
+message that guessed would be worse than one that refuses. If the remedy reads as a suggestion to run an install, that is
+a defect: an install is what rewrote the file they were trying to keep.
+
+**A recognised manager outside the policy:**
+
+```bash
+python3 - <<'PY'
+import json
+manifest = json.load(open('package.json'))
+manifest['packageManager'] = 'bun@1.1.0'
+json.dump(manifest, open('package.json', 'w'), indent=2)
+PY
+printf '' > bun.lockb
+node "$QAT" doctor | grep -A3 'QAT-H011' ; echo "exit=$?"
+rm bun.lockb
+```
+
+Restore the manifest afterwards — `printf '{"name":"demo","version":"1.0.0","devDependencies":{"cypress":"^13.15.0"}}' > package.json`.
+
+**Expect** `QAT-H011 warning`, exit `0`, and a sentence that says Bun is **not supported** rather than that no package
+manager was found. That distinction is the whole reason the code exists: telling a Bun user their tool is missing sends
+them looking for a file that is present.
+
+**Nothing identifies the manager:**
+
+```bash
+mv package-lock.json package-lock.json.bak
+node "$QAT" doctor | grep -A3 'QAT-H002' ; echo "exit=$?"
+mv package-lock.json.bak package-lock.json
+```
+
+**Expect** `QAT-H002 warning`, `result ready-with-warnings`, exit `0`.
+
+**Read for:** whether it reads as "we could not tell" rather than "your project is broken". The project is fine; the
+declaration is missing, and the remedy has to say so without implying the dependencies are wrong.
+
+**Dependencies not installed, alongside a second, different reason:**
+
+```bash
+mv node_modules node_modules.bak
+node "$QAT" doctor ; echo "exit=$?"
+mv node_modules.bak node_modules
+```
+
+**Expect** `result     blocked` (exit `2`) with **two** findings from different layers: `QAT-D005` for Cypress not being
+installed, and `QAT-H016` for the dependency tree. That is the ladder and the forwarders working as designed — they
+answer different questions — and it is the one case where an advisory and a blocker appear together.
+
+**Read for:** whether `QAT-H016`'s remedy names an install command that respects the lockfile. `npm ci` does; `npm
+install` does not, and recommending it would advise the drift the check exists to detect.
+
+**The lockfile is never touched.** With the tree healthy again:
+
+```bash
+sha256sum package-lock.json
+node "$QAT" doctor >/dev/null
+sha256sum package-lock.json
+```
+
+**Expect** identical hashes, and no `node_modules` changes. This is the manual counterpart of the suite's fixture-hash
+assertion, and it is worth doing once per pass because it is the difference between "does not repair" as a claim and as a
+fact.
+
+**Read for, overall:** that every message names the files or the tool it is about, and that none of them says
+"inconsistent state" where it could say "two lockfiles, delete the one you do not use".
+
 ## 5. Platform checks
 
 ### Windows
 
-| Check                                                                             | Why                                                                                                                                               |
-| --------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Run in `cmd.exe` with the default code page (check with `chcp`, often 850 or 437) | A tick, an em dash or an arrow renders as mojibake there. The output is ASCII by design, and this is how you confirm it stayed that way           |
-| A project under `C:\Users\…\My Projects\demo`                                     | A path with a space is the oldest quoting bug there is, and it fails on Windows before it fails anywhere else                                     |
-| `qat doctor` and `qat init` from a Git Bash shell as well as `cmd.exe`            | Two shells, two quoting rules, one argument — and `init` writes a file, so a mangled argument is a file in the wrong place                        |
-| Redirect with `>` and confirm the file has no stray carriage returns              | Output written with `\r\n` in one place and `\n` in another produces a file that looks right and diffs badly                                      |
-| Open the file `init` wrote in Notepad                                             | One field per line, two-space indentation, and a trailing newline. A JSON file written with `\n` opens correctly; one with mixed endings does not |
+| Check                                                                             | Why                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Run in `cmd.exe` with the default code page (check with `chcp`, often 850 or 437) | A tick, an em dash or an arrow renders as mojibake there. The output is ASCII by design, and this is how you confirm it stayed that way                                                                              |
+| A project under `C:\Users\…\My Projects\demo`                                     | A path with a space is the oldest quoting bug there is, and it fails on Windows before it fails anywhere else                                                                                                        |
+| `qat doctor` and `qat init` from a Git Bash shell as well as `cmd.exe`            | Two shells, two quoting rules, one argument — and `init` writes a file, so a mangled argument is a file in the wrong place                                                                                           |
+| Redirect with `>` and confirm the file has no stray carriage returns              | Output written with `\r\n` in one place and `\n` in another produces a file that looks right and diffs badly                                                                                                         |
+| Run §4.12 on this host and note which managers `where npm pnpm yarn` finds        | `PATHEXT` decides what runs here, and a `.cmd` shim cannot be spawned without a shell — so a declared version is compared only when the shim is not the thing found. Silence from `QAT-H015` is correct, not missing |
+| Open the file `init` wrote in Notepad                                             | One field per line, two-space indentation, and a trailing newline. A JSON file written with `\n` opens correctly; one with mixed endings does not                                                                    |
 
 ### Linux
 
-| Check                                               | Why                                                                                                                           |
-| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
-| A terminal narrower than 90 columns                 | The report is not wrapped by the tool, so the terminal wraps it. Confirm a wrapped line is still readable and still greppable |
-| A project path containing a character outside ASCII | Confirms nothing breaks on a path the tool did not choose — and it is the realistic case for many users                       |
+| Check                                               | Why                                                                                                                                             |
+| --------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| A terminal narrower than 90 columns                 | The report is not wrapped by the tool, so the terminal wraps it. Confirm a wrapped line is still readable and still greppable                   |
+| A project path containing a character outside ASCII | Confirms nothing breaks on a path the tool did not choose — and it is the realistic case for many users                                         |
+| §4.12 on a host with pnpm installed as well as npm  | `PATH` order decides which binary a located tool is, and a host with both is the case where a `PATH`-only locator can be seen working correctly |
 
 ### macOS
 
@@ -430,30 +551,36 @@ line may differ from the path you typed when the directory came from the process
 
 Read this before filing anything. Each of these is deliberate, and each has a reason recorded somewhere in `docs/`.
 
-| You will see                                                                 | Why it is not a bug                                                                                                                                                             |
-| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| No `specs` or `manager` line in the report                                   | Two facts about a project's _shape_ left the report when it moved to the assessment, which carries _correctness_ facts. Restoring them is a contract change, not a one-line fix |
-| `qat init` on an initialised project exits `0`                               | The postcondition — a project with a usable configuration — already holds. A non-zero status would fail every provisioning script that runs twice                               |
-| `qat init` leaves an unreadable `qat.config.json` byte-identical             | It never repairs and never replaces. The file is named in the message, and the remedy is to fix or delete it                                                                    |
-| `qat init --replace` is an unknown option                                    | The safe writer implements replacement with a declared intent; no command exposes it, so no command line can destroy a configuration by accident                                |
-| `qat init` writes two fields and no example environment                      | The document contains only what has no default. An environment scaffolded by default would be a target nobody chose                                                             |
-| `qat doctor` says nothing about a `qat.config.json` it cannot read           | A known gap: an unusable configuration produces no finding and no output block. Closing it decides the exit status, so it is a separate decision                                |
-| `env none selected; declare one, or set defaultEnvironment` with exit `0`    | The project is valid; the _run_ has no target. Choosing one would be a guess, and the refusal is worth more than a plausible default                                            |
-| A profile written as `{}` is refused                                         | It declares nothing and looks configured. The message names the field, and the fix is to add a target, variables or secrets, or to delete the environment                       |
-| A variable whose value begins `env:` is refused                              | It is almost always a secret written into the wrong map. The remedy says to declare it under `secrets`, where the value is read at run time                                     |
-| A secret reference carrying a `value` is refused                             | Secret values are never stored in the file. The property is unknown, and the message names it rather than committing a credential                                               |
-| A profile `baseUrl` with a username or password is refused                   | A credential in a committed URL is a leaked secret that keeps working until somebody rotates it, then fails with a message about the host                                       |
-| A duplicate key in the JSON is silently the last one                         | `JSON.parse` cannot report it. A duplicated field is a defect nothing notices, and no validator can see it                                                                      |
-| `qat doctor` has no `--environment`                                          | The `env` line reports the environment the configuration _names_, not one this invocation chose. There is no flag yet                                                           |
-| The environment resolver exists but no command uses it                       | The run command is the consumer. Until it lands, that service is specified by its tests                                                                                         |
-| A `.tmp` file beside the configuration after a killed `init`                 | The writer writes to a temporary name and links it into place. A crash leaves the temporary, which is inert, identifiable and safe to delete                                    |
-| A component-testing project is blocked with `QAT-V002`                       | QAT has no component-test execution path, so refusing is more useful than starting a run that collects the wrong directory                                                      |
-| A pre-10 project _with_ component tests is refused                           | The classifier prefers component evidence over the legacy folder, because the alternative error — treating every component project as runnable — is worse                       |
-| A configuration at `cypress/nested/cypress.config.ts` is invisible           | The tool lists no directory, by design. The misplaced-configuration probe is a fixed list at one depth                                                                          |
-| A `cypress.config.yaml` is invisible                                         | Same reason: finding an unknown extension means listing the directory, and determinism is worth more than the coverage                                                          |
-| A corrupt `node_modules/cypress/package.json` is reported as "not installed" | The remedy is the same — install again — and blaming the project's own manifest would be wrong                                                                                  |
-| `QAT-V004` never appears                                                     | Nothing verifies the executable yet, and `undefined` is never treated as `false`                                                                                                |
-| `qat run` does not exist                                                     | It is the next command, not a missing one. `--help` lists what the tool does, not what it intends to                                                                            |
+| You will see                                                                 | Why it is not a bug                                                                                                                                                                               |
+| ---------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No `specs` or `manager` line in the report                                   | Two facts about a project's _shape_ left the report when it moved to the assessment, which carries _correctness_ facts. Restoring them is a contract change, not a one-line fix                   |
+| `qat init` on an initialised project exits `0`                               | The postcondition — a project with a usable configuration — already holds. A non-zero status would fail every provisioning script that runs twice                                                 |
+| `qat init` leaves an unreadable `qat.config.json` byte-identical             | It never repairs and never replaces. The file is named in the message, and the remedy is to fix or delete it                                                                                      |
+| `qat init --replace` is an unknown option                                    | The safe writer implements replacement with a declared intent; no command exposes it, so no command line can destroy a configuration by accident                                                  |
+| `qat init` writes two fields and no example environment                      | The document contains only what has no default. An environment scaffolded by default would be a target nobody chose                                                                               |
+| `qat doctor` says nothing about a `qat.config.json` it cannot read           | A known gap: an unusable configuration produces no finding and no output block. Closing it decides the exit status, so it is a separate decision                                                  |
+| `env none selected; declare one, or set defaultEnvironment` with exit `0`    | The project is valid; the _run_ has no target. Choosing one would be a guess, and the refusal is worth more than a plausible default                                                              |
+| A profile written as `{}` is refused                                         | It declares nothing and looks configured. The message names the field, and the fix is to add a target, variables or secrets, or to delete the environment                                         |
+| A variable whose value begins `env:` is refused                              | It is almost always a secret written into the wrong map. The remedy says to declare it under `secrets`, where the value is read at run time                                                       |
+| A secret reference carrying a `value` is refused                             | Secret values are never stored in the file. The property is unknown, and the message names it rather than committing a credential                                                                 |
+| A profile `baseUrl` with a username or password is refused                   | A credential in a committed URL is a leaked secret that keeps working until somebody rotates it, then fails with a message about the host                                                         |
+| A duplicate key in the JSON is silently the last one                         | `JSON.parse` cannot report it. A duplicated field is a defect nothing notices, and no validator can see it                                                                                        |
+| `qat doctor` has no `--environment`                                          | The `env` line reports the environment the configuration _names_, not one this invocation chose. There is no flag yet                                                                             |
+| The environment resolver exists but no command uses it                       | The run command is the consumer. Until it lands, that service is specified by its tests                                                                                                           |
+| A `.tmp` file beside the configuration after a killed `init`                 | The writer writes to a temporary name and links it into place. A crash leaves the temporary, which is inert, identifiable and safe to delete                                                      |
+| A component-testing project is blocked with `QAT-V002`                       | QAT has no component-test execution path, so refusing is more useful than starting a run that collects the wrong directory                                                                        |
+| A pre-10 project _with_ component tests is refused                           | The classifier prefers component evidence over the legacy folder, because the alternative error — treating every component project as runnable — is worse                                         |
+| A configuration at `cypress/nested/cypress.config.ts` is invisible           | The tool lists no directory, by design. The misplaced-configuration probe is a fixed list at one depth                                                                                            |
+| A `cypress.config.yaml` is invisible                                         | Same reason: finding an unknown extension means listing the directory, and determinism is worth more than the coverage                                                                            |
+| A corrupt `node_modules/cypress/package.json` is reported as "not installed" | The remedy is the same — install again — and blaming the project's own manifest would be wrong                                                                                                    |
+| `QAT-V004` never appears                                                     | Nothing verifies the executable yet, and `undefined` is never treated as `false`                                                                                                                  |
+| `qat run` does not exist                                                     | It is the next command, not a missing one. `--help` lists what the tool does, not what it intends to                                                                                              |
+| A `QAT-H` finding appears on a project with no lockfile and no declaration   | Nine package-manager codes, all advisory: `ready-with-warnings` and exit `0`. The project is runnable; we simply cannot say how it installs                                                       |
+| The package-manager finding changes between two machines                     | It reads `PATH` and asks nothing of a tool it did not find. A host with pnpm and one without are two different, both-correct reports — which is why §3.5 records the tools                        |
+| No package-manager finding about a version on Windows                        | A `.cmd`/`.bat` shim cannot be spawned without a shell, and enabling one to read a version is the trade this tool refuses. The comparison is skipped, and skipping is silent                      |
+| A version is never compared when the project declares none                   | Comparing against a bound QAT invented would be a support policy this tool does not have. Silence is the correct answer, and `QAT-H015` is reserved for a declared version that could not be read |
+| The package-manager finding names files but never their contents             | Identity is presence-based. `doctor` does not open a lockfile, does not read `.npmrc`, and does not install anything                                                                              |
+| `doctor` exits `0` while reporting a tool is missing from `PATH`             | That is advice about a future install, not a reason to refuse a run of an already-installed suite. Only strict mode turns it into a status                                                        |
 
 ## 7. Recording the result
 
@@ -461,6 +588,7 @@ A manual pass is evidence only if somebody else can read it. For each section, r
 
 ```
 4.6 blocked project — PASS on Windows 11 24H2, Node 24.4.0, Windows Terminal, code page 850.
+PATH tools: npm 10.8.2 (pnpm absent).
 Output:
   result     blocked
   QAT-V001 error
@@ -489,6 +617,20 @@ Notes: the third reads as an instruction rather than a failure, which is right f
 The unusable-profile case produced no output block and no finding, as §6 records.
 ```
 
+```
+4.12 package manager — PASS on the same host, three of the nine conditions observable.
+Output:
+  result     ready-with-warnings
+  QAT-H012 warning
+    The project contains lockfiles for more than one package manager: package-lock.json, pnpm-lock.yaml (npm, pnpm).
+    fix: Keep the lockfile that matches packageManager and delete the others, then commit. Do not run an install first…
+Second run (bun declared): QAT-H011 warning, exit 0, named Bun as unsupported rather than unidentified.
+Third run (no lockfile, no declaration): QAT-H002 warning, exit 0.
+Notes: exit 0 in all three. package-lock.json sha256 unchanged before and after every run.
+QAT-H014/H015/H016/H017 not observable on this host: no version was declared, no attribution exists for
+node_modules, and removing it also blocks QAT-D005. The unit fixtures cover those rungs.
+```
+
 A `PASS` with no output is a claim, not evidence — the same argument this whole tool makes about a green build.
 
 Never paste a real customer path, a repository name you do not own, or a project directory from a machine that is not
@@ -505,6 +647,9 @@ A manual finding is worth filing when it meets one of these:
 - **A refusal names the wrong thing.** A profile refused for its `variables` map when the mistake was an empty profile, or
   a path refused without naming the field.
 - **A platform renders it wrong.** Include the terminal, the code page, and a screenshot if the problem is visual.
+- **A package-manager finding blames the wrong party.** "Not supported" for a project with no tool on `PATH`, "not
+  identified" for a project that names Bun, "not installed" for a tree that exists. These four conditions are deliberately
+  separate codes, and a message that confuses two of them is a defect even though the exit status is right.
 - **It contradicts a document.** `docs/` is normative; a behavioural difference between it and the binary is a defect in
   whichever is newer.
 
@@ -528,9 +673,15 @@ binary.
 **`engines` is a warning, not a gate.** Node 20 satisfies `npm ci` and produces a warning nobody reads, so a pass can run
 on a runtime the project does not support and look green. Section 3.1 exists because that happened.
 
-**A fabricated project can be too clean.** It has no lockfile, no workspace, no unusual directory names, and no history.
-That is why one pass against a real project matters — it is the only check that sees the shapes the fixtures did not
-imagine.
+**The package-manager finding is a property of the host, not of the project.** The same checkout reports
+`ready-with-warnings` on a machine with pnpm installed and `ready` on one without, and both are correct. Two consequences:
+record the tools in §3.5, and never treat a difference between two machines as a defect until you have compared the two
+`PATH`s. A "fix" that made the report independent of the machine would have to invent evidence, which is the one thing
+this check refuses to do.
+
+**A fabricated project can be too clean.** It has no workspace, no unusual directory names and no history — and, if you
+forget §3.4's lockfile, no package-manager footprint either. That is why one pass against a real project matters: it is
+the only check that sees the shapes the fixtures did not imagine.
 
 **A rendering defect is invisible in a captured string.** The suite compares arrays of strings; you are comparing what a
 terminal drew. If the output looks wrong but the assertions pass, the defect is real and belongs in the presenter — not in

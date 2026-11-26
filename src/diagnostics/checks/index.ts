@@ -22,9 +22,16 @@
  *
  * `CheckFacts` is an argument type, so a caller needs it. The groups are exported beside it because the caller is the
  * gatherer, and a function returning `OutputFacts` is clearer than one returning an anonymous object literal that
- * happens to match. `RuntimeRequirementFact` belongs in that list for the same reason: the gatherer is the one that
- * reads the declared range and has to produce the value the check compares against. They are inputs, not decisions:
- * nothing here reads them.
+ * happens to match.
+ *
+ * That reasoning now covers two groups and three groups' worth of shapes, which is worth stating plainly rather than
+ * leaving to inference. The runtime group needs `RuntimeRequirementFact` and `RuntimeFacts`; the package-manager group
+ * needs `PackageManagerFacts` plus the four pieces it is assembled from — how identity was established, what the
+ * executable probe found, how far an install got, and why a version could not be read. A gatherer produces all of them,
+ * and a gatherer that had to deep-import `./contracts.js` to name its own output would be a caller of this layer
+ * reaching around its surface for no reason.
+ *
+ * They are inputs, not decisions: nothing here reads them.
  *
  * ## Why `FactGroup` and `FACT_KEYS` are not
  *
@@ -32,11 +39,18 @@
  * naming it. `FACT_KEYS` maps a label to a property, and it exists for the runner — a consumer indexing the facts
  * object itself wants a group it declared, not a map it found.
  *
- * ## Why the runtime rules are not exported
+ * The rules import `FactGroup` from `./contracts.js` directly, which is the narrower route: a rule knows the group it
+ * reads by name, and going through the barrel to reach a value the barrel deliberately withholds would make the
+ * withholding look accidental.
+ *
+ * ## Why the rule definitions are not exported
  *
  * `CHECKS` is the register, and a definition reachable a second way is a definition that can be registered twice or
- * registered in the wrong order. The two runtime definitions live in `./rules/node-runtime.js`, are pulled in by
- * `./rules.js`, and surface here only as entries in the table.
+ * registered in the wrong order. The runtime pair and the package-manager ladder live in `./rules/*.js`, are pulled in
+ * by `./rules.js`, and surface here only as entries in the table.
+ *
+ * A test that needs one definition finds it in `CHECKS` by identifier, which is also how the runner finds it — so the
+ * test and the product agree about where a check comes from rather than the test having a private route.
  *
  * ## What is no longer exported, and why
  *
@@ -45,6 +59,10 @@
  * now travels as evidence in `RuntimeFacts.required`, so there is no restatement left to export — and a barrel that
  * kept exporting the old constant would have been the last place a stale copy survived, quoted by exactly the code
  * that was supposed to stop quoting it.
+ *
+ * The same fate applies to any name whose only purpose was migration. A deprecated alias re-exported here would be
+ * reachable by every consumer, which is the opposite of narrowing a vocabulary: the compiler could no longer tell
+ * anyone which call sites had moved, because they all still resolve.
  *
  * ## No logic in this file, ever
  *
@@ -67,10 +85,18 @@ export { HEALTH_GUIDANCE } from "./guidance.js";
 export type {
   CheckDefinition,
   CheckFacts,
+  /** The runtime group, and the narrowed requirement a gatherer produces for it. */
+  RuntimeFacts,
+  VersionRequirementFact,
+  /** The package-manager group, and the four shapes a gatherer assembles it from. */
+  PackageManagerFacts,
+  PackageManagerSelection,
+  PackageManagerExecutableFact,
+  PackageManagerInstallState,
+  UnverifiedVersionReason,
+  /** The configuration-file and environment groups. */
   EnvironmentFacts,
+  /** The two output directories, and the values a prober reports for each. */
   OutputFacts,
   OutputTarget,
-  PackageManagerFacts,
-  RuntimeFacts,
-  RuntimeRequirementFact,
 } from "./contracts.js";

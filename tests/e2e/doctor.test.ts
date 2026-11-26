@@ -49,15 +49,30 @@ import { ExitCode } from "~/core/errors/index.js";
  *
  * ## The runtime question, and why there is no unsupported-runtime case here
  *
- * `doctor` reports the runtime checks alongside everything else, and a **passing check contributes no finding** — so on
- * a supported interpreter this file's assertions are unchanged and the runtime work is invisible from the outside. That
- * is the correct observable behaviour, and it is load-bearing: a check that warned on a supported runtime would make
- * every clean project's report noisy in every pipeline. The cases at the end of this file are what would catch it.
+ * `doctor` reports the runtime checks alongside everything else, and a **passing check contributes no finding** — so on a
+ * supported interpreter this file's assertions are unchanged and the runtime work is invisible from the outside. That is
+ * the correct observable behaviour, and it is load-bearing: a check that warned on a supported runtime would make every
+ * clean project's report noisy in every pipeline. The cases near the end of this file are what would catch it.
  *
  * There is deliberately no case that *forces* an unsupported runtime. That needs a second interpreter, and adding an
- * override to arrange it would create exactly the bypass the policy exists to prevent — an environment variable that
- * lets CI fake compatibility. The unsupported paths are covered where they can be driven honestly: `run.test.ts` for
- * the report, and the compatibility suites for the comparison itself.
+ * override to arrange it would create exactly the bypass the policy exists to prevent — an environment variable that lets
+ * CI fake compatibility. The unsupported paths are covered where they can be driven honestly: `run.test.ts` for the
+ * report, and the compatibility suites for the comparison itself.
+ *
+ * ## The tooling question, and the same rule
+ *
+ * The package-manager check follows the runtime one exactly: mandatory, advisory, and silent when it passes. So a project
+ * that declares its manager contributes no finding, and the clean-report assertions below are unchanged.
+ *
+ * Two consequences of that wiring, both of which land here rather than in the checks:
+ *
+ *   • The fixtures must declare a manager — a lockfile or a `packageManager` field. A fixture with neither is a project
+ *     QAT cannot identify the tooling of, and the check would correctly warn, turning `ready` into
+ *     `ready-with-warnings`. That would be a *fixture* defect reported by a *product* assertion, which is exactly the
+ *     sort of failure this paragraph exists to make diagnosable in one reading.
+ *   • There is no case forcing a conflicting pair of lockfiles. `doctor` would report it honestly as `QAT-H012` with a
+ *     zero exit, and the second half of that — that an advisory condition does not change the status — is what
+ *     `run.test.ts` asserts against literal facts, where the arrangement costs one object rather than two files.
  *
  * ## Two imports, and the split is the modules'
  *
@@ -113,8 +128,9 @@ interface DoctorFinding {
  * unit suite, which pins the format with literal strings — this file reads values rather than re-asserting spacing,
  * because a `toContain('demo')` would pass whatever column the name happened to land in.
  *
- * The trailing space in the match is load-bearing. Without it a label that is a prefix of another — `package` and a
- * hypothetical `packageMetadata` row — would match whichever came first.
+ * The trailing space is implied by the column arithmetic rather than matched literally: a label that is a prefix of
+ * another — `config` and, one day, something longer — cannot collide, because the slice starts past the padded column
+ * rather than immediately after the label's last character.
  *
  * `find` returns the *first* matching line, which matters now that `config` appears twice: once in the summary for the
  * framework's configuration file, and once in the output block for the anchored path of one. The summary always comes
@@ -295,8 +311,8 @@ describe("doctor", () => {
 
       const result = await qat(["doctor", root]);
 
-      // Not "nowhere", not a placeholder. A project with no configuration has no output location, and inventing one would
-      // tell a reader their reports are going somewhere they are not.
+      // Not "nowhere", not a placeholder. A project with no configuration has no output location, and inventing one
+      // would tell a reader their reports are going somewhere they are not.
       expect(valueOf(result.stdout, "reports")).toBeUndefined();
       expect(valueOf(result.stdout, "evidence")).toBeUndefined();
       expect(result.stderr).toBe("");
@@ -316,8 +332,8 @@ describe("doctor", () => {
 
       // Current behaviour, recorded rather than endorsed. An unusable configuration produces no finding and no output
       // block, so the report is indistinguishable from a project that was never initialised. Closing that means merging
-      // the loader's diagnostics into the assessment's gate, which changes this exit status — so this case exists to make
-      // that change a decision rather than an accident.
+      // the loader's diagnostics into the assessment's gate, which changes this exit status — so this case exists to
+      // make that change a decision rather than an accident.
       expect(result.exitCode).toBe(ExitCode.Success);
       expect(result.stdout).not.toContain("QAT-C002");
       expect(valueOf(result.stdout, "reports")).toBeUndefined();
@@ -419,8 +435,8 @@ describe("doctor", () => {
 
       const document = parseDocument(result.stdout);
 
-      // A consumer reading the document gets the same anchors the command printed, from the same resolution — one read of
-      // one tree, not two.
+      // A consumer reading the document gets the same anchors the command printed, from the same resolution — one read
+      // of one tree, not two.
       expect(
         document.assessment?.configuration?.reportsDirectory?.absolute,
       ).toBe(join(root, OUTPUT_DEFAULTS.reports));
@@ -480,7 +496,9 @@ describe("doctor", () => {
 
       expect(document.assessment?.gates?.execute?.blocking).toStrictEqual([]);
       expect(
-        document.assessment?.gates?.execute?.warnings?.map((f) => f.code),
+        document.assessment?.gates?.execute?.warnings?.map(
+          (finding) => finding.code,
+        ),
       ).toStrictEqual(["QAT-D010"]);
     });
 

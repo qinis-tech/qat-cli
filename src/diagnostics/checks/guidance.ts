@@ -29,19 +29,46 @@
  * step, so there is nothing left to drift — and a test that used to compare two copies now asserts that the sentence
  * quotes the range it was given.
  *
+ * ## Why the package-manager codes multiplied
+ *
+ * One `PackageManagerUnknown` entry used to stand for the whole group, and it could only ever describe one of them. The
+ * conditions a reader actually hits — nothing identified the tool, two lockfiles disagree, the field is unusable, the
+ * tool is not installed, the tool's version disagrees with the pin, the dependencies were never installed, someone
+ * else installed them — have different fixes, and a single message naming one of them sends every other reader to the
+ * wrong place.
+ *
+ * Splitting them is the cheap half of the fix; the expensive half is that the split is enforced. `HealthCode` gained
+ * the members, and this `Record` will not compile until each has prose. A new condition cannot be added by quietly
+ * reusing a neighbouring message. The order of work is therefore: add the member, then the union complains, then this
+ * table complains — never the other way round.
+ *
  * ## Guarding evidence: extract the value, then test the parent
  *
- * Every runtime entry below starts by lifting the value it needs through an optional chain and then testing both the
- * value and the object it came from. That looks like one test too many, and it is not: `facts.runtime?.nodeVersion
- * === undefined` cannot tell the compiler *why* the value was missing, so the parent stays unnarrowed and the good
- * branch cannot read `facts.runtime.required`. Two separate facts, two separate tests, each of which also reads as a
- * single question.
+ * Every entry below starts by lifting the value it needs through an optional chain and then testing both the value and
+ * the object it came from. That looks like one test too many, and it is not: `facts.runtime?.nodeVersion === undefined`
+ * cannot tell the compiler *why* the value was missing, so the parent stays unnarrowed and the good branch cannot read
+ * `facts.runtime.required`. Two separate facts, two separate tests, each of which also reads as a single question.
+ *
+ * ## Why the code-span helper is called `inlineCode`
+ *
+ * It was called `code`, which shadowed the `code` parameter of `healthFinding` and — more importantly — gave the word a
+ * second meaning in a file where it already means a diagnostic code. The parameter kept the name because it mirrors
+ * `CheckFinding.code`; the helper was renamed because it produces markup, not identity.
  */
+
 import {
   HealthCode,
   type CheckFinding,
 } from "../../core/application/checks.js";
 import { DiagnosticSeverity } from "../../core/application/diagnostics.js";
+// The install command is *policy*, not prose: which invocation respects a committed lockfile is a fact about a
+// package manager, kept in one table and asserted against its own documentation. Quoting it from there is the same
+// rule as quoting the supported range from evidence — a second copy is a copy that will drift.
+import {
+  installCommandFor,
+  PACKAGE_MANAGER_POLICY,
+  type PackageManagerName,
+} from "../../project/package-manager/index.js";
 
 import type { CheckFacts, OutputTarget } from "./contracts.js";
 
@@ -63,6 +90,62 @@ function fileOf(facts: CheckFacts): string {
 
 /** A profile name, as the configuration schema defines one. Used only to decide whether a name is safe to quote. */
 const PROFILE_NAME = /^[a-z][a-z0-9-]*$/;
+
+/**
+ * A token that is safe to echo back: a manager name, a declaration or a tool name.
+ *
+ * Deliberately conservative. Anything a reader typed could have been pasted from the wrong buffer, and a diagnostic
+ * is the one artefact guaranteed to be printed, logged and attached to an issue. A value that does not look like a
+ * name is described instead of quoted.
+ */
+const SAFE_TOKEN = /^[A-Za-z0-9@._+-]{1,64}$/;
+
+function isQuotable(value: string | undefined): value is string {
+  return value !== undefined && SAFE_TOKEN.test(value);
+}
+
+/**
+ * Renders an inline code span.
+ *
+ * Exists because a backtick inside a template literal must be escaped, and doing that inline several times is how
+ * three of the remediations below once ended up with unbalanced quotes. One function, one escape, and every command in
+ * this file is built the same way.
+ */
+function inlineCode(text: string): string {
+  return `\`${text}\``;
+}
+
+/** A bounded, readable list. Evidence can hold more lockfiles than a sentence can carry. */
+function listOf(values: readonly string[]): string {
+  const shown = values.slice(0, 4);
+  return shown.join(", ") + (values.length > shown.length ? ", …" : "");
+}
+
+/**
+ * Narrows a name that arrived as a string to one the policy knows.
+ *
+ * The facts carry manager names as `string`, because the gathering layer should not have to import this module's
+ * vocabulary. The policy table is the authority on which names are real, so the guard reads it rather than listing the
+ * names again — and a name that is not in the table never reaches `installCommandFor`, which is why no cast is needed.
+ */
+function asManagerName(
+  value: string | undefined,
+): PackageManagerName | undefined {
+  return value !== undefined &&
+    Object.prototype.hasOwnProperty.call(PACKAGE_MANAGER_POLICY, value)
+    ? (value as PackageManagerName)
+    : undefined;
+}
+
+/** The install command for a manager, or a neutral phrase when the name is not one the policy knows. */
+function installHint(manager: string | undefined): string {
+  const known = asManagerName(manager);
+
+  if (known === undefined)
+    return "the install command for the package manager this project uses";
+
+  return inlineCode(installCommandFor(known));
+}
 
 export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
   /**
@@ -99,7 +182,7 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
 
       return {
         explanation: `Node ${version} is running, and QAT supports ${runtime.required.range} (declared in ${runtime.required.origin}).`,
-        remediation: `Install a Node release inside ${runtime.required.range}, confirm it with \`node --version\`, then run the command again. A newer major is not automatically compatible: support is only claimed for versions that have been tested.`,
+        remediation: `Install a Node release inside ${runtime.required.range}, confirm it with ${inlineCode("node --version")}, then run the command again. A newer major is not automatically compatible: support is only claimed for versions that have been tested.`,
       };
     },
   },
@@ -137,15 +220,13 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
         return {
           explanation:
             "QAT could not read the running Node version, so compatibility with its requirement could not be confirmed.",
-          remediation:
-            "Run the command on a released Node interpreter — `node --version` should print a plain major.minor.patch value — and report the result if this repeats.",
+          remediation: `Run the command on a released Node interpreter — ${inlineCode("node --version")} should print a plain major.minor.patch value — and report the result if this repeats.`,
         };
       }
 
       return {
         explanation: `QAT could not confirm that Node ${version} satisfies ${runtime.required.range} (declared in ${runtime.required.origin}).`,
-        remediation:
-          "Check that `node --version` prints a released major.minor.patch value, then reinstall QAT if the declared requirement cannot be read.",
+        remediation: `Check that ${inlineCode("node --version")} prints a released major.minor.patch value, then reinstall QAT if the declared requirement cannot be read.`,
       };
     },
   },
@@ -186,15 +267,298 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
     },
   },
 
+  // ───────────────────────────────────────────────────────────────────────────
+  // Package manager
+  //
+  // Eight entries for eight fixes. Every one says what was found and what to do about it, in the reader's vocabulary:
+  // no sentence says "inconsistent state" when it can say "two lockfiles, delete the one you do not use".
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Nothing identifies the manager: no lockfile, no `packageManager` field.
+   *
+   * A warning rather than an error. The project may run perfectly; we simply cannot say how it installs, and a
+   * question we could not answer must not block work we can still perform.
+   */
   [HealthCode.PackageManagerUnknown]: {
     severity: DiagnosticSeverity.Warning,
     describe: () => ({
       explanation:
-        "No package manager could be identified: neither package.json nor a lockfile names one.",
+        "No package manager could be identified: the project has no lockfile and its manifest declares none.",
       remediation:
         "Declare one in the packageManager field, or commit the lockfile your project installs with.",
     }),
   },
+
+  /**
+   * Something was declared, but it cannot be used as written.
+   *
+   * The two problems share this code because they share a fix — read the field, correct it — and because they are the
+   * same sentence with a different clause. `missing-version` is by far the common one: Corepack needs an exact
+   * version, and `"pnpm"` alone looks like a declaration without being one.
+   *
+   * The raw value is quoted only when it looks like a name. It is user text from a file that a diagnostic may print
+   * anywhere, and a pasted token in the wrong field must not be echoed back as if it were a version.
+   */
+  [HealthCode.PackageManagerDeclarationInvalid]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const selection = facts.packageManager?.selection;
+      const declaration =
+        selection?.status === "undeclared" ? selection.declaration : undefined;
+      const quoted =
+        declaration !== undefined && isQuotable(declaration.raw)
+          ? declaration.raw
+          : undefined;
+
+      if (declaration === undefined) {
+        return {
+          explanation:
+            "The packageManager field could not be used to identify the package manager.",
+          remediation:
+            'Set it to name@version, for example "pnpm@9.1.0", and re-run the command.',
+          path: "package.json",
+        };
+      }
+
+      // Wording follows the cause; one sentence covering both would send half the readers the wrong way.
+      const explanation =
+        declaration.problem === "missing-version"
+          ? quoted === undefined
+            ? "The packageManager field names a package manager without a version, which cannot be used as written."
+            : `The packageManager field declares "${quoted}" without a version, which cannot be used as written.`
+          : quoted === undefined
+            ? "The packageManager field is not a value QAT can use."
+            : `The packageManager field declares "${quoted}", which is not a value QAT can use.`;
+
+      return {
+        explanation,
+        remediation:
+          declaration.problem === "missing-version"
+            ? 'Add the exact version you install with, for example "pnpm@9.1.0".'
+            : 'Set the field to name@version, for example "pnpm@9.1.0".',
+        path: "package.json",
+      };
+    },
+  },
+
+  /**
+   * The project installs with a manager outside the supported policy.
+   *
+   * Distinct from "unknown" on purpose: the tool was identified, we do not support it. Saying "not identified" to a Bun
+   * user sends them looking for a missing file that is not missing.
+   */
+  [HealthCode.PackageManagerUnsupported]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const selection = facts.packageManager?.selection;
+      const name =
+        selection?.status === "unsupported" ? selection.name : undefined;
+
+      return {
+        explanation: isQuotable(name)
+          ? `This project installs with ${name}, which QAT does not support. QAT supports npm, pnpm and yarn.`
+          : "This project installs with a package manager QAT does not support. QAT supports npm, pnpm and yarn.",
+        remediation:
+          "Install with a supported package manager, or expect reduced support for this project. QAT will not modify your lockfile.",
+        path: "package.json",
+      };
+    },
+  },
+
+  /**
+   * Two or more managers are implicated.
+   *
+   * The files are named and the choice is left to the reader. Naming one would be a guess, and a guess here rewrites a
+   * lockfile in the next install. "Delete the one you do not use" is the actual instruction, so it is the one printed.
+   */
+  [HealthCode.PackageManagerConflicting]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const group = facts.packageManager;
+      const selection = group?.selection;
+      const lockfiles =
+        selection?.status === "conflicting"
+          ? selection.lockfiles
+          : (group?.lockfiles ?? []);
+      const managers =
+        selection?.status === "conflicting" ? selection.managers : [];
+
+      if (lockfiles.length === 0) {
+        return {
+          explanation:
+            "The project contains lockfiles for more than one package manager.",
+          remediation:
+            "Keep the lockfile that matches packageManager, delete the other, then commit. Do not run an install first.",
+        };
+      }
+
+      // The leading space is part of the value: the clause is spliced directly after a filename list.
+      const namedBy = managers.length === 0 ? "" : ` (${listOf(managers)})`;
+
+      return {
+        explanation: `The project contains lockfiles for more than one package manager: ${listOf(lockfiles)}${namedBy}. QAT cannot tell which one your CI installs from.`,
+        remediation:
+          "Keep the lockfile that matches packageManager and delete the others, then commit. Do not run an install first — it may rewrite the file you meant to keep.",
+      };
+    },
+  },
+
+  /**
+   * The manager is identified and supported, but its binary is not on PATH.
+   *
+   * The remediation names the two realistic routes: enable the shim that ships with Node, or install the tool
+   * globally. Both are given because the correct one depends on how the reader manages their toolchain, and a single
+   * answer would be wrong for half of them.
+   */
+  [HealthCode.PackageManagerExecutableMissing]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const selection = facts.packageManager?.selection;
+      const name =
+        selection?.status === "identified" ? selection.name : undefined;
+      const manager = isQuotable(name) ? name : "the manager";
+
+      return {
+        explanation: `This project installs with ${isQuotable(name) ? name : "a package manager"}, which is not available on PATH. Installing with a different tool would create a second lockfile alongside the one you have.`,
+        remediation: `Install it — for example ${inlineCode("corepack enable")} and ${inlineCode(`corepack prepare ${manager} --activate`)}, or install it globally with npm — then re-run ${inlineCode("qat doctor")}.`,
+      };
+    },
+  },
+
+  /**
+   * The binary answered, and its version disagrees with what the project declared.
+   *
+   * The expectation and its provenance are both printed, because "wrong version" without saying *whose* version sends
+   * the reader to the wrong file. The pin and the engines range are different documents, and only the one that decided
+   * the outcome is quoted.
+   */
+  [HealthCode.PackageManagerVersionMismatch]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const group = facts.packageManager;
+      const selection = group?.selection;
+      const name =
+        selection?.status === "identified" ? selection.name : undefined;
+      const installed = group?.executable?.version;
+      const required = group?.required;
+
+      if (installed === undefined || required === undefined) {
+        return {
+          explanation:
+            "The installed package manager does not match the version this project declares.",
+          remediation: `Install the version the project declares, then re-run ${inlineCode("qat doctor")}.`,
+        };
+      }
+
+      const managerLabel = isQuotable(name) ? name : "The package manager";
+      const useTarget = isQuotable(name)
+        ? `${name}@${installed}`
+        : "the declared version";
+
+      return {
+        explanation: `${managerLabel} ${installed} is installed, and the project declares ${required.range} (${required.origin}).`,
+        remediation: `Install a version inside ${required.range} — ${inlineCode(`corepack use ${useTarget}`)} rewrites nothing else — then re-run ${inlineCode("qat doctor")}.`,
+      };
+    },
+  },
+
+  /**
+   * A version was expected and none could be read.
+   *
+   * Indeterminate, not a failure: the toolchain answered oddly, which is not the project's fault and must not be
+   * reported as though it were. The reason is named because "timed out" and "printed nothing usable" are different
+   * mornings for whoever has to debug it.
+   */
+  [HealthCode.PackageManagerVersionUnverified]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const group = facts.packageManager;
+      const selection = group?.selection;
+      const name =
+        selection?.status === "identified" ? selection.name : undefined;
+      const reason = group?.executable?.reason;
+      const expected = group?.required?.range ?? "the declared requirement";
+      const managerLabel = isQuotable(name) ? name : "The package manager";
+      const manager = isQuotable(name) ? name : "the manager";
+
+      // `not-probed` is not a problem: it means no version was declared, or the platform needs a shell we refuse to
+      // enable. Reported plainly, and never dressed up as a defect.
+      if (reason === "not-probed") {
+        return {
+          explanation: `${managerLabel} is installed. Its version was not read, so it was not compared with ${expected}.`,
+          remediation: `Re-run ${inlineCode("qat doctor")} where the tool can be queried, or declare the version the project expects.`,
+        };
+      }
+
+      const detail =
+        reason === "timeout"
+          ? "did not answer in time"
+          : reason === "failed"
+            ? "could not be run"
+            : "printed no usable version";
+
+      return {
+        explanation: `${managerLabel} is installed but ${detail}, so its version could not be compared with ${expected}.`,
+        remediation: `Confirm ${inlineCode(`${manager} --version`)} prints a version, then re-run ${inlineCode("qat doctor")}.`,
+      };
+    },
+  },
+
+  /**
+   * The manager is fine; the installation never happened.
+   *
+   * The one entry in this group that names the command, because the reader's next action is exactly one command and
+   * guessing it is where people install with the wrong tool. The command comes from policy, so it is the invocation
+   * that respects the committed lockfile rather than one that rewrites it.
+   */
+  [HealthCode.PackageManagerNotInstalled]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const selection = facts.packageManager?.selection;
+      const name =
+        selection?.status === "identified" ? selection.name : undefined;
+
+      return {
+        explanation: `${isQuotable(name) ? name : "The package manager"} identifies this project, and its dependencies are not installed.`,
+        remediation: `Install them with ${installHint(name)}, then re-run ${inlineCode("qat doctor")}.`,
+      };
+    },
+  },
+
+  /**
+   * Dependencies exist, and a different tool created them.
+   *
+   * Worth its own code and a warning: everything looks installed, so the failure surfaces later as a resolution error
+   * that names a package nobody edited. Naming both managers is the whole value of the message.
+   */
+  [HealthCode.PackageManagerForeignInstall]: {
+    severity: DiagnosticSeverity.Warning,
+    describe: (facts) => {
+      const group = facts.packageManager;
+      const selection = group?.selection;
+      const name =
+        selection?.status === "identified" ? selection.name : undefined;
+      const foreign = group?.foreignMarker;
+
+      if (foreign === undefined) {
+        return {
+          explanation:
+            "Dependencies were installed by a different package manager than the one this project declares.",
+          remediation: `Remove node_modules and reinstall with ${installHint(name)} so the tree matches the lockfile.`,
+        };
+      }
+
+      return {
+        explanation: `Dependencies were installed by ${isQuotable(foreign.createdBy) ? foreign.createdBy : "a different package manager"}, and this project installs with ${isQuotable(name) ? name : "its declared manager"}.`,
+        remediation: `Remove node_modules and reinstall with ${installHint(name)} so the tree matches the lockfile.`,
+      };
+    },
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Output
+  // ───────────────────────────────────────────────────────────────────────────
 
   [HealthCode.OutputUnwritable]: {
     severity: DiagnosticSeverity.Error,
@@ -208,6 +572,10 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
         "Choose a writable output directory, or correct the permissions on it.",
     }),
   },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Configuration
+  // ───────────────────────────────────────────────────────────────────────────
 
   [HealthCode.ConfigurationEmpty]: {
     severity: DiagnosticSeverity.Error,
@@ -276,6 +644,10 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
           };
     },
   },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Environment
+  // ───────────────────────────────────────────────────────────────────────────
 
   [HealthCode.EnvironmentUndeclared]: {
     severity: DiagnosticSeverity.Error,
