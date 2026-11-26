@@ -7,10 +7,18 @@
  * answer everywhere.
  *
  * Scope: how a project's *directory layout* is described — where the configuration lives, where specs live, how far
- * to climb. Lists that describe the *contents of a manifest* belong beside the reader that parses it, in
- * `./package-discovery/manifest.ts`, and follow the same determinism rule for the same reason. Two files rather than
- * one because the two questions are answered independently: a project can have a manifest and no layout, or a layout
- * and no manifest.
+ * to climb. Three kinds of list are deliberately kept apart, each beside the code that owns it:
+ *
+ * | Question | Owner |
+ * | --- | --- |
+ * | What may a project layout contain? | this file |
+ * | What may a manifest *contain*? | `./package-discovery/manifest.ts` |
+ * | Which lockfile or marker means which package manager? | `./package-manager/policy.ts` |
+ *
+ * They are separate because the questions are answered independently: a project can have a manifest and no layout,
+ * a layout and no manifest, and a lockfile with neither. Keeping them apart also keeps each list under one test —
+ * the package-manager table in particular is asserted against its own documentation, and would immediately go out of
+ * step if a second copy of "pnpm's lockfile is named…" lived here.
  *
  * The lists are *names*, and nothing more. Which name wins when several exist is a rule, and rules live where they
  * are applied — the layout reader for the legacy fallback, the validation classifier for whether a shape is
@@ -36,8 +44,8 @@ export const CYPRESS_CONFIG_FILES = [
  * collect the support files along with the specs.
  *
  * `cypress/component` is deliberately absent. Component testing is a real Cypress convention and QAT has no
- * execution path for it, so reporting that directory here would send a run at files the adapter cannot drive. It is
- * reported separately, as evidence, and the validation layer is what decides that it is not enough.
+ * execution path for it, so reporting that directory here would send a run at files anywhere the adapter cannot drive
+ * them. It is reported separately, as evidence, and the validation layer is what decides that it is not enough.
  */
 export const SPEC_DIRECTORIES = ["cypress/e2e", "cypress/integration"] as const;
 
@@ -68,6 +76,33 @@ export const SUPPORT_FILES = [
 
 /** Conventional source roots, checked only to fill an optional field. */
 export const SOURCE_DIRECTORIES = ["src", "lib", "app"] as const;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manifest and install artefacts
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * The package manifest filename.
+ *
+ * Here rather than repeated at each call site because it is a *layout* fact, not a fact about the manifest's
+ * contents: several readers need it — dependency discovery, the runtime requirement read, the package-manager
+ * snapshot — and three copies of the same string is three chances for one of them to be typo'd into silence. The
+ * reader in `./package-discovery/manifest.ts` imports this rather than declaring its own.
+ *
+ * Singular on purpose. npm has no alternative manifest name, and inventing a candidate list here would be inventing
+ * a convention the ecosystem does not have.
+ */
+export const PACKAGE_MANIFEST_FILE = "package.json";
+
+/**
+ * The installed-dependency directory.
+ *
+ * Held beside the manifest name because "is this project installed?" and "what does this project declare?" are asked
+ * about the same two artefacts, and because the package-manager snapshot must compare the *name* case-insensitively
+ * and accept a symlinked directory: workspace layouts legitimately symlink it. Callers that treat presence as a
+ * plain boolean tend to forget both of those, so the convention is documented where the name is defined.
+ */
+export const NODE_MODULES_DIRECTORY = "node_modules";
 
 /**
  * Levels ascended when looking for a project root, or for an installed package.

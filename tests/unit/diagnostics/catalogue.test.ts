@@ -17,17 +17,24 @@ import { CHECKS, HEALTH_GUIDANCE } from "~/diagnostics/checks/index.js";
 /**
  * The catalogue as an artefact.
  *
- * These cases assert properties of the *table* rather than of any one check: that every question is documented, that
- * the identifiers are unique and permanently shaped, that a precondition never points forward or in a circle, and that
- * severity and mandatory-ness are independent of each other. They are what makes "every mandatory check has a
- * documented contract and a linked scenario" a fact rather than a claim.
+ * These cases assert properties of the *table* rather than of any one check: that every question is documented, that the
+ * identifiers are unique and permanently shaped, that a precondition never points forward or in a circle, and that
+ * severity and mandatory-ness are independent of each other. They are what makes "every mandatory check has a documented
+ * contract and a linked scenario" a fact rather than a claim.
  *
  * ## What is deliberately not here
  *
  * Anything that requires evidence. That a healthy project passes every check, that a failure blocks, and that an
- * advisory check never returns `fail` all need facts, and facts live in `run.test.ts` — which also derives its case
- * list from the scenario identifiers asserted below. This file is the shape of the register; that file is its
- * behaviour.
+ * advisory check never returns `fail` all need facts, and facts live in `run.test.ts` — which also derives its case list
+ * from the scenario identifiers asserted below. This file is the shape of the register; that file is its behaviour.
+ *
+ * ## The package-manager check, as a worked example of the three rules
+ *
+ * It is **mandatory** (no precondition: every project gets asked), **advisory** (a warning, so it can never produce a
+ * `failed` outcome), and it declares **eleven** scenarios — nine conditions plus two passing cases. Those three facts are
+ * asserted separately and from opposite directions below, because they are separate policies: a change that made it
+ * blocking would break the severity case, and a change that gave it a precondition would break the mandatory list, even
+ * though both edits would look local in the catalogue.
  */
 const ids = CHECKS.map((check) => check.id);
 
@@ -38,8 +45,8 @@ describe("the register", () => {
   });
 
   it("covers every identifier the contract declares", () => {
-    // Both directions. A check missing from the catalogue is a question the doctor silently stopped asking; an entry
-    // for an identifier that no longer exists is a question it asks under a name nobody else knows.
+    // Both directions. A check missing from the catalogue is a question the doctor silently stopped asking; an entry for
+    // an identifier that no longer exists is a question it asks under a name nobody else knows.
     expect([...ids].sort()).toStrictEqual(Object.values(CheckId).sort());
   });
 
@@ -61,7 +68,7 @@ describe("the register", () => {
 
   it.each(CHECKS.map((check) => [check.id, check] as const))(
     "%s documents a purpose and a procedure",
-    (_id, check) => {
+    (__id, check) => {
       // The two fields a reader uses to decide whether the question is the one they had. An empty string passes a type
       // check and tells nobody anything, which is why the length is asserted rather than the presence.
       expect(check.purpose.length).toBeGreaterThan(0);
@@ -71,7 +78,7 @@ describe("the register", () => {
 
   it.each(CHECKS.map((check) => [check.id, check] as const))(
     "%s declares the evidence it reads, without repeating a group",
-    (_id, check) => {
+    (__id, check) => {
       // A check that reads nothing cannot be judging a project. A repeated group doubles its weight in the skip
       // explanation, which reads as two missing inputs rather than one.
       expect(check.requires.length).toBeGreaterThan(0);
@@ -105,6 +112,17 @@ describe("the scenario inventory", () => {
     // Two checks claiming one scenario means one of them is verified by a case that tests the other.
     expect(new Set(scenarios).size).toBe(scenarios.length);
   });
+
+  it("gives the package-manager check a scenario per condition and per pass case", () => {
+    // Counted rather than named here: which scenarios exist is the contract test's business, and duplicating the list
+    // would give the register two places to disagree with itself. What this asserts is that the advisory ladder did not
+    // quietly lose a rung — nine conditions plus the two ways a project can pass.
+    const check = CHECKS.find(
+      (candidate) => candidate.id === CheckId.PackageManager,
+    );
+
+    expect(check?.scenarios).toHaveLength(11);
+  });
 });
 
 describe("preconditions", () => {
@@ -121,7 +139,12 @@ describe("preconditions", () => {
     // Not a style rule. The runner resolves skips in one pass and throws when a precondition was never concluded, so a
     // dependency declared later would turn a mistake in this table into an exception the first time a project was
     // diagnosed.
-    const position = new Map(ids.map((id, index) => [id, index]));
+    //
+    // The callback's return type is annotated: an array literal without it infers as `(string | number)[]`, and `Map`
+    // refuses that as a tuple of key and value.
+    const position = new Map(
+      ids.map((id, index): [string, number] => [id, index]),
+    );
 
     for (const check of CHECKS) {
       if (check.precondition === undefined) continue;
@@ -155,7 +178,7 @@ describe("severity, mandatory-ness and blocking are three separate facts", () =>
     //
     // The advisory runtime check is in this list, and that is the point of it: "always asked" and "can stop a run" are
     // different questions, and the framework's runtime bound is always worth asking about even though the answer never
-    // blocks.
+    // blocks. The package-manager check is here for the same reason.
     const mandatory = CHECKS.filter(
       (check) => check.precondition === undefined,
     ).map((check) => check.id);
@@ -229,6 +252,10 @@ describe("the guidance table", () => {
       // The `Record` guarantees an entry exists. This asserts the entry says something when handed no facts at all —
       // which is the state a caller reaches by passing a fact set gathered for a different check — and that no template
       // hole printed the word `undefined` into a sentence a user will read.
+      //
+      // The package-manager entries are the ones most likely to fail here: each reads several optional facts, so every one
+      // of them has a degraded branch that must still compose a sentence. A single missing `??` in any of them surfaces as
+      // `undefined` in the explanation, and this is the case that catches it.
       expect(text.explanation.length).toBeGreaterThan(0);
       expect(text.explanation).not.toContain("undefined");
       expect(text.remediation).toBeDefined();
@@ -295,6 +322,29 @@ describe("the guidance table", () => {
     expect(text.explanation).toContain("package.json#engines.node");
     expect(text.explanation).toContain("v18.19.0");
   });
+
+  it("quotes an executable version the project declared, not a support floor", () => {
+    // The package-manager equivalent of the case above: the expectation comes from evidence, so the message cannot
+    // claim a bound the project never wrote.
+    const text = HEALTH_GUIDANCE[
+      HealthCode.PackageManagerVersionMismatch
+    ].describe({
+      packageManager: {
+        selection: { status: "identified", name: "pnpm", declared: true },
+        lockfiles: ["pnpm-lock.yaml"],
+        executable: { resolved: true, version: "9.0.9" },
+        required: {
+          range: ">=9.1.0 <10.0.0",
+          origin: "package.json#engines.pnpm",
+        },
+        installState: "installed",
+      },
+    });
+
+    expect(text.explanation).toContain("9.0.9");
+    expect(text.explanation).toContain(">=9.1.0 <10.0.0");
+    expect(text.explanation).toContain("package.json#engines.pnpm");
+  });
 });
 
 describe("the declared Node range", () => {
@@ -303,8 +353,8 @@ describe("the declared Node range", () => {
       await readFile(new URL("../../../package.json", import.meta.url), "utf8"),
     ) as { engines?: { node?: string } };
 
-    // There used to be a constant here — the supported floor, restated from `engines.node` and compared against it.
-    // The comparison was the guard and the constant was the duplication: every support change meant two edits, and
+    // There used to be a constant here — the supported floor, restated from `engines.node` and compared against it. The
+    // comparison was the guard and the constant was the duplication: every support change meant two edits, and
     // forgetting the second produced a message confidently quoting a requirement QAT no longer had.
     //
     // The range is now read from the manifest by the same function the check uses, so there is nothing left to compare
@@ -327,8 +377,8 @@ describe("the documentation", () => {
     // A documented field list is a copy of the table, and a copy lags. This is the same guard the configuration format
     // uses for its field table: a check added without a row fails here rather than being discovered by a reader who
     // went looking for it and found nothing.
-    for (const id of ids) {
-      expect(document).toContain(id);
-    }
+    const missing = ids.filter((id) => !document.includes(id));
+
+    expect(missing).toStrictEqual([]);
   });
 });

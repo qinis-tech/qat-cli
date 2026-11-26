@@ -7,22 +7,29 @@
  *
  * ## What the layer answers, and in what order
  *
- * Four questions, each built on the last: is this a package (package discovery), what shape is it (detection),
- * what is wrong with it (diagnostics), may I act on it (validation). A consumer should reach for the highest one
- * that answers its question — a command that is about to run something wants an assessment, not a verdict.
+ * Five questions, each built on the last: is this a package (`package-discovery`), how is it installed
+ * (`package-manager`), what shape is it (`cypress-detection`), what is wrong with it (`diagnostics`), may I act on it
+ * (`validation`). A consumer should reach for the highest one that answers its question — a command that is about to
+ * run something wants an assessment, not a verdict.
+ *
+ * `package-manager` sits second rather than last because it answers a *property of the tree* (which tool owns the
+ * lockfile, and is that tool healthy) that the three questions after it do not depend on and must not absorb. It is
+ * deliberately not folded into validation: a mismatched installer predicts a confusing `install` later, while
+ * validation answers "may I run now". Two different moments, two different answers, two different severities.
  *
  * ## What is exported, and what is not
  *
- * **Lookup tables stay internal.** `SPEC_DIRECTORIES`, `SUPPORT_FILES` and the lockfile order encode *how* a
- * question is answered. Exporting one would make it look like something a caller may depend on, and the first
+ * **Lookup tables that encode *how* a scan runs stay internal.** `SPEC_DIRECTORIES` and `SUPPORT_FILES` describe the
+ * mechanics of a search. Exporting one would make it look like something a caller may depend on, and the first
  * caller to read it would re-implement the scan it drives, with its own idea of the order.
  *
- * **Rule tables are exported.** `LEGACY_CONFIG_FILES`, `MISPLACED_CONFIG_FILES`, `DetectionVerdict`,
- * `ConfigurationPlacement`, `SpecsShape` and `REQUIREMENTS` describe *what the tool recognises*, not how it looks.
- * A consumer that wants to say "this tool reads `cypress.config.*`, including inside `cypress/`" should reach for
- * the list rather than restate it; a test that wants to prove every requirement has a fixture should iterate the
- * table rather than keep its own copy. The distinction — a lookup versus a rule — is the one worth applying when
- * adding a constant here.
+ * **Rule tables that encode *what the tool recognises* are exported.** `LEGACY_CONFIG_FILES`,
+ * `MISPLACED_CONFIG_FILES`, `DetectionVerdict`, `ConfigurationPlacement`, `SpecsShape`, `REQUIREMENTS` and — since
+ * this layer gained the question — `PACKAGE_MANAGER_POLICY` describe facts about the tool, not about a scan. A
+ * consumer that wants to say "this tool reads `cypress.config.*`, including inside `cypress/`" or "QAT supports npm,
+ * pnpm and yarn but only recognises Bun" should reach for the table rather than restate it; a test that wants to
+ * prove every requirement has a fixture should iterate the table rather than keep its own copy. The distinction — a
+ * lookup versus a rule — is the one worth applying when adding a constant here.
  *
  * **The contracts are not re-exported.** `ProjectDiagnosis`, `DiagnosticCode`, `DiagnosticSeverity`, the statuses
  * and `hasBlockingErrors` are declared in `core/application/diagnostics.ts`. `ProjectAssessment`, `QatOperation`,
@@ -31,12 +38,15 @@
  *
  * Re-exporting any of them would give those names a second route, and the second route is the one that goes stale:
  * a command importing `ValidationCode` from an implementation barrel appears to depend on the implementation, and
- * breaks the day the contract moves — having looked correct in review. This matters more for validation than for
- * anything else here, because the CLI reads an assessment through the *contract's* predicates and never imports this
- * file at all.
+ * breaks the day the contract moves — having looked correct in review. This matters most for validation, because the
+ * CLI reads an assessment through the *contract's* predicates and never imports this file at all.
  *
  * The same rule holds for the domain types these signatures mention. `ProjectInfo` is exported from `core/domain`,
  * and nothing here re-exports it.
+ *
+ * The same rule also keeps the layout constants out. `PACKAGE_MANIFEST_FILE` and `NODE_MODULES_DIRECTORY` are
+ * imported from `./contracts.js` by the readers inside this layer; they are not names a consumer should build
+ * behaviour on, and re-exporting them here would invite exactly the second copy this file exists to prevent.
  */
 
 /** The shape a caller passes to `discoverProject`. Everything else in `contracts.ts` is internal. */
@@ -61,6 +71,75 @@ export {
   type PackageDiscoveryOptions,
   type ProjectManifest,
 } from "./package-discovery/index.js";
+
+/**
+ * Package-manager identity and health.
+ *
+ * The export criteria are the ones stated above, applied honestly:
+ *
+ * **Rules are exported.** `PACKAGE_MANAGER_POLICY` is the authoritative statement of which lockfiles and executables
+ * belong to which manager, and which managers are supported. A consumer explaining "your project installs with pnpm"
+ * — or a test proving every supported manager has a fixture — must read it rather than restate it. `policyFor`,
+ * `supportedManagers`, `isSupportedManager`, `installCommandFor`, `managerForLockfile`, `knownLockfiles` and
+ * `findPolicyConflicts` are the same table in usable form; `PACKAGE_MANAGER_POLICY_DOC` is the pointer the
+ * documentation-parity test follows.
+ *
+ * **Engines are exported.** `detectPackageManager` and `assessPackageManagerHealth` are the same kind of thing as
+ * `detectCypress` and `assessDetection`: a pure answer plus its evidence, usable without a diagnosis or a verdict
+ * stacked on top of it. `parseDeclaration` is exported for the same reason `readManifest` is — it is a pure function
+ * over a string that a test or a future workflow can use on its own.
+ *
+ * **Plumbing is not.** `createSnapshotCollector` is exported because it is the unit of composition the application
+ * needs in order to inject a project root; `createPackageManagerExecutablePort` and its two budgets are exported
+ * because composition has to bind PATH and command execution to it from `core/application` ports. The two
+ * lower-level factories behind that port — the PATH locator and the version probe — are deliberately *not* here:
+ * they are adapters exercised directly by their own unit tests, and exporting them would present three ways to do one
+ * thing to any future reader.
+ *
+ * **Contracts come along because they are this module's vocabulary**, and the rule against re-exporting has a
+ * narrower exception than it looks: `core/application/*` cannot declare them without importing this layer and
+ * inverting the dependency direction, so the checks layer must get them from here. They are exported as types only;
+ * no behaviour travels with them.
+ */
+export {
+  assessPackageManagerHealth,
+  createPackageManagerExecutablePort,
+  createSnapshotCollector,
+  detectPackageManager,
+  determineInstallState,
+  findPolicyConflicts,
+  installCommandFor,
+  isSupportedManager,
+  knownLockfiles,
+  managerForLockfile,
+  PACKAGE_MANAGER_POLICY,
+  PACKAGE_MANAGER_POLICY_DOC,
+  parseDeclaration,
+  policyFor,
+  PROBE_MAX_OUTPUT_BYTES,
+  PROBE_TIMEOUT_MS,
+  supportedManagers,
+  type DeclarationParseResult,
+  type Detection,
+  type DirectoryEntry,
+  type ExecutableAvailability,
+  type HealthIssue,
+  type HealthIssueCode,
+  type HealthOutcome,
+  type InstallState,
+  type PackageManagerAssessment,
+  type PackageManagerAssessmentInput,
+  type PackageManagerCheckDependencies,
+  type PackageManagerExecutablePort,
+  type PackageManagerName,
+  type PackageManagerPolicy,
+  type PackageManagerPolicyEntry,
+  type PackageManagerSnapshotPort,
+  type PolicyConflict,
+  type ProjectSnapshot,
+  type SnapshotFileSystem,
+  type VersionEvidence,
+} from "./package-manager/index.js";
 
 /**
  * Configuration discovery and the verdict it produces.

@@ -30,7 +30,7 @@ import {
 } from "~/core/application/checks.js";
 import type { Application } from "~/core/application/ports.js";
 import {
-  evaluateRequirement,
+  evaluateVersionRequirement,
   parseRange,
   qatRuntimeRequirement,
 } from "~/core/compatibility/index.js";
@@ -39,7 +39,7 @@ import {
   CHECKS,
   runChecks,
   type CheckFacts,
-  type RuntimeRequirementFact,
+  type VersionRequirementFact,
 } from "~/diagnostics/checks/index.js";
 import { readOwnManifest } from "~/shared/utils/package-manifest.js";
 
@@ -64,8 +64,8 @@ const DECLARED = {
 /**
  * Assembles an application, runs the body, and disposes it whatever happens.
  *
- * Disposal is in a `finally` because a failed assertion must not leak a repository — and because a test that only
- * cleans up on success is a test that hides its own failures behind an open handle.
+ * Disposal is in a `finally` because a failed assertion must not leak a repository — and because a test that only cleans
+ * up on success is a test that hides its own failures behind an open handle.
  */
 async function withApplication(
   options: ApplicationOptions,
@@ -93,7 +93,7 @@ async function withApplication(
  */
 function gather(
   app: Application,
-  frameworkRequired?: RuntimeRequirementFact,
+  frameworkRequired?: VersionRequirementFact,
 ): CheckFacts {
   const version = app.runtime.readNodeVersion();
 
@@ -327,8 +327,8 @@ describe("the shipped policy", () => {
   it("declares a range the shipped parser can read", () => {
     const requirement = qatRuntimeRequirement(readOwnManifest());
 
-    // An empty range is what a broken installation produces, and the finding it produces at runtime is a warning —
-    // right for a user, useless as a build gate. This is the gate.
+    // An empty range is what a broken installation produces, and the finding it produces at runtime is a warning — right
+    // for a user, useless as a build gate. This is the gate.
     expect(requirement.range).not.toBe("");
     expect(parseRange(requirement.range).ok).toBe(true);
   });
@@ -338,7 +338,7 @@ describe("the shipped policy", () => {
     // the shipped declaration or in the port — so this is the wiring claim, and unlike "is it satisfied" it is true on
     // every machine.
     await withApplication({}, (app) => {
-      const verdict = evaluateRequirement(
+      const verdict = evaluateVersionRequirement(
         app.nodeRequirement,
         app.runtime.readNodeVersion(),
       );
@@ -352,7 +352,7 @@ describe("the shipped policy", () => {
     // catches a probe and a requirement taken from different sources, without depending on which interpreter happens to
     // be installed.
     await withApplication({}, (app) => {
-      const verdict = evaluateRequirement(
+      const verdict = evaluateVersionRequirement(
         app.nodeRequirement,
         app.runtime.readNodeVersion(),
       );

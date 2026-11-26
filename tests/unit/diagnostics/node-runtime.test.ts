@@ -23,7 +23,7 @@ import { DiagnosticSeverity } from "~/core/application/diagnostics.js";
 import {
   PASS,
   type CheckFacts,
-  type RuntimeRequirementFact,
+  type VersionRequirementFact,
 } from "~/diagnostics/checks/contracts.js";
 import {
   RUNTIME_CHECKS,
@@ -38,8 +38,8 @@ import {
 /**
  * The range this build declares, as a fixture.
  *
- * Complete tuples on both bounds: the grammar refuses partial versions, so `>=24.0.0 <25` would be an unreadable
- * policy and every case here would report "could not check" instead of exercising a comparison.
+ * Complete tuples on both bounds: the grammar refuses partial versions, so `>=24.0.0 <25` would be an unreadable policy
+ * and every case here would report "could not check" instead of exercising a comparison.
  */
 const DECLARED = {
   range: ">=24.0.0 <25.0.0",
@@ -55,8 +55,8 @@ const DECLARED = {
  */
 interface FactOverrides {
   readonly nodeVersion?: string;
-  readonly required?: RuntimeRequirementFact;
-  readonly frameworkRequired?: RuntimeRequirementFact;
+  readonly required?: VersionRequirementFact;
+  readonly frameworkRequired?: VersionRequirementFact;
 }
 
 /** Runtime evidence with a version and, by default, the requirement the manifest declares. */
@@ -88,8 +88,8 @@ describe("the definitions", () => {
   });
 
   it("are grouped together, and differ only in weight", () => {
-    // Same subject, same evidence, different consequence. Anything else differing between them — a different category,
-    // a different fact group — would be a second question rather than the same one asked about another owner.
+    // Same subject, same evidence, different consequence. Anything else differing between them — a different category, a
+    // different fact group — would be a second question rather than the same one asked about another owner.
     expect(nodeRuntimeCheck.category).toBe(CheckCategory.Runtime);
     expect(frameworkRuntimeCheck.category).toBe(CheckCategory.Runtime);
     expect(nodeRuntimeCheck.requires).toStrictEqual(
@@ -225,16 +225,23 @@ describe("runtime.node-version", () => {
   });
 
   it("always offers a remedy", () => {
-    for (const input of [
+    const inputs = [
       facts(),
       facts({ nodeVersion: "v23.11.0" }),
       facts({ nodeVersion: "v-next" }),
-    ]) {
-      const result = nodeRuntimeCheck.evaluate(input);
+    ];
 
-      if (result.verdict === "pass") continue;
-      expect(result.finding.remediation).toBeDefined();
-    }
+    // Built first, then asserted: a `continue` inside the loop would be a conditional that decides whether the
+    // assertion below runs, which is the shape the lint rules refuse and, more importantly, the shape that silently
+    // stops asserting.
+    const findings = inputs
+      .map((input) => nodeRuntimeCheck.evaluate(input))
+      .flatMap((result) => (result.verdict === "pass" ? [] : [result.finding]));
+
+    expect(findings.length).toBeGreaterThan(0);
+    expect(
+      findings.filter((finding) => finding.remediation === undefined),
+    ).toStrictEqual([]);
   });
 });
 
@@ -363,7 +370,7 @@ describe("missing evidence", () => {
 describe("both checks", () => {
   it.each(RUNTIME_CHECKS.map((check) => [check.id, check] as const))(
     "%s is deterministic",
-    (_id, check) => {
+    (__id, check) => {
       const input = facts({
         frameworkRequired: { range: ">=22.0.0 <25.0.0", origin: "cypress" },
       });
@@ -375,7 +382,7 @@ describe("both checks", () => {
 
   it.each(RUNTIME_CHECKS.map((check) => [check.id, check] as const))(
     "%s does not mutate the facts it was given",
-    (_id, check) => {
+    (__id, check) => {
       const input = facts({
         frameworkRequired: { range: ">=22.0.0 <25.0.0", origin: "cypress" },
       });

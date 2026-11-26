@@ -31,13 +31,18 @@
  * | `discover(root)` | `discoverProject({ cwd: root })` | Reshaped — the function takes options |
  * | `configuration.resolve(root, loaded)` | `resolveConfiguration({ loaded, projectRoot })` | Reshaped, and the result translated into the port's own vocabulary |
  * | `initialisation.initialise(root)` | `createInitialisationService({ assess: assessProject, readConfiguration, createFile })` | Composed — three existing operations, assigned directly |
- * | `runtime.readNodeVersion()` | `createProcessRuntime()` | **None** — assigned directly, because the factory is the implementation |
+ * | `runtime.readNodeVersion()` | `createProcessRuntime()` | **None** — assigned directly, because the factory *is* the implementation |
+ * | `executables.locateExecutable(command)` | `createPathLocator()` | **None** — assigned directly, now that the factory's method carries the port's name |
  *
- * Every member does one of those four, and some do a pair; that is the rule worth keeping: **narrow a test seam,
+ * Every member does one of those, and some do a pair; that is the rule worth keeping: **narrow a test seam,
  * reshape an argument, translate a vocabulary, or compose a workflow — and know which of them you are doing.** A
  * member that needed none of them should be assigned directly rather than wrapped for symmetry, because an adapter
- * with no translation in it is a second name for the same thing. The runtime probe is the worked example: it is
- * constructed, frozen and returned, and a wrapper around it would only add a third name.
+ * with no translation in it is a second name for the same thing.
+ *
+ * Two members are now the worked examples, and the second one arrived by deleting code rather than adding it. The
+ * runtime probe is constructed and returned; the path locator was *wrapped* while its method was called `locate`, and
+ * the wrapper existed solely to bridge that word to `locateExecutable`. Renaming the method removed the adapter, the
+ * option, and the local that fed it — three things that existed to say one thing twice.
  *
  * The narrowing is deliberate rather than incidental. A command should not be able to tune the parent search depth:
  * the engine's default is right for every real invocation, and putting it on a port turns a constant into a decision
@@ -55,8 +60,8 @@
  *
  * The catalogue is static data — a keyed table of definitions, each a pure function of the evidence it declared a need
  * for — so there is nothing for a factory to build and nothing to inject. What assembly supplies is the *evidence*,
- * not the questions: the running interpreter and the range this build declares are exposed for whichever workflow
- * gathers facts, and the checks then read exactly the groups they asked for.
+ * not the questions: the running interpreter, the range this build declares and the tool locator are exposed for
+ * whichever workflow gathers facts, and the checks then read exactly the groups they asked for.
  *
  * The obvious design is the wrong one, which is why it is worth naming. Injecting a requirement into a check would make
  * every definition a closure over policy, and then the same catalogue entry would behave differently depending on who
@@ -91,6 +96,33 @@
  * the declaration and puts it in `RuntimeFacts.frameworkRequired`; the advisory check emits a finding when it is there
  * and stays silent when it is not. Assembly does not guess, and does not wire a placeholder for a value nobody
  * declared.
+ *
+ * ## Where tooling evidence comes from
+ *
+ * The package-manager check needs one machine fact — where, if anywhere, a command lives — and that is the whole of
+ * this file's involvement. It supplies `executables`, a locator that answers only that question, and stops there.
+ *
+ * Three consequences, again all decisions:
+ *
+ * - **PATH only, never a project-local binary directory.** The locator implementation refuses `node_modules/.bin` and
+ *   refuses empty or relative PATH segments. A project-local directory is writable by any dependency install, so
+ *   resolving a tool from there would run project-controlled code simply to learn its name — the one kind of risk a
+ *   read-only health check must never introduce.
+ * - **The check itself is composed elsewhere.** Which command to look for depends on project evidence (a lockfile, a
+ *   declaration), so the *decision* belongs to the workflow that gathers it. Here we supply the primitive; the
+ *   project layer composes it into a manager-shaped port; the workflow asks the question. There is no second opinion
+ *   about what "the package manager" is anywhere in this file.
+ * - **The rule for "is this file executable" is not decided here.** The locator supplies its own default probe — one
+ *   `stat`, one `access`, and the Windows exception — because that definition belongs to the locator and is tested
+ *   beside it. Assembly names the factory and nothing about how a file is inspected, which is the same reason it does
+ *   not name how a directory listing is read.
+ *
+ * ## One seam per port, never one per object
+ *
+ * `executables` is the only test seam for tooling. An option for the locator as well would let a caller swap the
+ * locator *without* swapping the port, which is a configuration with no meaning: the port is what the workflow asks,
+ * and the locator is the implementation it happens to have. Every extra seam is a question a reviewer has to answer
+ * about combinations that will never occur.
  */
 import { join } from "node:path";
 
@@ -109,19 +141,26 @@ import type {
 } from "../core/application/configuration.js";
 import type {
   Application,
+  ExecutableLocator,
   ProjectDiscovery,
   RuntimeProbe,
 } from "../core/application/ports.js";
 import type { ProjectAssessment } from "../core/application/validation.js";
+// The widened name, because there is now only one. What this value describes has grown — the same shape carries a
+// framework advisory and a package-manager pin — and the runtime-era alias in `core/compatibility` survives only so that
+// call sites in flight keep compiling. Using it here would keep a second vocabulary alive in the one file whose job is
+// to name things once.
 import {
   qatRuntimeRequirement,
-  type RuntimeRequirement,
+  type VersionRequirement,
 } from "../core/compatibility/index.js";
 import {
   createProcessRuntime,
   type EnvironmentSource,
 } from "../core/environment/index.js";
 import { ErrorCode, InvalidArgumentError } from "../core/errors/index.js";
+// Only what core actually exports: `writeNewFile`. An `isExecutableFile` helper does not exist there and should not —
+// that rule belongs to the locator, which supplies it as a default beside the tests that prove it.
 import { writeNewFile } from "../core/filesystem/index.js";
 import {
   createLogger,
@@ -138,6 +177,10 @@ import {
   discoverProject,
   resolveWorkingDirectory,
 } from "../project/index.js";
+// The PATH scan is a project-layer factory because it encodes the resolution rules a package-manager question depends
+// on: PATH only, no `node_modules/.bin`, no empty or relative segment, and what counts as an executable file. Called
+// with no arguments it uses its own filesystem probe, so this file names the factory and nothing else about it.
+import { createPathLocator } from "../project/package-manager/index.js";
 // Reads QAT's own manifest, resolved from the installed package rather than from the working directory — `qat doctor`
 // runs inside a user's project, so `cwd/package.json` holds a manifest that has nothing to do with what *this* build
 // supports. Not imported from `shared/utils/version.js`: that module interprets version strings and owns no I/O.
@@ -188,7 +231,7 @@ export function createApplication(
    * same reason `repository` and `environment` do: assembly is the only place that names real things, so it is also
    * the only place that has to be told about fakes.
    */
-  const nodeRequirement: RuntimeRequirement =
+  const nodeRequirement: VersionRequirement =
     options.nodeRequirement ?? qatRuntimeRequirement(readOwnManifest());
 
   /**
@@ -199,6 +242,27 @@ export function createApplication(
    * and a probe that reported the wrong one would be worse than no probe, because the message would be confident.
    */
   const runtime: RuntimeProbe = options.runtime ?? createProcessRuntime();
+
+  /**
+   * Where a tool lives, behind its port.
+   *
+   * Assigned directly: the factory returns an implementation whose method is already named `locateExecutable`, so
+   * there is nothing to rename and no wrapper to write. Constructing it once here matters — the factory closes over
+   * the PATH value, the platform and its filesystem probe, so building it per call would re-read the environment on
+   * every lookup and two lookups within one run could answer differently.
+   *
+   * Called with no arguments, so the locator's own default probe decides what "an executable file" means on this
+   * platform — including the Windows case, where the executable bit is not a meaningful concept and requiring it would
+   * reject every legitimate `.cmd` shim.
+   *
+   * The port is the only seam. A second option for the locator would let a test replace the implementation while
+   * keeping a different one behind the port, which is a combination with no meaning.
+   *
+   * Overridable for the same reason as `runtime`: a test that exercised a real PATH would be testing the machine it
+   * happens to run on rather than the code.
+   */
+  const executables: ExecutableLocator =
+    options.executables ?? createPathLocator();
 
   const configuration: ConfigurationResolver = {
     resolve: (projectRoot, loaded) => {
@@ -330,11 +394,13 @@ export function createApplication(
     configuration,
     initialisation,
 
-    // Both halves of the runtime evidence, exposed rather than combined here: the probe answers "what is running", and
-    // the requirement answers "what is required". Whoever gathers facts pairs them into `RuntimeFacts`, because that
-    // pairing is a gathering decision — this file supplies the two inputs and takes no view on the shape a check reads.
+    // All three pieces of compatibility evidence, exposed rather than combined here: the probe answers "what is
+    // running", the requirement answers "what is required", and the locator answers "where is the tool". Whoever
+    // gathers facts pairs them into the shapes a check reads, because that pairing is a gathering decision — this
+    // file supplies the inputs and takes no view on how a particular check shapes them.
     runtime,
     nodeRequirement,
+    executables,
 
     async dispose(): Promise<void> {
       if (disposed) return;

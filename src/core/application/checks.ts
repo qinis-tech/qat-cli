@@ -39,6 +39,7 @@
  * prose behind each `QAT-H` code lives beside it. A command will receive a `DoctorReport` through a port, which is why
  * the report's shape belongs here and its production does not.
  */
+
 import type { ConfigurationDiagnosticCode } from "./configuration.js";
 import {
   DiagnosticSeverity,
@@ -62,7 +63,13 @@ export const CheckCategory = {
    * sections to answer it.
    */
   Runtime: "runtime",
-  /** Whether a package manager can be named, so remedies can name one. */
+  /**
+   * Whether a package manager can be identified, and whether the one identified is usable.
+   *
+   * Its own group rather than part of `project-structure`, because half the answer is a property of the machine: which
+   * binary is on PATH, and what version it reports. A group is a place in the report, and a reader fixing "nothing is
+   * installed" is looking here.
+   */
   PackageManager: "package-manager",
   /** Whether the directory is a test project at all, and whether its manifest can be read. */
   ProjectStructure: "project-structure",
@@ -93,6 +100,11 @@ export type CheckCategory = (typeof CheckCategory)[keyof typeof CheckCategory];
  *
  * Permanent, for the same reason codes are: a withdrawn check leaves its identifier unused rather than reusing it, so
  * an identifier quoted in a bug report keeps the meaning it had when it was quoted.
+ *
+ * Identifiers stayed at thirteen when the package-manager vocabulary grew from one code to eight. That is the intended
+ * shape rather than an oversight: a check is one *question* — "is this project's package-manager environment
+ * healthy?" — and the several conditions it may find are codes, not questions. One identifier per rung would fill the
+ * report with rows that can never appear together, because each rung is only reachable when the one above it passed.
  */
 export const CheckId = {
   /**
@@ -102,7 +114,13 @@ export const CheckId = {
    * accept every patch above a floor and every pre-release of the next line that happened to share the digit.
    */
   NodeVersion: "runtime.node-version",
-  /** Can a package manager be named for this project? */
+  /**
+   * Can this project's package-manager environment be named and used?
+   *
+   * Candidate for renaming to `environment.package-manager-health`, since the check now answers more than "can a manager
+   * be named". Not renamed here: the identifier is quoted in scenario names and in stored reports, and a rename is only
+   * correct alongside those, in one commit.
+   */
   PackageManager: "environment.package-manager",
   /** Is this directory recognisable as a test project at all? */
   ProjectRecognised: "project.recognised",
@@ -196,6 +214,16 @@ export type CheckSkipReason =
  * framework is reported on its own so the remedy names the right owner. One code could say "unsupported" for all
  * three; it could not tell a reader which of three different things to do.
  *
+ * ## Why the package-manager codes are one per fix
+ *
+ * Seven conditions arrived with the package-manager check, and they are seven codes because they are seven *remedies*.
+ * "Nothing identifies your tool", "two lockfiles disagree", "your field cannot be used", "the tool is not installed",
+ * "the tool's version disagrees", "you have not installed yet" and "someone else installed it" send a reader to seven
+ * different places; a shared code could describe one of them and would be wrong for the other six.
+ *
+ * They are all advisory. None of them stops a run of an already-installed suite — they predict a confusing install —
+ * so severity lives on the check, and the catalogue test holds each of these entries to `warning`.
+ *
  * New codes are appended, never inserted, so a number quoted in a report keeps its meaning.
  */
 export const HealthCode = {
@@ -230,6 +258,57 @@ export const HealthCode = {
    * by moving the project's framework — or the runtime the project builds against.
    */
   FrameworkRuntimeUnsupported: "QAT-H009",
+  /**
+   * The `packageManager` field is present and cannot be used as written.
+   *
+   * Distinct from `QAT-H002` because the project *did* try to declare its tool: the fix is to correct one field, not to
+   * invent a declaration, and the message can quote what the reader wrote.
+   */
+  PackageManagerDeclarationInvalid: "QAT-H010",
+  /**
+   * The project installs with a manager outside the supported installation policy.
+   *
+   * Distinct from `QAT-H002` because the tool was identified successfully. Telling a Bun user that no package manager
+   * was found sends them looking for a file that is present.
+   */
+  PackageManagerUnsupported: "QAT-H011",
+  /**
+   * Two or more lockfiles, or a declaration and a lockfile, that name different managers.
+   *
+   * Reported rather than arbitrated: picking a winner here is how CI installs with the wrong tool and rewrites the
+   * lockfile the team meant to keep.
+   */
+  PackageManagerConflicting: "QAT-H012",
+  /**
+   * The manager is supported, but its executable is not on PATH.
+   *
+   * A toolchain problem, not a project problem — and not the same as "not installed". Conflating the two is what makes
+   * people reinstall Node when the real answer was `corepack enable`.
+   */
+  PackageManagerExecutableMissing: "QAT-H013",
+  /** The executable reported a version outside what the project declares. */
+  PackageManagerVersionMismatch: "QAT-H014",
+  /**
+   * A version was expected and none could be read — timeout, failure, or no parsable version in the output.
+   *
+   * Advisory and never a pass: an unverified version is not a matching one, but a toolchain that answered oddly must
+   * not be reported as a broken project.
+   */
+  PackageManagerVersionUnverified: "QAT-H015",
+  /**
+   * The manager and its tooling are fine, and the dependencies are not installed.
+   *
+   * The one package-manager condition whose remedy is a command rather than a correction, which is why it earns its own
+   * code: it is the ordinary state of a fresh clone.
+   */
+  PackageManagerNotInstalled: "QAT-H016",
+  /**
+   * `node_modules` exists and a different manager created it.
+   *
+   * Everything looks installed, so the failure surfaces much later as a resolution error naming a package nobody
+   * edited. Naming both managers is the whole value of reporting it early.
+   */
+  PackageManagerForeignInstall: "QAT-H017",
 } as const;
 
 export type HealthCode = (typeof HealthCode)[keyof typeof HealthCode];

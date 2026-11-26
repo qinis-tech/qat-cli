@@ -12,7 +12,7 @@
  * ## Absent is not the same as empty
  *
  * A group being absent means *nobody gathered it* — a defect in the assembly, reported as a named skip. Gathering it
- * and finding nothing is a different thing entirely, which is why `PackageManagerFacts` holds an optional `selected`
+ * and finding nothing is a different thing entirely, which is why `PackageManagerFacts` discriminates on its own status
  * rather than the group itself being optional: "no package manager could be identified" is a finding, and a check that
  * skipped on it would have nothing to say about exactly the case it exists for.
  *
@@ -32,9 +32,17 @@
  * must not assume. The two are kept in the same group because they are answered by the same question — "what is the
  * runtime situation here?" — and splitting them would add a group that no other check will ever read.
  *
+ * ## Why gathering stays outside this layer
+ *
+ * Nothing here knows how evidence is obtained: no ports, no filesystem, no process. The workflow that inspects a
+ * project reads the directory, resolves a binary on PATH and hands over the results. That is what keeps every
+ * definition a pure function of a value, testable with literals, and what stops a check from acquiring a second
+ * opinion about what "installed" or "supported" means.
+ *
  * Every field below is read by at least one check or by the sentence it produces. A fact nothing reads is a fact the
  * next person will assume is load-bearing.
  */
+
 import type { ConfigurationLoadResult } from "../../config/loader/index.js";
 import type {
   CheckCategory,
@@ -43,7 +51,10 @@ import type {
   CheckSeverity,
 } from "../../core/application/checks.js";
 import type { ProjectAssessment } from "../../core/application/validation.js";
-import type { RuntimeRequirement } from "../../core/compatibility/index.js";
+// The widened name. One shape serves the runtime QAT requires, the bound a project's framework release declares, and the
+// version a project pins for its package manager — which is why this layer narrows it once, by `Pick`, rather than
+// declaring three near-identical fact types and hoping they stay in step.
+import type { VersionRequirement } from "../../core/compatibility/index.js";
 
 /**
  * The evidence a check may declare that it needs.
@@ -64,17 +75,22 @@ export const FactGroup = {
 export type FactGroup = (typeof FactGroup)[keyof typeof FactGroup];
 
 /**
- * A runtime requirement, as a check needs it: range and provenance only.
+ * A version requirement, as a check needs it: range and provenance only.
  *
- * Narrowed from core's `RuntimeRequirement` by `Pick`, so the two cannot drift about what a range is — and so the
- * fields that are deliberately *not* here stay visibly not-here rather than being quietly present and unused.
+ * Narrowed from core's requirement by `Pick`, so the two cannot drift about what a range is — and so the fields that
+ * are deliberately *not* here stay visibly not-here rather than being quietly present and unused.
  *
  * `severityWhenUnsatisfied` is the field that is dropped, and dropping it is the point. How badly a failed requirement
  * matters is declared once, on the check's `severity`, decided with every other check in one catalogue. Carrying it
  * here too would give the same decision two homes and leave a reader guessing which one wins.
+ *
+ * Named for the shape rather than for the runtime because three different owners now supply one: the runtime QAT
+ * requires, the bound a project's framework release declares, and the version a project pins for its package manager.
+ * They are compared by the same engine, so they are described by the same type — anything narrower would be three
+ * copies of one idea.
  */
-export type RuntimeRequirementFact = Pick<
-  RuntimeRequirement,
+export type VersionRequirementFact = Pick<
+  VersionRequirement,
   "range" | "origin"
 >;
 
@@ -106,7 +122,7 @@ export interface RuntimeFacts {
    * optional would make "no policy" indistinguishable from "policy not gathered", and the check would then skip on the
    * one condition it most needs to speak about.
    */
-  readonly required: RuntimeRequirementFact;
+  readonly required: VersionRequirementFact;
 
   /**
    * An additional runtime bound declared by the project's framework release.
@@ -118,20 +134,108 @@ export interface RuntimeFacts {
    * Reported separately from `required`, never merged into its finding, because the two have different owners and
    * different urgency. A file that said only "unsupported runtime" would not tell a reader whose requirement failed.
    */
-  readonly frameworkRequired?: RuntimeRequirementFact;
+  readonly frameworkRequired?: VersionRequirementFact;
 }
 
+/**
+ * How far a previous dependency installation got, and by whose hand.
+ *
+ * A closed vocabulary rather than a boolean because the four answers send a reader to four different places, and
+ * `foreign` in particular is invisible to a boolean: dependencies *are* installed, by a different tool, which
+ * explains a whole class of "works on my machine" failures without anyone reading a log.
+ */
+export type PackageManagerInstallState =
+  "installed" | "absent" | "foreign" | "unknown";
+
+/** Why a version could not be obtained, when one was expected. Mirrors the executable probe's own vocabulary. */
+export type UnverifiedVersionReason =
+  "timeout" | "empty-output" | "failed" | "not-probed";
+
+/** The manager's executable, as found — or not — on PATH. */
+export interface PackageManagerExecutableFact {
+  /** False means "install the tool"; it does not mean "install the dependencies". */
+  readonly resolved: boolean;
+  /** The reported version, unparsed, so the comparison parses once. */
+  readonly version?: string;
+  /** Present only when `version` is absent and a version was expected. */
+  readonly reason?: UnverifiedVersionReason;
+}
+
+/**
+ * What detection concluded, as four mutually exclusive answers.
+ *
+ * A discriminated union rather than optional fields, for the same reason the domain uses one: `status` alone tells a
+ * reader which of the four stories applies, and no combination like "unsupported *and* undeclared" can be built. The
+ * four are exactly the four fixes a user might be sent to — change tool, install tool, declare a tool, or reconcile
+ * two lockfiles — which is why they are not collapsed into "package manager problem".
+ */
+export type PackageManagerSelection =
+  | {
+      readonly status: "identified";
+      readonly name: string;
+      /** True when the project declared it, false when it was inferred from a lockfile. */
+      readonly declared: boolean;
+    }
+  | {
+      readonly status: "conflicting";
+      readonly managers: readonly string[];
+      readonly lockfiles: readonly string[];
+    }
+  | {
+      readonly status: "unsupported";
+      readonly name: string;
+    }
+  | {
+      readonly status: "undeclared";
+      /** An unusable `packageManager` value, quoted verbatim so the reader recognises their own text. */
+      readonly declaration?: {
+        readonly raw: string;
+        readonly problem: "missing-version" | "malformed" | "unknown-manager";
+      };
+    };
+
+/**
+ * The package-manager situation: identity, tooling, declared expectation and installation state.
+ *
+ * Widened from identity alone, because identity alone cannot answer the question this group exists for. "Which manager
+ * is this?" and "is that manager's environment healthy?" are different questions, and a group that answered only the
+ * first would force the check to shrug at the two conditions users actually hit: a missing binary, and a tree nobody
+ * installed.
+ *
+ * Each member earns its place by being read by the check or by the sentence it produces:
+ *
+ * - `selection` decides which story is told, and is the only required member: without it there is nothing to say.
+ * - `executable` distinguishes "tool missing" from "tool present but silent", which have different fixes.
+ * - `required` turns an installed version into a comparable statement; absent when the project declared nothing.
+ * - `installState` separates "your tooling is wrong" from "you simply have not installed yet".
+ */
 export interface PackageManagerFacts {
+  readonly selection: PackageManagerSelection;
+
+  /** Lockfile basenames seen at the project root, sorted. Evidence for the sentence, never a decision input. */
+  readonly lockfiles: readonly string[];
+
+  readonly executable?: PackageManagerExecutableFact;
+
   /**
-   * The manager that was declared or inferred. Absent when neither happened, which is a finding rather than silence.
+   * The manager version the project expects: a `packageManager` pin or an `engines` range.
    *
-   * `name` and `declared` are carried for the report to print — "npm (from package-lock.json)" is a line a reader
-   * wants — and the check itself reads only whether this is present. That is the honest division: the check decides,
-   * the report describes.
+   * Same narrowed shape as the runtime requirement, for the same reason: the check must not be able to reach a policy
+   * constant, so whatever it compares against arrives as evidence with its provenance attached.
    */
-  readonly selected?: {
-    readonly name: string;
-    readonly declared: boolean;
+  readonly required?: VersionRequirementFact;
+
+  readonly installState: PackageManagerInstallState;
+
+  /**
+   * Who created `node_modules`, when `installState` is `foreign`.
+   *
+   * Carried separately rather than folded into the state string, because the answer itself is not the useful part —
+   * naming the other tool is. "Dependencies were installed by npm" is actionable; "foreign" is jargon.
+   */
+  readonly foreignMarker?: {
+    readonly marker: string;
+    readonly createdBy: string;
   };
 }
 
@@ -181,9 +285,9 @@ export interface CheckFacts {
 /**
  * Where each group lives on `CheckFacts`.
  *
- * A named map rather than a convention, because the label and the property are deliberately different words — `'package-manager'`
- * in a message, `packageManager` in a type — and a runner that indexed `facts[group]` directly would compile against
- * nothing. One map means one place to look when a group is added.
+ * A named map rather than a convention, because the label and the property are deliberately different words —
+ * `'package-manager'` in a message, `packageManager` in a type — and a runner that indexed `facts[group]` directly
+ * would compile against nothing. One map means one place to look when a group is added.
  */
 export const FACT_KEYS: Readonly<Record<FactGroup, keyof CheckFacts>> = {
   [FactGroup.Runtime]: "runtime",

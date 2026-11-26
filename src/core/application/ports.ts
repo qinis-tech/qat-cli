@@ -38,11 +38,16 @@
  * would find it a hundred lines below the interface that mentions it. The rule as this file grows is that a group
  * moves out when its *vocabulary* is independent, not when the file gets long.
  *
- * The runtime probe below stays here for the opposite reason: it is one interface with no vocabulary of its own — it
- * borrows nothing, not even a domain type; a `string` and an optional are all it needs — so a fifth sibling file
- * would be ceremony around four lines.
+ * The machine-level ports below stay here for the opposite reason: each is one interface with no vocabulary of its
+ * own — they borrow nothing, not even a domain type; `string`, `boolean` and an optional are all they need — so a
+ * sibling file for them would be ceremony around four lines.
  */
-import type { RuntimeRequirement } from "../compatibility/index.js";
+
+// The widened name, because there is now only one. What this shape describes has grown — the runtime QAT requires, the
+// bound a project's framework declares, and the version a project pins for its package manager — and the runtime-era
+// alias in `core/compatibility` exists solely so that call sites in flight keep compiling. Importing it here would put a
+// deprecated name on the application's own surface, which is the one place it can least afford to be ambiguous.
+import type { VersionRequirement } from "../compatibility/index.js";
 import type {
   ConfigurationInput,
   ConfigurationResult,
@@ -485,7 +490,7 @@ export interface ReportGenerator {
  *
  * ## Answer contract
  *
- * - **Returns** the version exactly as the host reports it (`20.11.1`), unparsed and unnormalised. Parsing and
+ * - **Returns** the version exactly as the host reports it (e.g. `20.11.1`), unparsed and unnormalised. Parsing and
  *   ordering are one decision made in one place; a probe that normalised would be a second opinion about what a
  *   version looks like, and the two would eventually disagree.
  * - **Returns `undefined`** when the host reports no version at all. That is "not found", not a failure. The caller
@@ -503,12 +508,83 @@ export interface RuntimeProbe {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// Machine tooling
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Outcome of running one command.
+ *
+ * Why an outcome value and not "resolve or throw": a non-zero exit status is the *most common* result of running a
+ * tool and is information about the environment, not a defect in QAT. Modelling it as an exception would force every
+ * caller into a `try` that immediately swallows it, and the distinction between "exited with a status" and "could not
+ * start at all" would be lost in the process.
+ *
+ * The shape mirrors what the process layer already produces, so binding one to the other is a structural match rather
+ * than an adapter with a mapping table. The package-manager module declares a structurally identical `CommandOutcome`
+ * for its own probe; that duplicate should be deleted in favour of this one, since this is the layer that owns the
+ * machine-level vocabulary.
+ */
+export type CommandOutcome =
+  | {
+      readonly status: "exited";
+      readonly exitCode: number;
+      /** Captured output, already truncated by the runner to the requested budget. */
+      readonly stdout: string;
+    }
+  | { readonly status: "timed-out"; readonly stdout: string }
+  | { readonly status: "failed"; readonly reason: string };
+
+/**
+ * Runs an external command, shell-free and bounded.
+ *
+ * Two constraints are part of the contract rather than an implementation detail, because violating either turns a
+ * read-only diagnostic into an execution surface:
+ *
+ * - **No shell.** Arguments are passed as an array, so a path containing `;` or `&` cannot become a command.
+ * - **Bounded.** A timeout and an output cap are required, not optional. An unresponsive binary must not be able to
+ *   make a health check appear frozen.
+ *
+ * Asynchronous because it is I/O in the strongest sense: it waits for another process.
+ */
+export interface CommandRunner {
+  run(
+    command: string,
+    args: readonly string[],
+    options: { readonly timeoutMs: number; readonly maxOutputBytes: number },
+  ): Promise<CommandOutcome>;
+}
+
+/**
+ * Finding an executable on the user's PATH.
+ *
+ * One question — "is this command available, and where" — and no vocabulary beyond `string`. Kept this narrow so the
+ * project layer can compose it into a package-manager-shaped port while this file stays free of any project
+ * vocabulary; the same reasoning that keeps `RuntimeProbe` down to a single member.
+ *
+ * ## Resolution rules the contract requires
+ *
+ * - **PATH only.** An implementation must never search a project-local binary directory such as
+ *   `node_modules/.bin`: it is writable by any dependency install, so resolving a tool from there would run
+ *   project-controlled code merely to learn its name.
+ * - **Empty and relative PATH segments are refused.** An empty segment means "the current directory", the classic
+ *   way an unrelated file gets executed because someone happened to be standing in the wrong folder.
+ *
+ * Returns `undefined` when the command is not found, which is an ordinary answer. It throws only when PATH itself
+ * could not be inspected — a condition the caller cannot fix and should not report as "not installed".
+ *
+ * Asynchronous because it stats the filesystem.
+ */
+export interface ExecutableLocator {
+  locateExecutable(command: string): Promise<string | undefined>;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // Cross-cutting capabilities
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
  * Context attached to a log entry. Values are `unknown` because the logger decides how to serialise and redact, and a
- * port that pre-shapes them would move that decision into every caller.
+ * port that pre-shaped them would move that decision into every caller.
  */
 export type LogContext = Readonly<Record<string, unknown>>;
 
@@ -565,10 +641,10 @@ export interface IdGenerator {
  * `logger` is the port, not the concrete logger service: a handler reports, it does not derive correlated children.
  * Anything that needs a run-scoped logger receives one as a parameter later.
  *
- * Two of these members are *evidence*, not services: `runtime` and `nodeRequirement`. They are exposed because the
- * health checks consume gathered facts rather than dependencies, and the gatherer is a command-level workflow — so
- * the two halves of the runtime question have to be reachable from outside without any command resolving them for
- * itself. Neither is a second source: both come from the assembly, once.
+ * Three of these members are *evidence*, not services: `runtime`, `nodeRequirement` and `executables`. They are
+ * exposed because the health checks consume gathered facts rather than dependencies, and the gatherer is a
+ * command-level workflow — so the halves of each compatibility question have to be reachable from outside without any
+ * command resolving them for itself. None is a second source: all come from the assembly, once.
  */
 export interface Application {
   readonly logger: Logger;
@@ -602,8 +678,27 @@ export interface Application {
    * Deliberately not the type a check consumes. The range reaches a check through the runtime facts the gatherer
    * builds, so no checks-layer type appears in this file: a port may say what a caller can ask for, never how a
    * particular consumer shapes the answer.
+   *
+   * The type is `VersionRequirement`, which is wider than this member's name suggests and deliberately so: one shape
+   * serves the runtime QAT requires, a framework's advisory bound and a package-manager pin, so the seam that carries a
+   * declared range needs no second vocabulary when the third is added. The member keeps its own name because the
+   * assembly reads exactly one such value today; a second would be a second member, not a wider type.
    */
-  readonly nodeRequirement: RuntimeRequirement;
+  readonly nodeRequirement: VersionRequirement;
+
+  /**
+   * Resolves a tool's location on PATH, for the checks that must reason about installed tooling.
+   *
+   * A machine fact, like `runtime` — not a project fact, so it does not belong on `discovery`. Exposed rather than
+   * consumed internally because the package-manager check is a command-level workflow: it decides *which* command to
+   * look for from project evidence, then asks this port. Keeping the decision outside and the resolution here is what
+   * lets the project layer own its vocabulary (`PackageManagerName`, lockfiles, markers) while this file stays free of
+   * it, and what makes the whole detection matrix testable with a fake locator instead of a real PATH.
+   *
+   * Deliberately the primitive port and not a package-manager-shaped one: a wider interface here would drag project
+   * vocabulary into `core` and invert the dependency direction the rest of this file exists to protect.
+   */
+  readonly executables: ExecutableLocator;
 
   /**
    * The configuration a project supplied, defaulted and anchored.

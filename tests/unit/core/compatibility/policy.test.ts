@@ -3,8 +3,9 @@
  *
  * This is the module every compatibility answer flows through, so the suite has two jobs that are different in kind:
  *
- *   • TABLE CASES   — one row per branch of `evaluateRequirement`, naming the status *and* the reason. The reasons are
- *                     what remediation is written from, so "unsatisfied" alone is a weaker claim than the case intends.
+ *   • TABLE CASES   — one row per branch of `evaluateVersionRequirement`, naming the status *and* the reason. The
+ *                     reasons are what remediation is written from, so "unsatisfied" alone is a weaker claim than the
+ *                     case intends.
  *   • ORDER CASES   — the six steps run in a fixed sequence, and the sequence is the contract. A version that cannot be
  *                     read must be reported as unreadable *before* the policy is consulted, and an unreadable policy must
  *                     be reported *before* any claim of satisfaction. Those are the two orders that, if reversed, turn
@@ -20,14 +21,14 @@ import {
   CYPRESS_REQUIREMENT_ORIGIN,
   QAT_REQUIREMENT_ORIGIN,
   cypressRuntimeRequirement,
-  evaluateRequirement,
+  evaluateVersionRequirement,
   isIndeterminate,
   isSatisfied,
   isUnsatisfied,
   qatRuntimeRequirement,
   statusOf,
   type CompatibilityVerdict,
-  type RuntimeRequirement,
+  type VersionRequirement,
 } from "../../../../src/core/compatibility/index.js";
 
 /* -------------------------------------------------------------------------- */
@@ -35,7 +36,7 @@ import {
 /* -------------------------------------------------------------------------- */
 
 /** A QAT requirement declaring the given range, exactly as the manifest would. */
-function qat(range: string): RuntimeRequirement {
+function qat(range: string): VersionRequirement {
   return qatRuntimeRequirement({ engines: { node: range } });
 }
 
@@ -44,15 +45,15 @@ function evaluate(
   range: string,
   version: string | undefined,
 ): CompatibilityVerdict {
-  return evaluateRequirement(qat(range), version);
+  return evaluateVersionRequirement(qat(range), version);
 }
 
 /**
  * Every combination the suite cares about, used by the cross-cutting invariants below.
  *
- * Kept as one list so a new branch added to `evaluateRequirement` that is not represented here shows up as a scenario
- * the invariant tests do not cover — which is the closest thing to "every reason is exercised" that a unit suite can
- * assert about itself.
+ * Kept as one list so a new branch added to `evaluateVersionRequirement` that is not represented here shows up as a
+ * scenario the invariant tests do not cover — which is the closest thing to "every reason is exercised" that a unit
+ * suite can assert about itself.
  */
 const SCENARIOS: readonly { range: string; version: string | undefined }[] = [
   { range: ">=20.11.0 <21.0.0", version: "20.11.0" },
@@ -154,8 +155,8 @@ describe("cypressRuntimeRequirement", () => {
     { declared: "", because: "the declaration is empty" },
     { declared: "   ", because: "the declaration is whitespace" },
   ])("returns undefined when $because", ({ declared }) => {
-    // Absence of evidence must not become a fabricated finding: no declaration means no advisory, not a warning about
-    // a requirement that does not exist.
+    // Absence of evidence must not become a fabricated finding: no declaration means no advisory, not a warning about a
+    // requirement that does not exist.
     expect(cypressRuntimeRequirement(declared)).toBeUndefined();
   });
 
@@ -171,7 +172,7 @@ describe("cypressRuntimeRequirement", () => {
 /* Evaluation                                                                 */
 /* -------------------------------------------------------------------------- */
 
-describe("evaluateRequirement", () => {
+describe("evaluateVersionRequirement", () => {
   describe("reports the status and the reason together", () => {
     it.each([
       {
@@ -325,7 +326,7 @@ describe("evaluateRequirement", () => {
 
     it("passes the requirement through by identity, so attribution cannot drift", () => {
       const requirement = qat(">=20.11.0 <21.0.0");
-      const verdict = evaluateRequirement(requirement, "20.10.9");
+      const verdict = evaluateVersionRequirement(requirement, "20.10.9");
 
       expect(verdict.requirement).toBe(requirement);
     });
@@ -400,7 +401,7 @@ describe("evaluateRequirement", () => {
       const requirement = qat(">=20.11.0 <21.0.0");
       const before = { ...requirement };
 
-      evaluateRequirement(requirement, "20.10.9");
+      evaluateVersionRequirement(requirement, "20.10.9");
 
       expect(requirement).toStrictEqual(before);
     });
