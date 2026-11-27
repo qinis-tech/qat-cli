@@ -4,7 +4,7 @@
  * ## A check is a question, not an action
  *
  * Every check in this catalogue is a pure function of evidence somebody else gathered — a runtime version, an
- * assessment, a configuration load result, a writability fact. Nothing here reads a file, spawns a process or talks to
+ * assessment, a configuration inspection, a writability fact. Nothing here reads a file, spawns a process or talks to
  * a stream.
  *
  * That is not tidiness. It is what makes the catalogue's own requirement — a documented purpose, four separate outcome
@@ -22,6 +22,11 @@
  * `Failed` is reserved for checks whose severity is `error`. That is an invariant rather than a convention: the
  * catalogue test holds every entry to it, so an advisory check that reports a failure is a build failure rather than a
  * report that quietly refuses a run.
+ *
+ * A *finding's* severity may be lower than its check's — an `error` check that answers "nothing is configured, and that
+ * is the documented default" attaches an `information` finding to a `Passed` outcome. It may never be higher: a finding
+ * louder than the check that produced it would mean the check did not actually pass. The catalogue test holds both
+ * halves of that rule, which is why `CheckPassed` carries an optional finding rather than dropping the observation.
  *
  * ## Four code vocabularies, one finding shape
  *
@@ -83,7 +88,12 @@ export const CheckCategory = {
    * would have them scrolling between two halves of one answer.
    */
   CypressConfiguration: "cypress-configuration",
-  /** Whether the QAT configuration file itself can be read. */
+  /**
+   * Whether QAT's own configuration file can be read, and whether it conforms to a schema this release supports.
+   *
+   * Two questions, one group, for the same reason as the framework's configuration: they are halves of one answer, and
+   * the second is only meaningful once the first has been concluded.
+   */
   QatConfiguration: "qat-configuration",
   /** Whether the environment a command selected exists. */
   EnvironmentProfiles: "environment-profiles",
@@ -94,7 +104,7 @@ export const CheckCategory = {
 export type CheckCategory = (typeof CheckCategory)[keyof typeof CheckCategory];
 
 /**
- * The fourteen health checks.
+ * The fifteen health checks.
  *
  * An identifier is a dotted slug rather than a code, because it names a *question* and is quoted in documentation and
  * in the identifier of the scenario that verifies it. The diagnostic *code* is attached to the finding a check
@@ -112,7 +122,7 @@ export type CheckCategory = (typeof CheckCategory)[keyof typeof CheckCategory];
  * healthy?" — and the several conditions it may find are codes, not questions. One identifier per rung would fill the
  * report with rows that can never appear together, because each rung is only reachable when the one above it passed.
  *
- * ### Why the configuration pair did gain a second identifier
+ * ### Why the configuration pairs did gain a second identifier
  *
  * Those eight package-manager conditions are rungs of one question: each is only reachable when the one above passed,
  * so they can never appear side by side. Location and validity are not rungs — they are two questions with a
@@ -123,6 +133,11 @@ export type CheckCategory = (typeof CheckCategory)[keyof typeof CheckCategory];
  * A `precondition` link is the mechanism, and it is why the second identifier exists rather than an eleventh code on
  * the first: the runner can skip validity with a named cause — "not located" — which no code on a single check could
  * express without reporting a consequence as a problem in its own right.
+ *
+ * QAT's own configuration turns out to have the same two-question shape, and for the same reason: a file that cannot be
+ * read has nothing to validate, and a file that can be read may still be rejected field by field. So it gained a second
+ * identifier too, placed after its precondition rather than at the end of the register — declaration order is the order
+ * the report reads in, and a precondition must precede the check that waits on it.
  */
 export const CheckId = {
   /**
@@ -170,8 +185,19 @@ export const CheckId = {
    * answer in the Runtime group of the report, where a reader is already looking.
    */
   CypressRuntimeSupported: "cypress.runtime-supported",
-  /** Can the QAT configuration file be read? */
+  /** Can QAT's own configuration file be read? */
   QatConfigurationLoadable: "qat.configuration-loadable",
+  /**
+   * Does the readable QAT configuration conform to a schema this release supports?
+   *
+   * The second half of the QAT configuration pair, and the only check whose precondition is another check in this same
+   * group. Placed immediately after that precondition so the report reads causes before consequences, and so the runner
+   * can resolve the skip in a single forward pass.
+   *
+   * Its severity is `error` even though an absent file is merely informational: the two are different questions. This
+   * one asks whether a document that exists is one QAT can act on, and the answer "no" always blocks.
+   */
+  QatConfigurationValid: "qat.configuration-valid",
   /** Does the environment a command selected exist in the configuration? */
   EnvironmentResolvable: "qat.environment-resolvable",
   /** Can reports be written where the configuration says they go? */
@@ -265,12 +291,30 @@ export type CheckSkipReason =
  * the six ways the second can happen share one code because they share one remedy — get a mechanism, then ask again.
  *
  * These are `QAT-H` and not `QAT-D`, even though a configuration is a property of a project: the codes above for QAT's
- * *own* configuration document (`QAT-H004`–`H006`) are also about a file in a project, and what a `QAT-H` code denotes
- * is who is speaking — this layer, about something it had to inspect itself — rather than what the inspected thing is.
+ * *own* configuration document (`QAT-H004`–`QAT-H006`) are also about a file in a project, and what a `QAT-H` code
+ * denotes is who is speaking — this layer, about something it had to inspect itself — rather than what the inspected
+ * thing is.
  *
  * Unlike the package-manager group these are not all advisory. Three are conditions a project can run with (a legacy
  * format, a stale copy in the wrong place, a file nothing would inspect) and the rest block, which is exactly the case
  * `CheckSeverity` and `CheckStatus` are separate for: one declared severity, two statuses, decided by the condition.
+ *
+ * ## Why QAT's own configuration grew from three codes to eleven
+ *
+ * The original three described the loader: empty, not JSON, too large. The loader cannot answer the questions a reader
+ * actually asks, which begin once the bytes became a document — is the declared schema version one this release
+ * understands, is the framework identifier one it can run, is an output path inside the project, which fields did the
+ * schema reject. Each of those ends in a different action, so each earns a code under the same rule the two groups
+ * above follow.
+ *
+ * Two of the new codes look like one condition split in half — absent, and absent-when-required — and they are not. A
+ * missing file for a command that can proceed on documented defaults is an *observation*: informational, and a pass. A
+ * missing file for a command that cannot proceed is a *failure*. One code cannot be both without moving the decision to
+ * every call site, and the two produce different statuses as well as different severities.
+ *
+ * `QAT-H004` remains the empty-file code and is only reachable where the loader distinguishes an empty document from a
+ * malformed one; where it cannot, `QAT-H005` speaks. A contract test asserts that whichever path is taken, the reader
+ * gets one of the two sentences rather than a silent pass.
  *
  * New codes are appended, never inserted, so a number quoted in a report keeps its meaning.
  */
@@ -442,6 +486,69 @@ export const HealthCode = {
    * are different mornings for whoever has to debug it.
    */
   CypressConfigurationUnverified: "QAT-H029",
+  /**
+   * No QAT configuration file exists, and the documented defaults apply.
+   *
+   * Information, and attached to a `Passed` outcome. A project that never ran `qat init` is in a supported state, and
+   * marking it a problem is how a doctor teaches people to ignore it. The remedy says the file is optional in as many
+   * words, because "create one" would imply otherwise.
+   */
+  ConfigurationMissing: "QAT-H030",
+  /**
+   * No QAT configuration file exists, and this command cannot proceed without one.
+   *
+   * A separate code rather than a severity flag on `QAT-H030`, because a code that could be informational or blocking
+   * depending on a flag would move the same decision to every call site that remembered to pass it — and the two
+   * outcomes are not merely different weights, they are a pass and a failure.
+   */
+  ConfigurationMissingRequired: "QAT-H031",
+  /**
+   * The configuration file is there and cannot be read.
+   *
+   * Distinct from absent on purpose: the file exists, so telling the reader to create one would send them to overwrite
+   * something. The cause — permission, a directory, a link loop — decides the sentence.
+   */
+  ConfigurationUnreadable: "QAT-H032",
+  /**
+   * The declared schema version is outside the set this release understands.
+   *
+   * Reported alone, with no field complaints: there is nothing meaningful to say about fields in a document whose
+   * version we do not understand, and a wall of schema errors buries the one fact the reader can act on. Both the
+   * declared and the supported versions are printed, because "unsupported" without the pair leaves them unable to tell
+   * whether to move QAT or edit the file.
+   */
+  ConfigurationVersionUnsupported: "QAT-H033",
+  /**
+   * The schema version is absent or is not a number.
+   *
+   * Split from `QAT-H033` because the remedies differ by one character: a version written as a string is a typo to
+   * correct, while a version from the future means the reader is on the wrong release of QAT. One message covering both
+   * would be wrong for whoever it was not written for.
+   */
+  ConfigurationVersionInvalid: "QAT-H034",
+  /**
+   * The document parsed and the schema rejected one or more fields.
+   *
+   * The general field report, and the one code in this group that lists paths: they are the address a reader can act
+   * on. Values are never repeated — a value that failed validation is exactly the value a diagnostic must not print —
+   * and the command that prints the full detail is named so the reader decides where to disclose it.
+   */
+  ConfigurationSchemaInvalid: "QAT-H035",
+  /**
+   * An output path is absolute, escapes the project, or is otherwise not portable.
+   *
+   * Distinct from the general field report because the fix is a shape rather than a value: a relative path, written
+   * with forward slashes, that stays inside the project. Listing the offending field paths is enough; a path on a
+   * developer machine routinely contains a username, so the values are not echoed.
+   */
+  ConfigurationOutputPathInvalid: "QAT-H036",
+  /**
+   * The framework identifier is not an adapter this release can run.
+   *
+   * Its own code because its own fix: the rest of the file may be perfectly correct and the reader's next action is to
+   * change one word. The declared value is not echoed, for the same reason no other configured value is.
+   */
+  ConfigurationFrameworkUnsupported: "QAT-H037",
 } as const;
 
 export type HealthCode = (typeof HealthCode)[keyof typeof HealthCode];
@@ -466,6 +573,17 @@ export interface CheckPassed {
   /** The check's declared severity, whether or not it mattered this time. */
   readonly severity: CheckSeverity;
   readonly status: typeof CheckStatus.Passed;
+  /**
+   * An observation attached to a satisfied check.
+   *
+   * Optional because most passes have nothing to say. It exists so that a genuine finding — "no configuration file,
+   * and the documented defaults apply" — is reported rather than discarded, without inventing a fifth status for
+   * "passed, and here is a note".
+   *
+   * Invariant, enforced by the catalogue test: an attached finding's severity is `information`. Anything louder means
+   * the check did not actually pass, and the honest status would have been `warned`.
+   */
+  readonly finding?: CheckFinding;
 }
 
 /**
@@ -529,6 +647,8 @@ export function outcomeOf(
  * A `skipped` outcome never blocks, and that is not an oversight. A check is skipped *because* another check did not
  * pass, and that failure is already in the list — counting the consequence as well would report one condition as
  * several, which is the collapse the whole diagnostics chain exists to prevent.
+ *
+ * An informational finding attached to a `passed` outcome never blocks either, by construction: it is information.
  */
 export function isBlocked(report: DoctorReport): boolean {
   return report.outcomes.some(

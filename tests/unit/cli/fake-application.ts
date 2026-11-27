@@ -17,14 +17,15 @@
  *
  * ## Every collaborator that is not provided fails loudly
  *
- * Three reject — `repository`, `discovery` and `initialisation` — and `configuration.resolve` throws, each with a message
- * naming the collaborator that was reached for. A test that accidentally calls one fails loudly instead of silently
- * succeeding against a stub that returned nothing — and the silent success is the worse failure, because it looks like a
- * passing test and hides an assertion that never ran.
+ * Four reject — `repository`, `discovery`, `initialisation` and `configuration.inspect` — and `configuration.resolve`
+ * throws synchronously, each with a message naming the collaborator that was reached for. A test that accidentally
+ * calls one fails loudly instead of silently succeeding against a stub that returned nothing — and the silent success is
+ * the worse failure, because it looks like a passing test and hides an assertion that never ran.
  *
- * The two shapes follow the port rather than a preference here: `configuration.resolve` is synchronous, because
- * resolution is a pure function of a document and a project root, so a fake that rejected a promise from it would be
- * describing an interface nobody implements.
+ * The two shapes follow the port rather than a preference here. `configuration.resolve` is synchronous, because
+ * resolution is a pure function of a document and a project root; `configuration.inspect` is not, because it reads a
+ * disk. A fake that rejected a promise from the first would be describing an interface nobody implements, and a fake that
+ * threw synchronously from the second would let a caller forget an `await` the implementation requires.
  *
  * The logger is the exception, and deliberately: a handler is entitled to log, and a rejecting logger would fail a test
  * for doing something correct. Its methods discard.
@@ -135,7 +136,7 @@ export interface FakeApplicationOptions {
  * promise that never resolves is assignable to every result type these ports have.
  */
 function unused(
-  collaborator: "discovery" | "initialisation" | "repository",
+  collaborator: "configuration" | "discovery" | "initialisation" | "repository",
 ): Promise<never> {
   return Promise.reject(new Error(`${collaborator} is unused in this test`));
 }
@@ -225,12 +226,23 @@ export function fakeApplication(
       readPrefix: () => Promise.resolve(new Uint8Array(0)),
     },
 
-    // One member, and it throws rather than rejecting: see `unusedImmediately`. A command that needs a resolved
-    // configuration does not call this — it reads the one attached to its assessment, which `discovery.assess` above
-    // traps for the same reason. Reaching for the resolver directly from a handler is itself the defect this trap
-    // reports.
+    /**
+     * Two members, and they fail differently because the port does.
+     *
+     * `resolve` throws synchronously: it is a pure function of a document and a project root, so there is no promise for
+     * a caller to await and a rejected one would describe an interface nobody implements.
+     *
+     * `inspect` rejects, for the same reason `executables` and `files` resolve rather than return: it reads a disk, so a
+     * synchronous throw would let a caller forget an `await` that the real implementation requires.
+     *
+     * Neither is a stub, and neither is likely to be needed. A command that wants a resolved configuration does not call
+     * this port — it reads the one attached to its assessment, which `discovery.assess` above traps for the same reason.
+     * A command that wants to know whether the file is usable asks the assessment, not the resolver. Reaching for the
+     * resolver directly from a handler is itself the defect these traps report.
+     */
     configuration: {
       resolve: () => unusedImmediately("configuration"),
+      inspect: () => unused("configuration"),
     },
 
     // One operation, and it rejects rather than returning an outcome, because no arrangement of a fake makes an

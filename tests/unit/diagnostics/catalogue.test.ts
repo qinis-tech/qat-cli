@@ -308,19 +308,15 @@ describe("the guidance table", () => {
     // print it into whatever consumes the report.
     const text = HEALTH_GUIDANCE[HealthCode.ConfigurationNotJson].describe({
       configuration: {
-        kind: "malformed",
+        state: "malformed",
         path: "qat.config.json",
-        reason: "Unexpected token",
-        location: {
-          position: 4,
-          line: 4,
-          column: 1,
-          excerpt: '{"API_TOKEN": "sk_live_do_not_print"',
-        },
+        line: 4,
+        column: 1,
       },
     });
 
     expect(text.explanation).toContain("line 4");
+    expect(text.explanation).toContain("qat.config.json");
     expect(text.explanation).not.toContain("sk_live");
   });
 

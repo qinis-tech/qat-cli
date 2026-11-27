@@ -386,17 +386,49 @@ describe("the configuration adapter", () => {
     );
   });
 
-  it("is synchronous, and exposes no test seam", () => {
+  it("exposes exactly the two operations the port declares, and no test seam", () => {
     const application = createApplication({
       environment: {},
       logDestination: capture().stream,
     });
 
-    // Synchronous because resolution performs no I/O: a promise here would advertise work that never happens. Asserted
-    // by absence — a function that returned a promise would be `then`-able, and this is not.
-    expect(application.configuration.resolve).toBeTypeOf("function");
+    expect(application.configuration.inspect).toBeTypeOf("function");
+
+    // Exactly two, so an adapter cannot acquire a third member that nothing declared — the seam a test would reach for
+    // and a command would eventually depend on. Sorted, because the order of a literal is not a contract.
+    expect(Object.keys(application.configuration).sort()).toStrictEqual([
+      "inspect",
+      "resolve",
+    ]);
+
+    // The object is not thenable. A `then` here would make `await application.configuration` compile and do something
+    // surprising, which is worse than not compiling.
     expect(application.configuration).not.toHaveProperty("then");
-    expect(Object.keys(application.configuration)).toStrictEqual(["resolve"]);
+  });
+
+  it("keeps resolution synchronous and inspection asynchronous, on purpose", async () => {
+    const root = await configuredProject(minimalConfig());
+    const application = createApplication({
+      environment: {},
+      logDestination: capture().stream,
+    });
+
+    // Resolution takes a document somebody already loaded and validated: no file is read, no clock is consulted. A
+    // promise would advertise work that never happens.
+    const resolution = application.configuration.resolve(
+      root,
+      await loadFrom(root),
+    );
+    expect(resolution).not.toHaveProperty("then");
+    expect(resolution.ok).toBe(true);
+
+    // Inspection *is* I/O, so it is the one member that returns a promise — and pretending otherwise would force every
+    // caller to defend against an exception from a function that claimed to be total.
+    await expect(
+      application.configuration.inspect(root),
+    ).resolves.toMatchObject({
+      state: "valid",
+    });
   });
 });
 

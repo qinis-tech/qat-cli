@@ -7,9 +7,9 @@
  *
  * ## Facts are grouped by source, not by check
  *
- * One source usually answers several checks: the assessment answers five, the configuration load
- * result three, the Cypress configuration snapshot two. Grouping by check would mean reading the
- * same tree twice, and two readings of one tree are two readings that can disagree.
+ * One source usually answers several checks: the assessment answers five, the composed
+ * configuration verdict two, the Cypress configuration snapshot two. Grouping by check would mean
+ * reading the same tree twice, and two readings of one tree are two readings that can disagree.
  *
  * The Cypress group is the clearest case of the rule: three checks read one assessment of one
  * installation, so the installation is captured once and the conditions are decided once. A group
@@ -23,7 +23,7 @@
  *
  * | Group | Subject | Answers |
  * | --- | --- | --- |
- * | `configuration` | **QAT's** own configuration file | Can this file be trusted, and what did it say |
+ * | `configuration` | **QAT's** own configuration file | Can this file be trusted, what did it say, and did the schema accept it |
  * | `cypress` | The **installed** Cypress package and binary | Is the framework healthy enough to run |
  * | `cypressConfiguration` | The **project's** Cypress configuration file | Can it be located, and can it be validated |
  *
@@ -46,6 +46,12 @@
  * those hide the condition the check exists to describe. The convention holds because the gatherer
  * is the only writer: whoever builds `RuntimeFacts` has just asked the question, so a missing field
  * can only mean a missing answer.
+ *
+ * `ConfigurationFacts` is the third case and the easiest to get wrong. The group being absent means
+ * nobody inspected the project at all. An inspection whose state is `missing` means we looked, found
+ * nothing, and have something to say about it — informational when the operation can proceed on
+ * documented defaults, blocking when it cannot. A check that skipped because the *group* was absent
+ * would be silent on precisely the condition `CFG-001` exists to report.
  *
  * ## Why the runtime group carries a requirement as well as a version
  *
@@ -73,7 +79,7 @@
  * reads is a fact the next person will assume is load-bearing.
  */
 
-import type { ConfigurationLoadResult } from "../../config/loader/index.js";
+import type { ConfigInspection } from "../../config/index.js";
 import type {
   CheckCategory,
   CheckFinding,
@@ -302,6 +308,40 @@ export interface PackageManagerFacts {
 }
 
 /**
+ * QAT's own configuration, as far as anything was entitled to conclude.
+ *
+ * This group is a *verdict*, like the two Cypress groups, and for the same reason: the file was read
+ * exactly once by the gatherer, and what reaches a check is the conclusion together with the evidence
+ * that supports it. Two checks read it — one asks whether the file exists and is readable, the other
+ * whether it conforms to a schema we support — and both must be describing the same read.
+ *
+ * ## Why this is the composed inspection rather than the loader's outcome
+ *
+ * The loader's outcome stops at "bytes became a document or did not". It cannot answer the schema
+ * question, and it cannot say whether the declared version is one we are allowed to interpret. A group
+ * holding only the loader outcome would force the schema check to reach into `validation` itself and
+ * compose the two stages again — a second composition, with its own ordering, that would eventually
+ * disagree with the one the `run` preflight performs.
+ *
+ * The inspection is that composition, done once, in the configuration module, and deliberately
+ * non-throwing: an expected condition such as "no file", "unreadable" or "not JSON" is a state a
+ * diagnostic can describe, not an exception it has to catch. Its six states map one-to-one onto the
+ * stories the two checks tell, which is why this layer can import a single type and no stage port.
+ *
+ * ## What is deliberately not here
+ *
+ * No file contents, no absolute paths, no environment values. The states carry identifiers, counts and
+ * project-relative locations; the wording and the evidence shaping happen in the configuration
+ * diagnostics module, so a check cannot accidentally paste a configuration value into a report.
+ *
+ * `ConfigInspection` is generic with an `unknown` payload: a check that needs the resolved
+ * configuration reads it through a guard, exactly as it would read any other evidence it did not
+ * produce. Claiming a concrete payload type here would be this layer asserting a shape the
+ * configuration module owns.
+ */
+export type ConfigurationFacts = ConfigInspection;
+
+/**
  * The installed framework's health conditions, already decided.
  *
  * Assessment is pure — evidence in, conditions out — so it runs inside the gatherer, which is the only
@@ -395,8 +435,8 @@ export interface CheckFacts {
   readonly packageManager?: PackageManagerFacts;
   /** What detection found, plus the per-operation verdict — the source five checks read. */
   readonly assessment?: ProjectAssessment;
-  /** The load outcome, which distinguishes absent from empty from malformed from schema-invalid. */
-  readonly configuration?: ConfigurationLoadResult;
+  /** QAT's own configuration, composed into one verdict that distinguishes absent from malformed from unsupported from schema-invalid. */
+  readonly configuration?: ConfigurationFacts;
   readonly environment?: EnvironmentFacts;
   readonly output?: OutputFacts;
   /** The installed framework's health conditions, decided once for the checks that read them. */
@@ -469,7 +509,8 @@ export interface CheckDefinition {
    *
    * Framework checks use it for their real dependency: a binary cache is keyed by version, so a check
    * that inspects the cache declares the check that establishes the version. The configuration checks
-   * use it the same way: nothing can be validated until something has been located.
+   * use it the same way: nothing can be validated until something has been located, and nothing can be
+   * located in a file that could not be read.
    */
   readonly precondition?: CheckId;
   /** What an unfavourable answer means. The same value for every run, whatever condition fired. */

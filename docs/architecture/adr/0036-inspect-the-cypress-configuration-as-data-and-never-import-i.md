@@ -1,6 +1,6 @@
 # ADR-0036: Inspect the Cypress configuration as data and never import it
 
-Date: 2025-01-14
+Date: 2026-11-26
 
 ## Status
 
