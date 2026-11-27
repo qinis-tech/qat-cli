@@ -34,16 +34,25 @@ import type {
 } from "../domain/index.js";
 
 /**
- * How serious a finding is.
+ * How loudly a finding speaks.
  *
- * Two levels, not five. A finding either stops the command or does not, and that is the only distinction any
- * consumer acts on — a consumer that sorts by severity needs an order, and a consumer that prints needs a word.
+ * Three levels, matching the approved classification, and deliberately *not* the same thing as a check's status:
+ * severity says what a condition means, status says what happened on this run. A failing check always carries `error`;
+ * an `information` finding never blocks and never should — it exists so an observation worth printing is not silently
+ * dropped or inflated into a warning.
  */
 export const DiagnosticSeverity = {
-  /** The command cannot proceed. */
+  /** The condition prevents the requested work. */
   Error: "error",
-  /** Worth knowing; the command may proceed. */
+  /** The condition is worth acting on but does not prevent the work. */
   Warning: "warning",
+  /**
+   * A non-blocking observation: an optional capability that is not configured, or a normal state worth naming.
+   *
+   * The level that keeps a doctor honest. Without it, a benign state is either hidden (and the reader never learns the
+   * defaults are in use) or promoted to a warning (and the reader learns to ignore warnings).
+   */
+  Information: "information",
 } as const;
 
 export type DiagnosticSeverity =

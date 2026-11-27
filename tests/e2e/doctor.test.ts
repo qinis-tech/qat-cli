@@ -446,7 +446,12 @@ describe("doctor", () => {
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
       expect(result.stdout).toContain("QAT-D004 error");
       expect(result.stdout).toContain("cypress.json");
-      expect(result.stdout).toContain("Upgrade to cypress.config.ts");
+      expect(result.stdout).toContain(
+        "Move the settings into cypress.config.ts",
+      );
+      expect(result.stdout).toContain(
+        "keep the configuration format that release reads",
+      );
     });
   });
 

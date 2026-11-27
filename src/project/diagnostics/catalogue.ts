@@ -17,6 +17,28 @@
  * So the prose below names the file it means. This is not pedantry about wording: a remedy that sends a reader to
  * `qat.config.json` is a remedy that fails, and the failure looks like the tool not recognising a file it just read.
  *
+ * ## Three owners for configuration prose, and why this one stops at the tree
+ *
+ * There are now three places a configuration condition can be described, and they are not interchangeable:
+ *
+ * 1. **This catalogue**, for what a *name probe* found about the tree. "Is there a regular file with a supported
+ *    configuration name at the root?" — answered by listing directory entries, never by reading one. Its codes are
+ *    `DiagnosticCode`, and they are what the diagnosis carries for every consumer of a project description.
+ * 2. **`src/project/cypress-config`**, for whether the located Cypress file is usable. It reads bytes, follows links,
+ *    checks permissions and, at most once, asks the project's own loader. Its verdicts become `QAT-H018`–`QAT-H029` in the
+ *    doctor's catalogue, where the prose for those conditions lives.
+ * 3. **`src/config/diagnostics`**, for QAT's own configuration document: absent, unreadable, malformed, unsupported
+ *    version, schema-invalid. `QAT-H030`–`QAT-H037`.
+ *
+ * The rule that keeps them apart: **a condition that needs bytes does not belong here.** A name probe cannot tell an
+ * unreadable file from a readable one, an empty file from a full one, or a symlink that escapes the project from one that
+ * does not — and an entry here claiming otherwise would state a fact nothing in this layer can observe.
+ *
+ * What survives in this file is exactly what a probe can see: a missing file, two candidates, an unusable *format* by
+ * extension, a directory sitting on a name, and a file one directory away. Those are sufficient to make the
+ * detection-time remedy correct, and insufficient to decide validity — which is why the doctor does not ask this layer
+ * that question.
+ *
  * ## Severity here answers for the project, not for an operation
  *
  * An entry's severity says how serious the condition is, not whether it stops anything. Whether it stops something depends
@@ -27,17 +49,17 @@
  * ## Why the placement facts earn a clause and not a code
  *
  * The detection engine reports where a configuration *is* as well as whether one was found: a configuration filed inside
- * `cypress/`, and a directory sitting on a configuration path. Both are real, both are diagnosable, and both currently
- * arrive here as "no configuration found".
+ * `cypress/`, and a directory sitting on a configuration path. Both are real, both are diagnosable, and both would
+ * otherwise arrive here as "no configuration found".
  *
  * They do not get their own codes, for the reason this catalogue exists: a code names a *condition*, and the condition is
  * the same one — Cypress cannot load a configuration from this directory. What the placement facts change is the
  * explanation and the remedy, which is the difference between "create a file" (wrong, and actively harmful when a
  * directory is in the way) and "move the file you already have".
  *
- * The doctor layer does carry finer-grained codes for these, because it reads file bytes and can tell "unreadable" from
- * "misplaced" from "a directory on the path". This layer answers what detection found about the tree; it stops where the
- * tree stops.
+ * These are the only two placement facts this layer keeps, and it keeps them because a directory entry is all they need:
+ * "a directory exists at this name" and "a file with a configuration name exists under `cypress/`" are both answers to a
+ * name probe.
  *
  * ## Why this catalogue holds no runtime entry
  *
@@ -77,6 +99,10 @@
  *
  * Both constants were integers and only one of them was a duplicate. That is why the rule is not "delete every version
  * constant" — it is "state no policy twice", and a format fact is not a policy.
+ *
+ * Because it is the only place that number lives, the doctor's legacy-format advisory reads it from here rather than
+ * restating it: one constant, so the layer that finds a legacy file and the layer that advises about it cannot disagree
+ * about when a legacy file stopped being usable.
  */
 
 import {
@@ -97,11 +123,20 @@ import type { FrameworkDeclaration } from "../../core/domain/index.js";
  *
  * This is also why it survived the removal of the Node floor that used to sit in the checks layer. That number was a support
  * policy restated from `engines.node`; this one is not restated from anything, because nothing declares it.
+ *
+ * It is exported because it has exactly one reader outside this file: the Cypress-configuration verdict's legacy advisory.
+ * A second literal there would be a second answer to "when did the format change", and the two would diverge at the next
+ * Cypress major rather than immediately — which is the worst time to discover it.
  */
 export const MINIMUM_CYPRESS_MAJOR = 10;
 
 /**
  * Everything a catalogue entry may need in order to describe itself.
+ *
+ * Every field here is an answer to a *name probe*: a directory entry list, a manifest read as data, a version string taken
+ * from an installed package's manifest. No field may be populated from the contents of a Cypress configuration file —
+ * nothing in this layer reads one, and a field that looked like it did would invite an entry to describe a condition this
+ * layer cannot observe.
  *
  * Deliberately holds nothing about package managers, package-manager versions or installed tooling. Those entries do not
  * exist in this catalogue (see the note above), and adding a field for them would be the first step towards creating them —
@@ -275,17 +310,26 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
       // A list that is empty cannot be joined into a sentence. The condition implies a non-empty list, but a message
       // reading "uses , which this build cannot use" is worse than a general one, and the general one is still true.
       //
-      // "Use", not "read": a legacy `cypress.json` is perfectly readable JSON. What it cannot be is *used* as a
+      // "Use", not "read": an unsupported configuration is often perfectly readable. What it cannot be is *used* as a
       // configuration by this build, and saying "read" sends a reader to check file permissions on a file that is fine.
+      //
+      // This entry deliberately claims nothing about *why* the format is unusable. A file can be unusable because the
+      // extension is one Cypress never loads, or because it is a legacy document and the installed Cypress is new enough
+      // to have dropped it — and the two need opposite advice. Only the installed major distinguishes them, so the
+      // condition is stated as the name probe sees it and the remedy names both possibilities.
       const explanation =
         facts.unsupportedConfigurations.length === 0
           ? `${facts.root} uses a Cypress configuration format this build cannot use.`
           : `${facts.root} uses ${listOf(facts.unsupportedConfigurations)}, which this build cannot use as a Cypress configuration.`;
 
+      const installed =
+        facts.installationVersion === undefined
+          ? ""
+          : ` This project has Cypress ${facts.installationVersion} installed.`;
+
       return {
         explanation,
-        remediation:
-          "Upgrade to cypress.config.ts, which Cypress 10 and later use.",
+        remediation: `Move the settings into cypress.config.ts, which Cypress ${String(MINIMUM_CYPRESS_MAJOR)} and later load.${installed} If the project must stay on an older Cypress, keep the configuration format that release reads instead.`,
         // The first one, because a project with two unusable configurations has bigger problems than this message.
         ...(facts.unsupportedConfigurations[0] === undefined
           ? {}
@@ -304,6 +348,9 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
    *
    * Naming a command here would be the duplicate: two files, two invocations, and the day one of them learned about frozen
    * lockfiles the other would still be advising the rewrite this tool exists to detect.
+   *
+   * This is also why the entry does not distinguish "never installed" from "installed by a different tool": the second is a
+   * property of the machine's history, and `HealthCode.PackageManagerForeignInstall` is where it is described.
    */
   [DiagnosticCode.DependencyNotInstalled]: {
     severity: DiagnosticSeverity.Error,
@@ -320,6 +367,8 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
   [DiagnosticCode.VersionIncompatible]: {
     severity: DiagnosticSeverity.Error,
     describe: (facts) => ({
+      // The installed version is the fact that makes this condition true, so it is named even when it is unknown — a
+      // message that omitted it would read as though the configuration were the problem on its own.
       explanation: `Cypress ${facts.installationVersion ?? "unknown"} is installed, but ${facts.configurations[0] ?? "the configuration"} uses the format introduced in Cypress ${String(MINIMUM_CYPRESS_MAJOR)}.`,
       remediation: `Upgrade Cypress to ${String(MINIMUM_CYPRESS_MAJOR)} or later, or restore a cypress.json configuration.`,
       ...(facts.configurations[0] === undefined

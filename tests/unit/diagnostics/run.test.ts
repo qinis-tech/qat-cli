@@ -1,9 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  ConfigurationLoad,
-  type ConfigurationLoadResult,
-} from "~/config/loader/index.js";
+import type { ConfigInspection } from "~/config/index.js";
 import {
   CheckId,
   CheckSeverity,
@@ -15,7 +12,6 @@ import {
   outcomeOf,
 } from "~/core/application/checks.js";
 import type { CheckOutcome } from "~/core/application/checks.js";
-import { ConfigurationDiagnosticCode } from "~/core/application/configuration.js";
 import {
   DetectionStatus,
   DiagnosticCode,
@@ -68,6 +64,14 @@ import type {
  * The configuration group has the same property for a different reason: its two members were decided from one capture of
  * one file, so `decided()` takes both. A fixture that supplied only the location would compile into a validity verdict
  * nobody made.
+ *
+ * ## The configuration group is a state machine, and the discriminant matters
+ *
+ * `CheckFacts.configuration` is a `ConfigInspection` — six `state` values — not the loader's `kind`-keyed outcome.
+ * That distinction is load-bearing at runtime as well as in the type system: the rule switches on `inspection.state`,
+ * so a fixture carrying `kind` instead matches no case, falls through, and makes `evaluate` return `undefined`. The
+ * runner then reports `Cannot read properties of undefined` from inside itself, which names the runner rather than the
+ * fixture. Every fixture below therefore carries `state`, and the fixtures are named for the state they produce.
  */
 type AnyCode = DiagnosticCode | ValidationCode;
 
@@ -179,24 +183,111 @@ function assessment(spec: AssessmentSpec = {}): ProjectAssessment {
   };
 }
 
-/**
- * The load outcome for a project with no configuration file, which is legal.
- */
-const ABSENT: ConfigurationLoadResult = {
-  kind: ConfigurationLoad.NotFound,
+/* ─────────────────────────────────────────────────────────────────────────────
+ * QAT configuration verdicts
+ *
+ * One constant per state the inspection can report. The discriminant is `state`; there is no `kind`, and a fixture that
+ * grew one would be silently unmatched by the rule rather than rejected here.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/** No file at the project root. A supported state: the documented defaults apply. */
+const ABSENT: ConfigInspection = { state: "missing", searchedAt: CONFIG_PATH };
+
+/** Parsed, version-checked, valid and resolved. */
+const LOADED: ConfigInspection = {
+  state: "valid",
   path: CONFIG_PATH,
+  version: 1,
+  config: { reports: "results/reports", evidence: "results/evidence" },
+};
+
+const CONFIG_UNREADABLE: ConfigInspection = {
+  state: "inaccessible",
+  path: CONFIG_PATH,
+  code: "EACCES",
+};
+
+const CONFIG_TOO_LARGE: ConfigInspection = {
+  state: "inaccessible",
+  path: CONFIG_PATH,
+  code: "TOO_LARGE",
+};
+
+const CONFIG_MALFORMED: ConfigInspection = {
+  state: "malformed",
+  path: CONFIG_PATH,
+  line: 4,
+  column: 1,
+};
+
+const CONFIG_VERSION_UNSUPPORTED: ConfigInspection = {
+  state: "version-unsupported",
+  path: CONFIG_PATH,
+  declared: 7,
+  supported: [1],
+};
+
+/**
+ * Four schema failures, differing only in which field was rejected.
+ *
+ * Four fixtures rather than one, because the *field* decides the code: the rule picks the primary reason from the issue
+ * paths, so a fixture naming a different field would assert a different code without changing its own name.
+ */
+const CONFIG_VERSION_INVALID: ConfigInspection = {
+  state: "schema-invalid",
+  path: CONFIG_PATH,
+  version: -1,
+  issues: [
+    { path: ["schemaVersion"], code: "invalid_type", message: "Required" },
+  ],
+};
+
+const CONFIG_FIELD_REJECTED: ConfigInspection = {
+  state: "schema-invalid",
+  path: CONFIG_PATH,
+  version: 1,
+  issues: [
+    {
+      path: ["environments"],
+      code: "unrecognized_keys",
+      message: "Unrecognised key.",
+    },
+  ],
+};
+
+const CONFIG_OUTPUT_REJECTED: ConfigInspection = {
+  state: "schema-invalid",
+  path: CONFIG_PATH,
+  version: 1,
+  issues: [
+    {
+      path: ["output", "reports"],
+      code: "custom",
+      message: "Must be relative to the project root.",
+    },
+  ],
+};
+
+const CONFIG_FRAMEWORK_REJECTED: ConfigInspection = {
+  state: "schema-invalid",
+  path: CONFIG_PATH,
+  version: 1,
+  issues: [
+    {
+      path: ["framework"],
+      code: "invalid_enum_value",
+      message: "Unsupported framework.",
+    },
+  ],
 };
 
 /**
  * The range this build declares, as a fixture.
  *
- * Shared by every runtime case, so a scenario varies exactly one thing. The shape mirrors what the manifest produces;
- * nothing here is read from disk, and nothing here is parsed by the test — the check does that, once, in one place.
- *
- * Both bounds are complete `MAJOR.MINOR.PATCH` tuples, and that is a requirement rather than a preference: the range
- * grammar refuses partial versions instead of completing them, so a fixture written `>=24.0.0 <25` is an *unreadable*
- * policy. Every runtime case would then report `QAT-H008` — indeterminate — without ever comparing a version, which
- * looks like a broken check and is actually a broken fixture.
+ * Shared by every runtime case, so a scenario varies exactly one thing. Both bounds are complete
+ * `MAJOR.MINOR.PATCH` tuples, and that is a requirement rather than a preference: the range grammar refuses partial
+ * versions instead of completing them, so a fixture written `>=24.0.0 <25` is an *unreadable* policy and every runtime
+ * case would report indeterminate without ever comparing a version.
  */
 const DECLARED = {
   range: ">=24.0.0 <25.0.0",
@@ -210,9 +301,6 @@ const DECLARED = {
  * `Cannot read properties of undefined (reading 'range')` from inside the comparison: each case replaced the whole
  * `runtime` group in a spread and silently dropped it, and nothing caught it because a spread's result is never
  * checked field-by-field against the type it satisfies.
- *
- * One function means one place that can be wrong — and this one cannot be, because `required` comes first and can be
- * replaced but never omitted.
  */
 function runtimeFacts(overrides: Partial<RuntimeFacts> = {}): RuntimeFacts {
   return { nodeVersion: "v24.4.0", required: DECLARED, ...overrides };
@@ -222,13 +310,8 @@ function runtimeFacts(overrides: Partial<RuntimeFacts> = {}): RuntimeFacts {
  * Package-manager evidence, in the shape the catalogue reads.
  *
  * The group is a discriminated selection plus three independent facts, so a literal is easy to write incompletely and
- * the compiler's complaint ("missing `selection`, `lockfiles`, `installState`") arrives three errors down from the
- * fixture that caused it. The factory makes the healthy default explicit and lets a case vary exactly one rung.
- *
- * The default carries a resolved executable because the ladder requires it once a manager is identified: a gatherer
- * that named a manager and never looked for its binary is an assembly defect, and the rule says so loudly rather than
- * reporting health it did not examine. Rungs *above* the tooling step return before that member is read, so carrying
- * it there is inert rather than wrong.
+ * the compiler's complaint arrives three errors down from the fixture that caused it. The factory makes the healthy
+ * default explicit and lets a case vary exactly one rung.
  */
 function managerFacts(
   overrides: Partial<PackageManagerFacts> = {},
@@ -243,7 +326,7 @@ function managerFacts(
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
- * Configuration verdicts
+ * Cypress configuration verdicts
  *
  * One constant per reason the location and validation verdicts can carry, named after the scenario that uses it. A
  * fixture is then a fact set plus one of these, which is the same shape the doc's traceability table has.
@@ -404,8 +487,7 @@ const VALIDATION_SKIPPED: ConfigValidation = {
  * The decided configuration pair.
  *
  * Both members, always: they were decided from one capture of one file, so a fixture that supplied only the location
- * would let a check report a validity verdict about a file it never located. The default validation is the one a healthy
- * project produces, so a location case varies exactly one thing.
+ * would let a check report a validity verdict about a file it never located.
  */
 function decided(
   location: ConfigDiscovery,
@@ -426,7 +508,7 @@ const OUTPUT: OutputFacts = {
   reports: { path: "results/reports", writable: true },
   evidence: { path: "results/evidence", writable: true },
 };
-const CONFIGURATION: CypressConfigurationFacts = decided(LOCATED);
+const CYPRESS_CONFIGURATION: CypressConfigurationFacts = decided(LOCATED);
 
 /** A project that passes every check, and varies one thing per scenario. */
 const HEALTHY: CheckFacts = {
@@ -436,7 +518,7 @@ const HEALTHY: CheckFacts = {
   configuration: ABSENT,
   environment: ENVIRONMENT,
   output: OUTPUT,
-  cypressConfiguration: CONFIGURATION,
+  cypressConfiguration: CYPRESS_CONFIGURATION,
 };
 
 /**
@@ -452,7 +534,7 @@ const WITHOUT_ASSESSMENT: CheckFacts = {
   configuration: ABSENT,
   environment: ENVIRONMENT,
   output: OUTPUT,
-  cypressConfiguration: CONFIGURATION,
+  cypressConfiguration: CYPRESS_CONFIGURATION,
 };
 
 /** One named assessment per project shape a check distinguishes. */
@@ -809,8 +891,8 @@ interface Case {
  *
  * The package-manager group is ordered as the ladder is ordered — identification, agreement, tooling, version,
  * installation — because that is the order in which a rung becomes reachable. Reading down the list is reading the
- * check. The configuration group is the same idea across two checks: location first, then the validity that can only be
- * asked once something was located.
+ * check. The configuration groups are the same idea across two checks: readability first, then the validity that can
+ * only be asked once a document was obtained.
  */
 const CASES: Record<string, Case> = {
   // runtime compatibility — what QAT itself requires
@@ -1444,92 +1526,115 @@ const CASES: Record<string, Case> = {
     code: ValidationCode.VersionAboveKnownGood,
   },
 
-  // qat configuration
+  // qat configuration — readability
+  //
+  // Seven cases for one question: can the document be obtained at all? The last two are the boundary this check exists
+  // to respect — a document that was read is readable, whatever the schema thinks of it — and they are asserted rather
+  // than trusted, because "the file was obtained" and "the file is good" are the two claims most likely to collapse
+  // into each other during a refactor.
   "qat.configuration-loadable.absent": {
     check: CheckId.QatConfigurationLoadable,
     facts: HEALTHY,
+    // A pass. Absence is a supported state where the documented defaults apply; whether a *command* may proceed
+    // without a configuration is that command's preflight, not a health question.
     status: CheckStatus.Passed,
   },
   "qat.configuration-loadable.loaded": {
     check: CheckId.QatConfigurationLoadable,
-    facts: {
-      ...HEALTHY,
-      configuration: {
-        kind: ConfigurationLoad.Loaded,
-        path: CONFIG_PATH,
-        // `source` and `document`, not a bare configuration: the loader hands over a document it has vouched for, and
-        // this layer never reads a configuration field. That is what stops two modules disagreeing about a schema.
-        config: {
-          source: CONFIG_PATH,
-          document: {
-            version: 1,
-            framework: "cypress",
-            output: {
-              reports: "results/reports",
-              evidence: "results/evidence",
-            },
-          },
-        },
-      },
-    },
+    facts: { ...HEALTHY, configuration: LOADED },
     status: CheckStatus.Passed,
   },
-  "qat.configuration-loadable.empty": {
+  "qat.configuration-loadable.unreadable": {
     check: CheckId.QatConfigurationLoadable,
-    facts: {
-      ...HEALTHY,
-      configuration: { kind: ConfigurationLoad.Empty, path: CONFIG_PATH },
-    },
+    facts: { ...HEALTHY, configuration: CONFIG_UNREADABLE },
+    // Not "missing": the file is there, so telling the reader to create one would send them to overwrite something.
     status: CheckStatus.Failed,
-    code: HealthCode.ConfigurationEmpty,
+    code: HealthCode.ConfigurationUnreadable,
   },
   "qat.configuration-loadable.not-json": {
     check: CheckId.QatConfigurationLoadable,
-    facts: {
-      ...HEALTHY,
-      configuration: {
-        kind: ConfigurationLoad.Malformed,
-        path: CONFIG_PATH,
-        reason: "Unexpected token }",
-        location: { position: 4, line: 4, column: 1, excerpt: "}" },
-      },
-    },
+    facts: { ...HEALTHY, configuration: CONFIG_MALFORMED },
     status: CheckStatus.Failed,
     code: HealthCode.ConfigurationNotJson,
   },
   "qat.configuration-loadable.too-large": {
     check: CheckId.QatConfigurationLoadable,
-    facts: {
-      ...HEALTHY,
-      configuration: {
-        kind: ConfigurationLoad.TooLarge,
-        path: CONFIG_PATH,
-        sizeBytes: 4_194_304,
-        limitBytes: 1_048_576,
-      },
-    },
+    facts: { ...HEALTHY, configuration: CONFIG_TOO_LARGE },
+    // Its own code, not a generic read failure: "the file is bigger than we read" is something the reader can shrink.
     status: CheckStatus.Failed,
     code: HealthCode.ConfigurationTooLarge,
   },
-  "qat.configuration-loadable.schema-invalid": {
+  "qat.configuration-loadable.schema-invalid-is-still-readable": {
     check: CheckId.QatConfigurationLoadable,
-    facts: {
-      ...HEALTHY,
-      configuration: {
-        kind: ConfigurationLoad.Invalid,
-        path: CONFIG_PATH,
-        diagnostics: [
-          {
-            code: ConfigurationDiagnosticCode.Missing,
-            path: "framework",
-            message: "framework is required.",
-            remediation: "Add the field.",
-          },
-        ],
-      },
-    },
+    facts: { ...HEALTHY, configuration: CONFIG_FIELD_REJECTED },
+    // The bytes arrived and became a document. Whether that document is one we support is the validity check's
+    // question, and answering it here as well would report one condition on two rows.
+    status: CheckStatus.Passed,
+  },
+  "qat.configuration-loadable.version-unsupported-is-still-readable": {
+    check: CheckId.QatConfigurationLoadable,
+    facts: { ...HEALTHY, configuration: CONFIG_VERSION_UNSUPPORTED },
+    status: CheckStatus.Passed,
+  },
+
+  // qat configuration — validity
+  //
+  // Eight cases for the second question, and the eighth is the interesting one: a document that could not be read has
+  // nothing to validate, so the runner *skips* this check with a named cause rather than letting it invent a verdict
+  // about bytes nobody parsed.
+  "qat.configuration-valid.valid": {
+    check: CheckId.QatConfigurationValid,
+    facts: { ...HEALTHY, configuration: LOADED },
+    status: CheckStatus.Passed,
+  },
+  "qat.configuration-valid.absent-nothing-to-validate": {
+    check: CheckId.QatConfigurationValid,
+    facts: HEALTHY,
+    // A pass, not a skip: the precondition held — discovery found nothing and said so — and there is genuinely nothing
+    // wrong here.
+    status: CheckStatus.Passed,
+  },
+  "qat.configuration-valid.version-unsupported": {
+    check: CheckId.QatConfigurationValid,
+    facts: { ...HEALTHY, configuration: CONFIG_VERSION_UNSUPPORTED },
+    // Reported alone, with no field complaints: there is nothing meaningful to say about the fields of a document
+    // whose version we cannot interpret.
     status: CheckStatus.Failed,
-    code: ConfigurationDiagnosticCode.Missing,
+    code: HealthCode.ConfigurationVersionUnsupported,
+  },
+  "qat.configuration-valid.version-invalid": {
+    check: CheckId.QatConfigurationValid,
+    facts: { ...HEALTHY, configuration: CONFIG_VERSION_INVALID },
+    // Distinct from the case above: `"1"` is a typo with a one-character fix, while `7` means the reader is on the
+    // wrong release of QAT.
+    status: CheckStatus.Failed,
+    code: HealthCode.ConfigurationVersionInvalid,
+  },
+  "qat.configuration-valid.field-rejected": {
+    check: CheckId.QatConfigurationValid,
+    facts: { ...HEALTHY, configuration: CONFIG_FIELD_REJECTED },
+    status: CheckStatus.Failed,
+    code: HealthCode.ConfigurationSchemaInvalid,
+  },
+  "qat.configuration-valid.output-path-rejected": {
+    check: CheckId.QatConfigurationValid,
+    facts: { ...HEALTHY, configuration: CONFIG_OUTPUT_REJECTED },
+    // The fix is a shape rather than a value: a relative path that stays inside the project.
+    status: CheckStatus.Failed,
+    code: HealthCode.ConfigurationOutputPathInvalid,
+  },
+  "qat.configuration-valid.framework-rejected": {
+    check: CheckId.QatConfigurationValid,
+    facts: { ...HEALTHY, configuration: CONFIG_FRAMEWORK_REJECTED },
+    status: CheckStatus.Failed,
+    code: HealthCode.ConfigurationFrameworkUnsupported,
+  },
+  "qat.configuration-valid.skipped-when-unreadable": {
+    check: CheckId.QatConfigurationValid,
+    facts: { ...HEALTHY, configuration: CONFIG_UNREADABLE },
+    // The whole reason the pair is two identifiers rather than one: no verdict is possible, so none is claimed, and the
+    // cause is already reported by the check that failed.
+    status: CheckStatus.Skipped,
   },
 
   // environment profiles

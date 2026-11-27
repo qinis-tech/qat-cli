@@ -42,20 +42,28 @@
  * neighbouring message. The order of work is therefore: add the member, then the union complains, then this table
  * complains — never the other way round.
  *
- * ## Why the Cypress-configuration entries are split, and split twice
+ * ## Why the configuration entries are keyed to the inspection, not to the loader outcome
  *
- * Ten entries describe one file, for the same reason: "there is no configuration", "there are two", "it is in a format
- * Cypress does not load", "it is in a place Cypress does not look", "the path is not a file", "it leads outside the
- * project", "it cannot be read", "it is empty", "it is the pre-v10 format" and "it was located but never inspected" are
- * ten sentences with ten different fixes.
+ * `facts.configuration` is no longer the loader's result. It is the composed inspection: one value that already
+ * distinguishes absent from unreadable from malformed from unsupported-version from schema-invalid from usable. The
+ * loader could only answer the first half of that question, which meant the schema verdict had to be composed somewhere
+ * — and composing it in a check would have produced a second ordering that eventually contradicted the one the `run`
+ * preflight performs.
  *
- * The other two answer a different question — could anything establish that the file is *valid* — and they are split on
- * *evidence* rather than on cause: a mechanism spoke and said no, or no mechanism was entitled to speak. The second
- * covers six causes under one code for the reason `RuntimeUnknown` covers three: the remedy is one thing, and a code per
- * cause would put QAT's own default behaviour in the same list as the project's defects.
+ * So these entries read `state`, never `kind`. They also do not decide *which* code applies: that decision belongs to the
+ * reason returned by the configuration classifier, so that one condition cannot be reported as two different codes by two
+ * different call sites. An entry here is handed a code and retrieves the details that make its sentence specific.
  *
- * None of them quotes the file. A loader's message can carry a code frame, and a code frame is file content; the
- * finding prints the kind of failure and its line, and points at the command that will print the rest.
+ * ## Why one state still becomes several codes
+ *
+ * `schema-invalid` is one state and four sentences, because it has four fixes: correct the schema version, set a
+ * framework QAT can run, keep an output path inside the project, or correct the reported fields. Seven-plus entries for
+ * one file is not verbosity; each one ends in a different action, and a single message would name none of them.
+ *
+ * The same reasoning forces `missing` to be two codes rather than one code with a conditional severity. Severity is a
+ * property of the code in this file — that is what stops a check reporting the same condition at two weights — so
+ * "absent, and that is fine" and "absent, and this command cannot continue" are two codes. The alternative, a severity
+ * function over facts, would move the same decision to every call site that remembered to pass the right flag.
  *
  * ## Guarding evidence: extract the value, then test the parent
  *
@@ -64,21 +72,29 @@
  * compiler *why* the value was missing, so the parent stays unnarrowed and the good branch cannot read
  * `facts.runtime.required`. Two separate facts, two separate tests, each of which also reads as a single question.
  *
- * ## Why the code-span helper is called `inlineCode`
+ * ## Why the inline-code helper is called `inlineCode`
  *
  * It was called `code`, which shadowed the `code` parameter of `healthFinding` and — more importantly — gave the word a
  * second meaning in a file where it already means a diagnostic code. The parameter kept its name because it mirrors
  * `CheckFinding.code`; the helper was renamed because it produces markup, not identity.
+ *
+ * It exists for one reason, and the reason is visible in this file's own history: a backtick inside a template literal
+ * must be escaped, and escaping it inline by hand is how four remediations here once shipped with unbalanced quotes and
+ * truncated flags — `corepack prepare pnpm --activat`, `pnpm --versio`, `chmod 644 cypress.config.ts` with no closing
+ * quote, `corepack use pnpm@9.1.0` cut off mid-expression. Every command below is now built through one function, and a
+ * test asserts that every backtick it emits is balanced and every emitted command ends where it should.
  */
 
+import {
+  MAX_CONFIG_BYTES,
+  toSafeIssue,
+  type ConfigDiagnosticIssue,
+} from "../../config/index.js";
 import {
   HealthCode,
   type CheckFinding,
 } from "../../core/application/checks.js";
 import { DiagnosticSeverity } from "../../core/application/diagnostics.js";
-// The install command is *policy*, not prose: which invocation respects a committed lockfile is a fact about a package
-// manager, kept in one table and asserted against its own documentation. Quoting it from there is the same rule as
-// quoting the supported range from evidence — a second copy is a copy that will drift.
 import {
   installCommandFor,
   PACKAGE_MANAGER_POLICY,
@@ -95,7 +111,7 @@ import type { CheckFacts, OutputTarget } from "./contracts.js";
  * `undefined` into a contract that requires a string — a mistake this type can prevent instead of a reviewer having to.
  *
  * `path` stays optional because it is genuinely not always known: two output checks share a code and only the caller
- * knows which directory failed.
+ * knows which directory failed, and a configuration that was never found has no path to print.
  */
 interface HealthText {
   readonly explanation: string;
@@ -108,9 +124,55 @@ interface Guidance {
   readonly describe: (facts: CheckFacts) => HealthText;
 }
 
-/** The file an entry is about, or a phrase standing in for it when the facts carried no name. */
+/**
+ * The file an entry is about, or a phrase standing in for it when the facts carried no name.
+ *
+ * A missing configuration has no path — only the location that was searched — so the fallback is a phrase rather than a
+ * stand-in path. Printing `.` as though it were a filename is the kind of detail that makes a reader trust the rest of
+ * the message less.
+ */
 function fileOf(facts: CheckFacts): string {
-  return facts.configuration?.path ?? "The configuration file";
+  const configuration = facts.configuration;
+
+  if (configuration === undefined) return "The configuration file";
+  if (configuration.state === "missing") return "The project root";
+
+  return configuration.path;
+}
+
+/**
+ * The `path` clause for an entry, omitted when there is no file to name.
+ *
+ * Replaces the repeated `...(facts.configuration === undefined ? {} : { path: … })` spread, which appeared eleven times in
+ * this section and would have become eleven opportunities to forget the guard.
+ */
+function pathOf(facts: CheckFacts): { path?: string } {
+  const configuration = facts.configuration;
+
+  if (configuration === undefined || configuration.state === "missing")
+    return {};
+
+  return { path: configuration.path };
+}
+
+/**
+ * Schema issues, reduced through the sanctioned projection.
+ *
+ * `toSafeIssue` is imported from the configuration module rather than reimplemented here: it is the function that
+ * decides a rejected value becomes a *type summary* instead of a value. Duplicating that decision in a prose catalogue
+ * is exactly how a secret ends up in a remediation.
+ */
+function issuesOf(facts: CheckFacts): readonly ConfigDiagnosticIssue[] {
+  const configuration = facts.configuration;
+
+  return configuration?.state === "schema-invalid"
+    ? configuration.issues.map(toSafeIssue)
+    : [];
+}
+
+/** The field paths implicated by a schema failure; safe by construction. */
+function issuePathsOf(facts: CheckFacts): readonly string[] {
+  return issuesOf(facts).map((issue) => issue.path);
 }
 
 /** A profile name, as the configuration schema defines one. Used only to decide whether a name is safe to quote. */
@@ -132,9 +194,10 @@ function isQuotable(value: string | undefined): value is string {
 /**
  * Renders an inline code span.
  *
- * Exists because a backtick inside a template literal must be escaped, and doing that inline several times is how three
- * of the remediations below once ended up with unbalanced quotes — and, in two cases, with a closing brace that ended up
- * *inside* the command. One function, one escape, and every command in this file is built the same way.
+ * Exists because a backtick inside a template literal must be escaped, and doing that inline several times is how
+ * four of the remediations below once ended up with unbalanced quotes — and, in two cases, with a truncated flag that
+ * made the printed command fail when pasted. One function, one escape, and every command in this file is built the same
+ * way.
  */
 function inlineCode(text: string): string {
   return `\`${text}\``;
@@ -172,6 +235,27 @@ function installHint(manager: string | undefined): string {
     return "the install command for the package manager this project uses";
 
   return inlineCode(installCommandFor(known));
+}
+
+/** The reason a file could not be read, in the words a reader would use. */
+function accessDetail(code: string): string {
+  switch (code) {
+    case "EACCES":
+    case "EPERM":
+      return "permission denied";
+    case "EISDIR":
+      return "the path is a directory, not a file";
+    case "ENOTDIR":
+      return "part of the path is not a directory";
+    case "ELOOP":
+      return "the path is a symbolic link loop";
+    case "EIO":
+      return "an I/O error occurred while reading it";
+    case "AMBIGUOUS":
+      return "more than one candidate file was found";
+    default:
+      return "it could not be read";
+  }
 }
 
 export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
@@ -613,76 +697,286 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
   },
 
   // ───────────────────────────────────────────────────────────────────────────
-  // Configuration
+  // Configuration — QAT's own file
+  //
+  // Eleven entries for one file, keyed to the states the inspection can report. Each one ends in a different action:
+  // create a file, create a file *because this command needs one*, fix permissions, fix JSON, write something into it,
+  // shrink it, install a QAT that understands it, add a version, set a framework QAT can run, keep a path inside the
+  // project, or correct the reported fields. A single "invalid configuration" message would name none of them.
+  //
+  // None of them quotes the file. A line of a configuration file can hold an environment value, and a schema message can
+  // echo one; findings print paths, kinds and line numbers, and point at the command that will print the rest.
   // ───────────────────────────────────────────────────────────────────────────
 
+  /**
+   * No configuration, and that is fine.
+   *
+   * Information, not a warning: the documented defaults are the product's intended behaviour for a project that never
+   * ran `qat init`, and marking a normal state as a problem is how a doctor teaches people to ignore it. The remediation
+   * says the file is optional in as many words, because "create one" would imply otherwise.
+   */
+  [HealthCode.ConfigurationMissing]: {
+    severity: DiagnosticSeverity.Information,
+    describe: () => ({
+      explanation:
+        "No QAT configuration was found at the project root, so QAT is using its documented defaults.",
+      remediation: `Nothing to do if the defaults suit you. To choose your own settings, create a file with ${inlineCode("qat init")} and commit it.`,
+    }),
+  },
+
+  /**
+   * No configuration, and this command cannot proceed.
+   *
+   * A separate code rather than a severity flag on the entry above: severity is a property of the code, decided once
+   * here, and a conditional severity would put the same decision in every call site that remembered to pass it.
+   */
+  [HealthCode.ConfigurationMissingRequired]: {
+    severity: DiagnosticSeverity.Error,
+    describe: () => ({
+      explanation:
+        "This command needs a QAT configuration file, and none was found at the project root.",
+      remediation: `Create one with ${inlineCode("qat init")}, commit it, then run the command again.`,
+    }),
+  },
+
+  /**
+   * Present, and not readable.
+   *
+   * Its own code rather than "missing": the file is *there*, so telling the reader to create one would send them to
+   * overwrite something. The cause is named because "permission denied" and "that path is a directory" are different
+   * afternoons.
+   */
+  [HealthCode.ConfigurationUnreadable]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const configuration = facts.configuration;
+
+      if (configuration?.state !== "inaccessible") {
+        return {
+          explanation: "The QAT configuration file could not be read.",
+          remediation:
+            "Check that it is a readable regular file, then run the command again.",
+          ...pathOf(facts),
+        };
+      }
+
+      return {
+        explanation: `${configuration.path} could not be read: ${accessDetail(configuration.code)}.`,
+        remediation: `Make it a readable regular file — for example ${inlineCode(`chmod 644 ${configuration.path}`)} — then run the command again. QAT will not replace it for you.`,
+        path: configuration.path,
+      };
+    },
+  },
+
+  /**
+   * Present, readable, and not JSON.
+   *
+   * Line and column only. The parser's message can quote the offending fragment, and a fragment of a configuration file
+   * is file content — which is exactly what a finding must not carry.
+   */
+  [HealthCode.ConfigurationNotJson]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const configuration = facts.configuration;
+      const position =
+        configuration?.state === "malformed" ? configuration : undefined;
+
+      // Line and column only. The parser's message can quote the offending fragment, and a fragment of a configuration
+      // file is file content — which is exactly what a finding must not carry.
+      if (position?.line === undefined) {
+        return {
+          explanation: `${fileOf(facts)} is not valid JSON.`,
+          remediation:
+            "Correct the syntax of the file, or restore it from version control.",
+          ...pathOf(facts),
+        };
+      }
+
+      const at = `line ${String(position.line)}, column ${String(position.column ?? 0)}`;
+
+      return {
+        explanation: `${position.path} is not valid JSON at ${at}.`,
+        remediation: `Correct the syntax at ${at}, then run the command again. QAT reads the file but never rewrites it.`,
+        path: position.path,
+      };
+    },
+  },
+
+  /**
+   * Present, readable, and carrying nothing.
+   *
+   * Reachable only when the loader tells an empty document apart from a malformed one. Where it cannot, the entry above
+   * speaks instead — and a contract test asserts that whichever path is taken, the reader gets one of these two
+   * sentences rather than a silent pass.
+   */
   [HealthCode.ConfigurationEmpty]: {
     severity: DiagnosticSeverity.Error,
     describe: (facts) => ({
       explanation: `${fileOf(facts)} is empty.`,
       remediation:
         "Write a configuration, or delete the file to run with the defaults.",
-      ...(facts.configuration === undefined
-        ? {}
-        : { path: facts.configuration.path }),
+      ...pathOf(facts),
     }),
   },
 
-  [HealthCode.ConfigurationNotJson]: {
-    severity: DiagnosticSeverity.Error,
-
-    describe: (facts) => {
-      // Line and column only. The excerpt would be a line of the file, and a line of a configuration file can hold an
-      // environment value — which is exactly what a diagnostic must not carry.
-      const location =
-        facts.configuration?.kind === "malformed"
-          ? facts.configuration.location
-          : undefined;
-
-      if (location === undefined) {
-        return {
-          explanation: `${fileOf(facts)} is not valid JSON.`,
-          remediation:
-            "Correct the syntax of the file, or restore it from version control.",
-          ...(facts.configuration === undefined
-            ? {}
-            : { path: facts.configuration.path }),
-        };
-      }
-
-      return {
-        explanation: `${fileOf(facts)} is not valid JSON at line ${String(location.line)}, column ${String(location.column)}.`,
-        remediation: `Correct the syntax at line ${String(location.line)}, column ${String(location.column)}.`,
-        ...(facts.configuration === undefined
-          ? {}
-          : { path: facts.configuration.path }),
-      };
-    },
-  },
-
+  /**
+   * Larger than QAT will read.
+   *
+   * The bound is quoted from policy and the actual size is not, because the file was never read — printing a number we
+   * did not measure would be a small lie in a file whose whole purpose is to be trusted.
+   */
   [HealthCode.ConfigurationTooLarge]: {
     severity: DiagnosticSeverity.Error,
 
     describe: (facts) => {
-      const result = facts.configuration;
+      const configuration = facts.configuration;
+      const path =
+        configuration?.state === "inaccessible" &&
+        configuration.code === "TOO_LARGE"
+          ? configuration.path
+          : undefined;
 
-      // The size and the bound are both printed, because "too large" without a number sends the reader to check a
-      // five-kilobyte file. `too-large` is the only outcome that carries them.
-      return result?.kind === "too-large"
-        ? {
-            explanation: `${result.path} is ${String(result.sizeBytes)} bytes, and QAT reads at most ${String(result.limitBytes)}.`,
-            remediation:
-              "Check that the path points at your configuration file, then reduce it to the settings you need.",
-            path: result.path,
-          }
-        : {
-            explanation: `${fileOf(facts)} is larger than QAT will read.`,
-            remediation:
-              "Check that the path points at your configuration file.",
-            ...(facts.configuration === undefined
-              ? {}
-              : { path: facts.configuration.path }),
-          };
+      return {
+        explanation:
+          path === undefined
+            ? `The QAT configuration is larger than QAT will read (at most ${String(MAX_CONFIG_BYTES)} bytes).`
+            : `${path} is larger than QAT will read (at most ${String(MAX_CONFIG_BYTES)} bytes).`,
+        remediation: `Check that the path points at your configuration rather than a build artefact, then reduce it to the settings you need. The limit is ${String(MAX_CONFIG_BYTES)} bytes.`,
+        ...(path === undefined ? pathOf(facts) : { path }),
+      };
+    },
+  },
+
+  /**
+   * The declared schema version is outside the set this release understands.
+   *
+   * One sentence, and no field complaints, because there is nothing meaningful to say about fields in a document whose
+   * version we do not understand. Declared and supported are both printed: "unsupported version" without the pair leaves
+   * the reader unable to tell whether they should upgrade QAT or edit the file.
+   */
+  [HealthCode.ConfigurationVersionUnsupported]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const configuration = facts.configuration;
+
+      if (configuration?.state !== "version-unsupported") {
+        return {
+          explanation:
+            "The QAT configuration declares a schema version this release does not support.",
+          remediation:
+            "Upgrade QAT, or bring the file to a version this release supports, then run the command again.",
+          ...pathOf(facts),
+        };
+      }
+
+      const supported = configuration.supported.map(String).join(", ");
+      const declared =
+        typeof configuration.declared === "number"
+          ? String(configuration.declared)
+          : "an unsupported value";
+
+      return {
+        explanation: `${configuration.path} declares schema version ${declared}, and this release of QAT supports ${supported}.`,
+        remediation: `Upgrade QAT to a release that supports schema version ${declared}, or bring the file to a supported version (${supported}). QAT will not migrate or rewrite the file for you.`,
+        path: configuration.path,
+      };
+    },
+  },
+
+  /**
+   * The version field itself is missing or not a number.
+   *
+   * Splitting this from the entry above is not pedantry: `"schemaVersion": "1"` is a typo with a one-character fix,
+   * while `7` means the reader is on the wrong release of QAT. One message covering both would be wrong for whoever it
+   * was not written for.
+   *
+   * The offending value is not echoed — the evidence for a schema-invalid file deliberately carries paths and type
+   * summaries only — so the message names the field and the expected kind, never the text that was there.
+   */
+  [HealthCode.ConfigurationVersionInvalid]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const fields = issuePathsOf(facts);
+
+      return {
+        explanation: `${fileOf(facts)} does not declare a usable schema version. A number is required at ${inlineCode("schemaVersion")}.`,
+        remediation: `Set ${inlineCode("schemaVersion")} to the version this release of QAT writes, then run the command again. Example: ${inlineCode('"schemaVersion": 1')}.`,
+        ...(fields.length === 0 ? pathOf(facts) : pathOf(facts)),
+      };
+    },
+  },
+
+  /**
+   * The framework identifier is not one this release can run.
+   *
+   * Its own code because its own fix: the rest of the file may be perfectly correct, and the reader's next action is to
+   * change one word. The declared value is not echoed, for the same reason as above — and a framework name pasted from
+   * the wrong buffer is exactly the kind of user text a diagnostic must not print back verbatim.
+   */
+  [HealthCode.ConfigurationFrameworkUnsupported]: {
+    severity: DiagnosticSeverity.Error,
+    describe: (facts) => ({
+      explanation: `${fileOf(facts)} declares a framework QAT cannot run.`,
+      remediation: `Set ${inlineCode("framework")} to an adapter this release supports — this release runs ${inlineCode("cypress")}. See the adapters page in the documentation before adding another.`,
+      ...pathOf(facts),
+    }),
+  },
+
+  /**
+   * An output path is absolute, escapes the project, or is otherwise not portable.
+   *
+   * Distinct from the general field report because the fix is a shape, not a value: a path inside the project, written
+   * with forward slashes. The offending field paths are listed, and their values are not — a path is configuration
+   * content, and on a developer machine it routinely contains a username.
+   */
+  [HealthCode.ConfigurationOutputPathInvalid]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const fields = issuePathsOf(facts);
+      const named = fields.length === 0 ? "An output path" : listOf(fields);
+
+      return {
+        explanation: `${fileOf(facts)} declares an output location QAT cannot use: ${named}. Output paths must be relative to the project root and stay inside it.`,
+        remediation: `Use a relative path inside the project, for example ${inlineCode('"reports": { "directory": "./reports" }')}, then run the command again.`,
+        ...pathOf(facts),
+      };
+    },
+  },
+
+  /**
+   * The file parsed and the schema rejected one or more fields.
+   *
+   * The field paths are listed and nothing else: a value that failed validation is precisely the value a diagnostic must
+   * not repeat, and the schema's own message can quote it. The command that prints the full detail is given so the reader
+   * can decide how much to disclose and where.
+   */
+  [HealthCode.ConfigurationSchemaInvalid]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const issues = issuesOf(facts);
+      const paths = issues.map((issue) => issue.path);
+
+      if (paths.length === 0) {
+        return {
+          explanation: `${fileOf(facts)} does not match the configuration schema.`,
+          remediation: `Compare it with the documented example, correct the fields it names, then run the command again. ${inlineCode("qat doctor --format json")} lists every field that was rejected.`,
+          ...pathOf(facts),
+        };
+      }
+
+      const firstExpected = issues[0]?.expected;
+
+      return {
+        explanation: `${fileOf(facts)} does not match the configuration schema. Rejected: ${listOf(paths)}${firstExpected === undefined ? "" : ` (expected ${firstExpected})`}.`,
+        remediation: `Correct the listed fields and run the command again. ${inlineCode("qat doctor --format json")} reports every rejected field with what the schema expected; the file is never modified.`,
+        ...pathOf(facts),
+      };
     },
   },
 
@@ -1047,7 +1341,7 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
       const where =
         validation.failure.line === undefined
           ? ""
-          : ` at line ${String(validation.failure.line)}`;
+          : `at line ${String(validation.failure.line)}`;
 
       const what =
         validation.failure.kind === "syntax"

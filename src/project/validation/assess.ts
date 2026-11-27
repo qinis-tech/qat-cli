@@ -253,14 +253,20 @@ function buildGates(
 }
 
 /**
- * Errors first, warnings after, otherwise untouched.
+ * Errors first, warnings next, observations last, otherwise untouched.
  *
  * `Array.prototype.sort` is stable, so within a severity the requirement order survives — which is what makes
  * the first blocking finding the most fundamental problem rather than an arbitrary one.
+ *
+ * The third entry is not decoration. A two-entry table compares an informational finding against `undefined`, and
+ * `NaN` in a comparator is unspecified behaviour — in practice it moves the element to the front, which is the one
+ * position a reader looks for something that stops a run. `Record<DiagnosticSeverity, number>` is what makes the
+ * omission a compile error instead of a sort that is quietly wrong.
  */
 const SEVERITY_RANK: Readonly<Record<DiagnosticSeverity, number>> = {
   [DiagnosticSeverity.Error]: 0,
   [DiagnosticSeverity.Warning]: 1,
+  [DiagnosticSeverity.Information]: 2,
 };
 
 function sortBySeverity(

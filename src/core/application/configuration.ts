@@ -8,6 +8,12 @@
  * Nothing here names a file, a parser, a schema version or a library. Core may not
  * depend on the module that owns those, and does not — the composition root adapts
  * what that module produces into this vocabulary at the boundary.
+ *
+ * That rule is why `ConfigurationInspection` below is declared rather than imported.
+ * It is shaped like the producer's result because it *is* the same observation, but it
+ * is written in this module's words: a dotted field path instead of a path array, a
+ * resolved configuration instead of an opaque document, findings instead of a schema
+ * library's issues.
  */
 import type { ConfigurationResult } from "../domain/index.js";
 
@@ -34,7 +40,7 @@ export const ConfigurationDiagnosticCode = {
   UnsupportedVersion: "QAT-C002",
   /** A required field is absent. */
   Missing: "QAT-C003",
-  /** A field holds the wrong kind of value — a string where an object belongs, a number where a string does. */
+  /** A field holds the wrong kind of value — a string where an object belongs, a number where a string is. */
   WrongType: "QAT-C004",
   /** A field holds a value outside the set the schema allows. */
   UnsupportedValue: "QAT-C005",
@@ -99,7 +105,14 @@ export interface ConfigurationFinding {
   readonly code: string;
   readonly path: string;
   readonly message: string;
-  /** What to write instead, when there is a concrete answer. */
+  /**
+   * @deprecated Use {@link ConfigurationFinding.remediation}.
+   *
+   * Two names for one field, and only one of them was ever meant to survive. `remedy` is
+   * kept because a stored report may already carry it; nothing new may write it, and a
+   * reader must prefer `remediation` when both are present. Deleting the field is a
+   * breaking change to the report contract and belongs in its own versioned step.
+   */
   readonly remedy?: string;
   /** What to write instead, when there is a concrete answer. */
   readonly remediation?: string;
@@ -143,14 +156,118 @@ export interface LoadedConfigurationDocument {
   readonly document: Readonly<Record<string, unknown>>;
 }
 
+/* ------------------------------------------------------------------------- *
+ * Inspection
+ * ------------------------------------------------------------------------- */
+
 /**
- * Turns a configuration a project supplied into one a writer can act on.
+ * Why a configuration file could not be read.
  *
- * The only synchronous member in this directory, deliberately. Resolution is a pure
- * function of a validated document and a project root: it reads no file, consults no
- * clock and never looks at the working directory. Returning a promise would advertise
- * I/O that does not happen, and every caller would then start defending against a
- * failure that cannot occur.
+ * Deliberately a closed vocabulary rather than a raw filesystem code: "permission
+ * denied" and "that path is a directory" send a reader to two different fixes, and
+ * every other system error is the same sentence to them. The producer maps its own
+ * codes onto these; nothing above has to know which platform raised what.
+ */
+export type ConfigurationAccessCode =
+  /** The file exists and the process may not read it. */
+  | "permission-denied"
+  /** A directory, or something else that is not a regular file, occupies the path. */
+  | "not-a-file"
+  /** A symbolic link loop, or a link that cannot be followed. */
+  | "link-loop"
+  /** A read error that is none of the above. */
+  | "io-error"
+  /** More than one candidate was found, and the scheme admits only one. */
+  | "ambiguous";
+
+/**
+ * Everything inspection can conclude about a project's configuration.
+ *
+ * Six states, and they are six because each ends in a different action: create a file,
+ * fix a permission, fix the syntax, upgrade QAT, correct a field, or carry on. A
+ * boolean — "is the configuration valid" — cannot express that, and every consumer
+ * given one would end up inventing its own taxonomy to say what actually happened.
+ *
+ * Three design points worth stating, because each is load-bearing:
+ *
+ * - **`missing` is not `inaccessible`.** An uninitialised project is a supported state
+ *   where documented defaults apply; a file that cannot be read is a fault. Collapsing
+ *   them tells half the readers to create a file they already have.
+ * - **`version-unsupported` is not `schema-invalid`.** There is nothing meaningful to
+ *   say about the fields of a document whose version we cannot interpret, and a list of
+ *   field errors would bury the one fact the reader can act on.
+ * - **`valid` carries the resolved configuration.** Inspection ends where a writer can
+ *   begin: the paths are already anchored and the environment already chosen. Anything
+ *   less would make every caller resolve a second time, which is how two components end
+ *   up disagreeing about where output goes.
+ */
+export type ConfigurationInspection =
+  /** No configuration file at the project root. Documented defaults apply. */
+  | {
+      readonly state: "missing";
+      /** Project-relative location that was inspected, for reproducible reporting. */
+      readonly searchedAt: string;
+    }
+  /** Present and unobtainable. */
+  | {
+      readonly state: "inaccessible";
+      readonly path: string;
+      readonly code: ConfigurationAccessCode;
+    }
+  /** Present, readable, and not a JSON document. */
+  | {
+      readonly state: "malformed";
+      readonly path: string;
+      /** 1-based, when a parser reported a position. */
+      readonly line?: number;
+      /** 1-based, when a parser reported a position. */
+      readonly column?: number;
+    }
+  /** Readable, and declaring a schema version this build does not read. */
+  | {
+      readonly state: "version-unsupported";
+      readonly path: string;
+      /** Exactly what the file declared, so a report can quote it without guessing. */
+      readonly declared: unknown;
+      readonly supported: readonly number[];
+    }
+  /** Readable and refused, field by field. */
+  | {
+      readonly state: "schema-invalid";
+      readonly path: string;
+      /** The declared version, or a negative value when no usable one was given. */
+      readonly version: number;
+      readonly issues: readonly ConfigurationFinding[];
+    }
+  /** Readable, version-checked, schema-valid and resolved. */
+  | {
+      readonly state: "valid";
+      readonly path: string;
+      readonly version: number;
+      readonly configuration: ResolvedProjectConfiguration;
+    };
+
+/**
+ * Turns a configuration a project supplied into one a writer can act on, and answers
+ * whether a document can be obtained at all.
+ *
+ * ## Why the two members have different shapes
+ *
+ * `resolve` is synchronous; `inspect` is not. That is not an inconsistency — it is the
+ * difference between a pure function and one that reads a disk. Resolution takes a
+ * document somebody already loaded and validated: it reads no file, consults no clock
+ * and never looks at the working directory, so returning a promise would advertise I/O
+ * that does not happen. Inspection *is* I/O, and pretending otherwise would force every
+ * caller to handle an exception from a function that claimed to be total.
+ *
+ * ## Why `inspect` belongs on this port rather than beside it
+ *
+ * Both members answer the same question at different depths: "what configuration does
+ * this project have?" A caller that resolves needs a document; a caller that inspects
+ * needs to know whether obtaining one is possible. Splitting them across two ports
+ * would let a consumer hold one without the other, and the doctor — which must describe
+ * a broken file rather than fail on it — is exactly the consumer that needs both
+ * behaviours from one place.
  */
 export interface ConfigurationResolver {
   /**
@@ -169,6 +286,23 @@ export interface ConfigurationResolver {
     projectRoot: string,
     configuration: LoadedConfigurationDocument,
   ): ConfigurationResolution;
+
+  /**
+   * Composes locate → load → version gate → validate → resolve into one verdict.
+   *
+   * One implementation, called once per project root per run, so that two findings can
+   * never describe two different readings of one file. The composition root guarantees
+   * that; this contract only requires that a caller may treat the result as the whole
+   * truth about the project's configuration.
+   *
+   * @param projectRoot Absolute root to inspect. Never the working directory.
+   * @returns The state, as a value. Every expected condition — absent, unreadable,
+   *   malformed, unsupported version, schema-invalid — is one of the six states, not a
+   *   rejection: a diagnostic that throws cannot report.
+   * @throws {ApplicationError} only for a wiring fault in the implementation, never for
+   *   a condition of the project.
+   */
+  inspect(projectRoot: string): Promise<ConfigurationInspection>;
 }
 
 /**

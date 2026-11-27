@@ -1,16 +1,17 @@
 /**
  * The catalogue.
  *
- * Fourteen checks, keyed by identifier so a missing entry does not compile, in the order a reader fixes things in. Every
+ * Fifteen checks, keyed by identifier so a missing entry does not compile, in the order a reader fixes things in. Every
  * field the task asks for is a field on an entry, which is what makes "every check has a documented purpose" something a
  * test can hold rather than something a reviewer has to remember.
  *
  * ## Two kinds of check, and the difference is visible in the body
  *
  * Five **forward** a conclusion a lower layer already drew: they find the finding the assessment carries and carry it
- * onward unchanged. Nine **judge** something nothing else looks at — the runtime QAT requires, the runtime a framework
- * requires, the package manager, the Cypress configuration's location and its validity, the QAT configuration file, the
- * selected environment, the two output directories — and author a `QAT-H` finding of their own.
+ * onward unchanged. Ten **judge** something nothing else looks at — the runtime QAT requires, the runtime a framework
+ * requires, the package manager, the Cypress configuration's location and its validity, QAT's own configuration's
+ * readability and its validity, the selected environment, the two output directories — and author a `QAT-H` finding of
+ * their own.
  *
  * The forwarding checks are deliberately thin. Their value is not the logic; it is that the question a *user* asks is
  * answered where they look for it, with the severity and the remedy the layer that noticed the condition chose.
@@ -30,7 +31,7 @@
  * engine: the installed tool's version against whatever the project declared, quoted back with its provenance. What it
  * contributes is the *ladder* — which of several conditions to report first — and nothing about what "supported" means.
  *
- * ## Why the configuration pair is judged rather than forwarded
+ * ## Why the configuration pairs are judged rather than forwarded
  *
  * `cypress.configuration-located` used to forward the three detection codes — missing, ambiguous, unusable format — and
  * could report nothing else, because those are the only configuration conditions the detection engine looks for. It
@@ -45,13 +46,20 @@
  * Both halves of the pair therefore consume one decided verdict, taken from one capture of one file. Neither re-reads the
  * tree, and the detection codes those three conditions produced remain in the diagnosis for every other consumer.
  *
- * ## Why five checks are not defined in this file
+ * ## Why seven checks are not defined in this file
  *
  * Because their comparisons have real branches, and a branch that lives inside a map literal is a branch nobody tests in
  * isolation. The runtime pair has a floor, a ceiling, gap alternatives, pre-release admission and three unreadable states;
- * the package-manager check has seven conditions that each send a reader somewhere different; the configuration pair has
- * ten location reasons and six validation gaps. All five live in `./rules/*.js` and are registered here, so this file
- * keeps its single job: decide *which* questions exist, in *what* order, under *which* identifier.
+ * the package-manager check has seven conditions that each send a reader somewhere different; the Cypress configuration
+ * pair has ten location reasons and six validation gaps; QAT's own configuration pair has six inspection states and eleven
+ * codes between them. All seven live in `./rules/*.js` and are registered here, so this file keeps its single job: decide
+ * *which* questions exist, in *what* order, under *which* identifier.
+ *
+ * File names in `./rules/` are not uniform, and the difference is deliberate rather than drift: the two Cypress rules are
+ * named `-discovery` and `-validity` because that pair was named together, while QAT's second rule is `-schema` because
+ * what it validates is a schema. A rule's file name is a note to the next reader, not an address the compiler checks —
+ * what the compiler checks is that this import names a real module and a real export, which is exactly how the mismatch
+ * this file briefly had was caught.
  *
  * ## Why the package manager is one check and not seven
  *
@@ -62,14 +70,27 @@
  *
  * The ladder's order is the order a reader fixes things in, so it is also the order the report tells the story in.
  *
- * ## Why the configuration pair is two checks and not one
+ * ## Why each configuration pair is two checks and not one
  *
  * Unlike the package manager, these are not rungs of one ladder: they are two questions with a precondition between them.
  * A file can be located and provably unvalidatable; a file can be located and answer nothing at all, because nothing was
  * entitled to speak. One identifier would carry two remedies and would hide which of the two answered.
+ *
+ * QAT's own configuration has exactly the same shape, which is why it gained the same pair: a file that cannot be read has
+ * nothing to validate, and a file that can be read may still be rejected field by field.
+ *
+ * ## Absence is a pass, and whose decision that is
+ *
+ * "No configuration file" is a supported state: the documented defaults apply. The doctor says so by passing, exactly as
+ * it did when the load outcome was the only thing it could see. Whether a *particular command* can proceed without a
+ * configuration is that command's guard, not a health question — the report describes the project, and the preflight
+ * refuses on behalf of the operation.
+ *
+ * That is why there is no informational severity anywhere in this file. The vocabulary here is pass, warn, fail and skip;
+ * "we looked and it is fine" is a pass, and inventing a fourth severity to say it more quietly would give the report two
+ * ways to express one outcome.
  */
 
-import { ConfigurationLoad } from "../../config/loader/index.js";
 import {
   CheckCategory,
   CheckId,
@@ -105,6 +126,12 @@ import {
   nodeRuntimeCheck,
 } from "./rules/node-runtime.js";
 import { packageManagerCheck } from "./rules/package-manager.js";
+import { qatConfigDiscoveryCheck } from "./rules/qat-config-discovery.js";
+// Named for what it validates rather than for the pair, and that is the only
+// asymmetry in this block. The export name is what matters: the compiler has no
+// opinion about file names, which is why the import path had to be corrected by
+// hand when the two disagreed.
+import { qatConfigSchemaCheck } from "./rules/qat-config-schema.js";
 
 /**
  * The codes that mean "this directory cannot be recognised as a project QAT could drive".
@@ -373,77 +400,33 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
     },
   },
 
-  [CheckId.QatConfigurationLoadable]: {
-    category: CheckCategory.QatConfiguration,
-    title: "QAT configuration readable",
-    purpose:
-      "A broken configuration file is not a reason to run with defaults, and a reader needs to know which kind of broken it is before touching a setting.",
-    procedure:
-      "Reads the load outcome and distinguishes absent, empty, malformed, oversized and schema-invalid.",
-    requires: [FactGroup.Configuration],
-    severity: CheckSeverity.Error,
-    scenarios: [
-      "qat.configuration-loadable.absent",
-      "qat.configuration-loadable.loaded",
-      "qat.configuration-loadable.empty",
-      "qat.configuration-loadable.not-json",
-      "qat.configuration-loadable.too-large",
-      "qat.configuration-loadable.schema-invalid",
-    ],
-    evaluate: (facts) => {
-      const result = present(facts.configuration);
+  /**
+   * Registered from the rule module because the question is no longer one question.
+   *
+   * It used to read the load outcome directly: loaded, not found, empty, malformed, too large, schema-invalid. Two of
+   * those belong to the second half of the pair, and one of them — schema-invalid — is the whole of it. Reading a load
+   * result here would also mean this check and `qat.configuration-valid` each composing their own picture of one file,
+   * which is how two rows of one report end up disagreeing about the same bytes.
+   *
+   * The rule module consumes the composed inspection instead: one capture, six states, and both checks project from it.
+   *
+   * Absence is a pass, as it always was. The documented defaults are a supported state, and deciding whether a *command*
+   * may proceed without a configuration belongs to that command's preflight rather than to a health question.
+   */
+  [CheckId.QatConfigurationLoadable]: withoutId(qatConfigDiscoveryCheck),
 
-      switch (result.kind) {
-        case ConfigurationLoad.Loaded:
-        case ConfigurationLoad.NotFound:
-          // Absence is legal: the defaults apply and nothing is wrong. Reported together with `loaded` because the
-          // reader's next step is the same either way, and it involves doing nothing.
-          return PASS;
-
-        case ConfigurationLoad.Empty:
-          return {
-            verdict: "fail",
-            finding: healthFinding(HealthCode.ConfigurationEmpty, facts),
-          };
-
-        case ConfigurationLoad.Malformed:
-          return {
-            verdict: "fail",
-            finding: healthFinding(HealthCode.ConfigurationNotJson, facts),
-          };
-
-        case ConfigurationLoad.TooLarge:
-          return {
-            verdict: "fail",
-            finding: healthFinding(HealthCode.ConfigurationTooLarge, facts),
-          };
-
-        case ConfigurationLoad.Invalid: {
-          const [first] = result.diagnostics;
-
-          // The schema always reports at least one issue, so the fallback is unreachable — and the check reports nothing
-          // rather than inventing a sentence for a state that cannot occur.
-          return first === undefined
-            ? PASS
-            : {
-                verdict: "fail",
-                finding: {
-                  code: first.code,
-                  // Every schema issue is an error; the code set has no advisory member, and this layer does not
-                  // second-guess the catalogue that chose it.
-                  severity: DiagnosticSeverity.Error,
-                  explanation: first.message,
-                  ...(first.remediation === undefined
-                    ? {}
-                    : { remediation: first.remediation }),
-                  // An empty path means the issue is about the document rather than a field.
-                  ...(first.path === "" ? {} : { path: first.path }),
-                },
-              };
-        }
-      }
-    },
-  },
+  /**
+   * The second half of the pair, immediately after the first so declaration order satisfies its precondition.
+   *
+   * The precondition does real work here rather than being decorative: a file that could not be read has nothing to
+   * validate, so the runner skips this check with a named cause instead of this one inventing a schema verdict about
+   * bytes nobody parsed. That is the whole reason it is a separate identifier rather than three more codes on the check
+   * above.
+   *
+   * Its definition lives in `./rules/qat-config-schema.js` — the file name says what the rule validates, which is the one
+   * thing a reader needs to know when deciding whether to open it.
+   */
+  [CheckId.QatConfigurationValid]: withoutId(qatConfigSchemaCheck),
 
   [CheckId.EnvironmentResolvable]: {
     category: CheckCategory.EnvironmentProfiles,
