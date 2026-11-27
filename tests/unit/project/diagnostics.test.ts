@@ -349,6 +349,44 @@ describe("every diagnostic code is reachable", () => {
     expect(codesOf(diagnosis)).toContain(DiagnosticCode.DependencyUndeclared);
     expect(hasBlockingErrors(diagnosis)).toBe(false);
   });
+
+  it("explains a configuration filed where Cypress never reads one", async () => {
+    const root = await makeTree({
+      "package.json": manifest(),
+      "cypress/cypress.config.ts": "export default {};",
+    });
+
+    const diagnosis = await diagnoseProject(root);
+    const finding = diagnosis.findings.find(
+      (candidate) => candidate.code === DiagnosticCode.ConfigurationMissing,
+    );
+
+    // The file exists, one directory away. Telling the reader to create one would create a second project instead of
+    // finding the first — which is the remedy this fact exists to replace.
+    expect(finding?.explanation).toContain("not where Cypress looks");
+    expect(finding?.remediation).toContain("Move");
+  });
+
+  it("explains a directory occupying the configuration path", async () => {
+    const root = await makeTree({
+      // Declared, so the project is `incomplete` rather than `absent`. Without this the verdict is "nothing here
+      // identifies Cypress" and the occupancy never reaches a remedy: a different code fires first, and rightly — an
+      // empty directory with an oddly-named folder in it is not a Cypress project with a problem.
+      "package.json": manifest({ devDependencies: { cypress: "^13.15.0" } }),
+      "cypress.config.ts/keep": "",
+    });
+
+    const diagnosis = await diagnoseProject(root);
+    const finding = diagnosis.findings.find(
+      (candidate) => candidate.code === DiagnosticCode.ConfigurationMissing,
+    );
+
+    // A file probe cannot see this, so every layer below says "no configuration found" — correctly. Without the
+    // occupied-path fact the reader is told to create a file that cannot be created: the name is taken by a directory,
+    // so the write fails with EISDIR.
+    expect(finding?.explanation).toContain("A directory occupies");
+    expect(finding?.remediation).toContain("Rename or remove");
+  });
 });
 
 describe("the catalogue", () => {
@@ -360,6 +398,11 @@ describe("the catalogue", () => {
     installationVersion: "13.15.0",
     configurations: ["cypress.config.ts"],
     unsupportedConfigurations: ["cypress.json"],
+    // Empty rather than omitted, and the distinction is the whole reason these are required: an empty array says
+    // "none were found", while an absent field says "nobody looked" — and the catalogue cannot tell those apart, so it
+    // would write a remedy for the wrong cause. This literal is what a producer must be able to fill.
+    misplacedConfigurations: [],
+    occupiedConfigurationPaths: [],
     hasCypressDirectory: true,
   } as const;
 
@@ -438,6 +481,70 @@ describe("the catalogue", () => {
     for (const code of Object.values(DiagnosticCode)) {
       expect(GUIDANCE[code].severity).toBeDefined();
     }
+  });
+});
+
+describe("the placement remedies", () => {
+  /**
+   * Facts with no configuration at all.
+   *
+   * Every case below varies exactly one placement fact, so the assertion names the cause rather than the wording of a
+   * sentence four branches share.
+   */
+  const NO_CONFIGURATION = {
+    root: "/project",
+    workspaces: [],
+    configurations: [],
+    unsupportedConfigurations: [],
+    misplacedConfigurations: [],
+    occupiedConfigurationPaths: [],
+    hasCypressDirectory: false,
+  } as const;
+
+  it("sends a reader to the file they already have when it is misplaced", () => {
+    const text = GUIDANCE[DiagnosticCode.ConfigurationMissing].describe({
+      ...NO_CONFIGURATION,
+      misplacedConfigurations: ["cypress/cypress.config.ts"],
+    });
+
+    // The file exists. "Create cypress.config.ts" would create a second project instead of finding the first.
+    expect(text.explanation).toContain("cypress/cypress.config.ts");
+    expect(text.remediation).toContain("Move");
+    expect(text.remediation).not.toContain("Create");
+  });
+
+  it("names the directory in the way rather than advising an impossible create", () => {
+    const text = GUIDANCE[DiagnosticCode.ConfigurationMissing].describe({
+      ...NO_CONFIGURATION,
+      occupiedConfigurationPaths: ["cypress.config.ts"],
+    });
+
+    // The name is already taken by a directory, so "create cypress.config.ts" fails with EISDIR — advice that cannot
+    // be followed, which is worse than no advice because it looks like a bug in the tool.
+    expect(text.explanation).toContain("A directory occupies");
+    expect(text.remediation).toContain("Rename or remove");
+  });
+
+  it("reports the occupying directory first when both are present", () => {
+    const text = GUIDANCE[DiagnosticCode.ConfigurationMissing].describe({
+      ...NO_CONFIGURATION,
+      occupiedConfigurationPaths: ["cypress.config.ts"],
+      misplacedConfigurations: ["cypress/cypress.config.ts"],
+    });
+
+    // A path that cannot be written to is the harder blocker: moving the file while the directory remains changes
+    // nothing, so a message about the move would be advice that does not fix the problem.
+    expect(text.explanation).toContain("A directory occupies");
+    expect(text.explanation).not.toContain("not where Cypress looks");
+  });
+
+  it("still gives the general instruction when neither placement fact applies", () => {
+    const text =
+      GUIDANCE[DiagnosticCode.ConfigurationMissing].describe(NO_CONFIGURATION);
+
+    // Both files, because naming only `.ts` sends a JavaScript project looking for a toolchain it does not need.
+    expect(text.remediation).toContain("cypress.config.ts");
+    expect(text.remediation).toContain("cypress.config.js");
   });
 });
 

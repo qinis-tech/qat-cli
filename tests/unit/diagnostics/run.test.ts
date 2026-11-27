@@ -34,11 +34,17 @@ import {
   CHECKS,
   runChecks,
   type CheckFacts,
+  type CypressConfigurationFacts,
   type EnvironmentFacts,
   type OutputFacts,
   type PackageManagerFacts,
   type RuntimeFacts,
 } from "~/diagnostics/checks/index.js";
+import type {
+  ConfigDiscovery,
+  ConfigValidation,
+  ConfigValidationGapCause,
+} from "~/project/cypress-config/index.js";
 
 /**
  * The catalogue, run against evidence a test constructs.
@@ -58,10 +64,17 @@ import {
  * requires: `{ ...facts, runtime: { nodeVersion } }` compiled, and then the comparison read `required.range` from
  * `undefined`. A spread's result is never checked field-by-field, so nothing catches it — a factory is where the
  * required members live, and an override can replace them but never omit them.
+ *
+ * The configuration group has the same property for a different reason: its two members were decided from one capture of
+ * one file, so `decided()` takes both. A fixture that supplied only the location would compile into a validity verdict
+ * nobody made.
  */
 type AnyCode = DiagnosticCode | ValidationCode;
 
 const CONFIG_PATH = "/project/qat.config.json";
+
+/** The Cypress configuration file the doctor is reporting on. */
+const CONFIG_FILE = "cypress.config.ts";
 
 /** A finding as an assessment's gate would hold it. */
 function problem(
@@ -166,7 +179,9 @@ function assessment(spec: AssessmentSpec = {}): ProjectAssessment {
   };
 }
 
-/** The load outcome for a project with no configuration file, which is legal. */
+/**
+ * The load outcome for a project with no configuration file, which is legal.
+ */
 const ABSENT: ConfigurationLoadResult = {
   kind: ConfigurationLoad.NotFound,
   path: CONFIG_PATH,
@@ -227,6 +242,178 @@ function managerFacts(
   };
 }
 
+/* ─────────────────────────────────────────────────────────────────────────────
+ * Configuration verdicts
+ *
+ * One constant per reason the location and validation verdicts can carry, named after the scenario that uses it. A
+ * fixture is then a fact set plus one of these, which is the same shape the doc's traceability table has.
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/** Exactly one supported configuration, and it is a regular readable file. */
+const LOCATED: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_FOUND",
+  outcome: "pass",
+  file: CONFIG_FILE,
+  format: "executable",
+  sizeBytes: 512,
+};
+
+const MISSING: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_MISSING",
+  outcome: "fail",
+  context: "cypress-evidenced",
+};
+
+const AMBIGUOUS: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_AMBIGUOUS",
+  outcome: "fail",
+  files: ["cypress.config.js", CONFIG_FILE],
+};
+
+const UNSUPPORTED_NAME: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_UNSUPPORTED_NAME",
+  outcome: "fail",
+  files: ["cypress.config.yaml"],
+};
+
+const MISPLACED: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_MISPLACED",
+  outcome: "warning",
+  files: [`cypress/${CONFIG_FILE}`],
+};
+
+const PATH_OCCUPIED: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_PATH_OCCUPIED",
+  outcome: "fail",
+  paths: [CONFIG_FILE],
+};
+
+const NOT_A_FILE: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_NOT_A_FILE",
+  outcome: "fail",
+  file: CONFIG_FILE,
+};
+
+const OUTSIDE_PROJECT: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_OUTSIDE_PROJECT",
+  outcome: "fail",
+  file: CONFIG_FILE,
+  resolvedPath: "/shared/cypress.config.ts",
+  projectRoot: "/project",
+};
+
+const UNREADABLE: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_UNREADABLE",
+  outcome: "fail",
+  file: CONFIG_FILE,
+  cause: "permissions",
+};
+
+const EMPTY: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_EMPTY",
+  outcome: "fail",
+  file: CONFIG_FILE,
+};
+
+const LEGACY: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_LEGACY_FORMAT",
+  outcome: "warning",
+  file: "cypress.json",
+  sizeBytes: 120,
+};
+
+const NOT_INSPECTED: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_NOT_INSPECTED",
+  outcome: "indeterminate",
+  file: CONFIG_FILE,
+};
+
+const NOT_APPLICABLE: ConfigDiscovery = {
+  reason: "CYPRESS_CONFIG_NOT_APPLICABLE",
+  outcome: "skipped",
+  detail: "No Cypress configuration is expected in this project.",
+};
+
+/** A mechanism spoke and was satisfied. */
+const VALIDATED_JSON: ConfigValidation = {
+  reason: "CYPRESS_CONFIG_VALIDATED",
+  outcome: "pass",
+  file: "cypress.json",
+  tier: "T1-json",
+};
+
+const VALIDATED_LOADER: ConfigValidation = {
+  reason: "CYPRESS_CONFIG_VALIDATED",
+  outcome: "pass",
+  file: CONFIG_FILE,
+  tier: "T2-cypress",
+  durationMs: 812,
+};
+
+const INVALID_SYNTAX: ConfigValidation = {
+  reason: "CYPRESS_CONFIG_INVALID",
+  outcome: "fail",
+  file: "cypress.json",
+  tier: "T1-json",
+  failure: { kind: "syntax", message: "Unexpected token }", line: 4 },
+};
+
+const INVALID_SHAPE: ConfigValidation = {
+  reason: "CYPRESS_CONFIG_INVALID",
+  outcome: "fail",
+  file: "cypress.json",
+  tier: "T1-json",
+  failure: { kind: "shape", message: "The configuration must be an object." },
+};
+
+const INVALID_LOAD: ConfigValidation = {
+  reason: "CYPRESS_CONFIG_INVALID",
+  outcome: "fail",
+  file: CONFIG_FILE,
+  tier: "T2-cypress",
+  failure: { kind: "load", message: "defineConfig is not a function" },
+  durationMs: 640,
+};
+
+/**
+ * A gap, by cause.
+ *
+ * One code covers all six, so the case names the cause rather than a code — which is exactly the distinction the
+ * guidance entry makes in prose.
+ */
+function gap(cause: ConfigValidationGapCause): ConfigValidation {
+  return {
+    reason: "CYPRESS_CONFIG_NOT_VALIDATED",
+    outcome: "indeterminate",
+    file: CONFIG_FILE,
+    tier: "T0-text",
+    cause,
+  };
+}
+
+/** The verdict a gatherer produces when nothing was located and validity was never asked. */
+const VALIDATION_SKIPPED: ConfigValidation = {
+  reason: "CYPRESS_CONFIG_SKIPPED",
+  outcome: "skipped",
+  prerequisite: "CFG-003",
+  detail:
+    "The configuration could not be located, so there is nothing to validate.",
+};
+
+/**
+ * The decided configuration pair.
+ *
+ * Both members, always: they were decided from one capture of one file, so a fixture that supplied only the location
+ * would let a check report a validity verdict about a file it never located. The default validation is the one a healthy
+ * project produces, so a location case varies exactly one thing.
+ */
+function decided(
+  location: ConfigDiscovery,
+  validation: ConfigValidation = VALIDATED_LOADER,
+): CypressConfigurationFacts {
+  return { location, validation };
+}
+
 /**
  * Each fact group named once, and non-optional, so a fact set that omits one can be written without setting a property
  * to `undefined` — which `exactOptionalPropertyTypes` forbids and rightly so: absent and present-and-undefined are
@@ -239,6 +426,7 @@ const OUTPUT: OutputFacts = {
   reports: { path: "results/reports", writable: true },
   evidence: { path: "results/evidence", writable: true },
 };
+const CONFIGURATION: CypressConfigurationFacts = decided(LOCATED);
 
 /** A project that passes every check, and varies one thing per scenario. */
 const HEALTHY: CheckFacts = {
@@ -248,14 +436,15 @@ const HEALTHY: CheckFacts = {
   configuration: ABSENT,
   environment: ENVIRONMENT,
   output: OUTPUT,
+  cypressConfiguration: CONFIGURATION,
 };
 
 /**
  * The same facts with the assessment withheld.
  *
  * Written out rather than spread-and-deleted, because there is no way to remove a property from a spread that the type
- * system will accept — and because naming the five groups that remain is the clearest statement of what this fixture
- * is: a caller that gathered everything except the project evidence.
+ * system will accept — and because naming the groups that remain is the clearest statement of what this fixture is: a
+ * caller that gathered everything except the project evidence.
  */
 const WITHOUT_ASSESSMENT: CheckFacts = {
   runtime: RUNTIME,
@@ -263,6 +452,7 @@ const WITHOUT_ASSESSMENT: CheckFacts = {
   configuration: ABSENT,
   environment: ENVIRONMENT,
   output: OUTPUT,
+  cypressConfiguration: CONFIGURATION,
 };
 
 /** One named assessment per project shape a check distinguishes. */
@@ -346,9 +536,9 @@ describe("a healthy project", () => {
 });
 
 describe("every declared scenario", () => {
-  // The scenario name reaches the title through `%s`, so the parameter is unused inside the body. Named with the `_`
-  // prefix the lint rules require rather than consumed by a tautological assertion.
-  it.each(Object.entries(CASES))("%s", (__scenario, expectation) => {
+  // The scenario name reaches the title through `%s`, so the first parameter is unused in the body and carries the `_`
+  // prefix the lint rules require. The second is used, so it has no prefix.
+  it.each(Object.entries(CASES))("%s", (_scenario, expectation) => {
     const outcome = outcomeOf(runChecks(expectation.facts), expectation.check);
 
     // One comparison per case, carrying the status and the code together. `QAT-V002` reaching the wrong check would
@@ -361,14 +551,15 @@ describe("every declared scenario", () => {
 
 describe("skipping", () => {
   it("skips a dependant rather than reporting its consequence as a second problem", () => {
-    // A project with no configuration: recognition passes, configuration fails, and the three checks that depend on it
-    // — directly or through one another — must not add their own voices to the report.
+    // A project with no configuration: recognition passes, the location check fails, and the four checks that depend on
+    // it — directly or through one another — must not add their own voices to the report.
     const report = runChecks({
       ...HEALTHY,
-      assessment: withBlocking(problem(DiagnosticCode.ConfigurationMissing)),
+      cypressConfiguration: decided(MISSING, VALIDATION_SKIPPED),
     });
 
     expect([
+      fingerprint(outcomeOf(report, CheckId.CypressConfigurationValidatable)),
       fingerprint(outcomeOf(report, CheckId.CypressLayoutDriveable)),
       fingerprint(outcomeOf(report, CheckId.CypressInstalled)),
       fingerprint(outcomeOf(report, CheckId.CypressVersionSupported)),
@@ -376,9 +567,10 @@ describe("skipping", () => {
       CheckStatus.Skipped,
       CheckStatus.Skipped,
       CheckStatus.Skipped,
+      CheckStatus.Skipped,
     ]);
 
-    // Configuration itself failed rather than skipping, so the number of failures is one and not four.
+    // Configuration itself failed rather than skipping, so the number of failures is one and not five.
     expect(failedChecks(report).map((outcome) => outcome.check)).toStrictEqual([
       CheckId.CypressConfigurationLocated,
     ]);
@@ -387,7 +579,7 @@ describe("skipping", () => {
   it("says which check stopped it, rather than only that it did not run", () => {
     const report = runChecks({
       ...HEALTHY,
-      assessment: withBlocking(problem(DiagnosticCode.ConfigurationMissing)),
+      cypressConfiguration: decided(MISSING, VALIDATION_SKIPPED),
     });
     const outcome = outcomeOf(report, CheckId.CypressInstalled);
 
@@ -562,12 +754,12 @@ describe("the severity rule", () => {
       (check) =>
         check.scenarios.map((scenario) => [scenario, check.id] as const),
     ),
-  )("%s never fails a run", (__scenario, check) => {
+  )("%s never fails a run", (scenario, check) => {
     // The invariant the runner relies on: `failed` is reserved for error-severity checks. Driven from the same
     // fixtures the inventory uses, so an advisory check that grew a `fail` branch is caught by the case that already
     // exists for it rather than by a new one nobody writes.
     expect(
-      fingerprint(outcomeOf(runChecks(caseOf(__scenario).facts), check)),
+      fingerprint(outcomeOf(runChecks(caseOf(scenario).facts), check)),
     ).not.toBe(CheckStatus.Failed);
   });
 
@@ -617,7 +809,8 @@ interface Case {
  *
  * The package-manager group is ordered as the ladder is ordered — identification, agreement, tooling, version,
  * installation — because that is the order in which a rung becomes reachable. Reading down the list is reading the
- * check.
+ * check. The configuration group is the same idea across two checks: location first, then the validity that can only be
+ * asked once something was located.
  */
 const CASES: Record<string, Case> = {
   // runtime compatibility — what QAT itself requires
@@ -928,8 +1121,11 @@ const CASES: Record<string, Case> = {
     code: DiagnosticCode.ManifestIncomplete,
   },
 
-  // cypress configuration
-  "cypress.configuration-located.located": {
+  // cypress configuration — location
+  //
+  // Thirteen reasons, each with its own remedy, which is why they are thirteen cases and not one "configuration
+  // problem". The code is part of every expectation: with no evidence bag on a finding, the code *is* the detail.
+  "cypress.configuration-located.found": {
     check: CheckId.CypressConfigurationLocated,
     facts: HEALTHY,
     status: CheckStatus.Passed,
@@ -938,31 +1134,237 @@ const CASES: Record<string, Case> = {
     check: CheckId.CypressConfigurationLocated,
     facts: {
       ...HEALTHY,
-      assessment: withBlocking(problem(DiagnosticCode.ConfigurationMissing)),
+      cypressConfiguration: decided(MISSING, VALIDATION_SKIPPED),
     },
     status: CheckStatus.Failed,
-    code: DiagnosticCode.ConfigurationMissing,
+    code: HealthCode.CypressConfigurationMissing,
   },
   "cypress.configuration-located.ambiguous": {
     check: CheckId.CypressConfigurationLocated,
     facts: {
       ...HEALTHY,
-      assessment: withBlocking(problem(DiagnosticCode.ConfigurationAmbiguous)),
+      cypressConfiguration: decided(AMBIGUOUS, VALIDATION_SKIPPED),
     },
+    // Two files is an error, not a warning: Cypress refuses to start, so a warning would contradict the tool.
     status: CheckStatus.Failed,
-    code: DiagnosticCode.ConfigurationAmbiguous,
+    code: HealthCode.CypressConfigurationAmbiguous,
   },
-  "cypress.configuration-located.unusable-format": {
+  "cypress.configuration-located.unsupported-name": {
     check: CheckId.CypressConfigurationLocated,
     facts: {
       ...HEALTHY,
-      assessment: withBlocking(
-        problem(DiagnosticCode.ConfigurationUnsupported),
-      ),
+      cypressConfiguration: decided(UNSUPPORTED_NAME, VALIDATION_SKIPPED),
     },
     status: CheckStatus.Failed,
-    code: DiagnosticCode.ConfigurationUnsupported,
+    code: HealthCode.CypressConfigurationUnsupportedFormat,
   },
+  "cypress.configuration-located.misplaced": {
+    check: CheckId.CypressConfigurationLocated,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(MISPLACED, VALIDATION_SKIPPED),
+    },
+    // Advisory: the fix is to move a file, and a project mid-migration still runs.
+    status: CheckStatus.Warned,
+    code: HealthCode.CypressConfigurationMisplaced,
+  },
+  "cypress.configuration-located.path-occupied": {
+    check: CheckId.CypressConfigurationLocated,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(PATH_OCCUPIED, VALIDATION_SKIPPED),
+    },
+    // The one fact that turns a baffling "no configuration found" into something a reader can act on.
+    status: CheckStatus.Failed,
+    code: HealthCode.CypressConfigurationPathNotAFile,
+  },
+  "cypress.configuration-located.not-a-file": {
+    check: CheckId.CypressConfigurationLocated,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(NOT_A_FILE, VALIDATION_SKIPPED),
+    },
+    // A different filesystem situation from the case above and the same code, because both end in "put a regular file
+    // there".
+    status: CheckStatus.Failed,
+    code: HealthCode.CypressConfigurationPathNotAFile,
+  },
+  "cypress.configuration-located.outside-project": {
+    check: CheckId.CypressConfigurationLocated,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(OUTSIDE_PROJECT, VALIDATION_SKIPPED),
+    },
+    // A boundary, not a preference: a file outside the project does not describe this project.
+    status: CheckStatus.Failed,
+    code: HealthCode.CypressConfigurationOutsideProject,
+  },
+  "cypress.configuration-located.unreadable": {
+    check: CheckId.CypressConfigurationLocated,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(UNREADABLE, VALIDATION_SKIPPED),
+    },
+    // Not "missing": the file is there, so telling the reader to create one would be actively misleading.
+    status: CheckStatus.Failed,
+    code: HealthCode.CypressConfigurationUnreadable,
+  },
+  "cypress.configuration-located.empty": {
+    check: CheckId.CypressConfigurationLocated,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(EMPTY, VALIDATION_SKIPPED),
+    },
+    status: CheckStatus.Failed,
+    code: HealthCode.CypressConfigurationEmpty,
+  },
+  "cypress.configuration-located.legacy-format": {
+    check: CheckId.CypressConfigurationLocated,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LEGACY, VALIDATION_SKIPPED),
+    },
+    // Detected, readable and valid for its era. Failing it would fail a project that runs today.
+    status: CheckStatus.Warned,
+    code: HealthCode.CypressConfigurationLegacyFormat,
+  },
+  "cypress.configuration-located.not-inspected": {
+    check: CheckId.CypressConfigurationLocated,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(NOT_INSPECTED, VALIDATION_SKIPPED),
+    },
+    // A question we could not answer: never a pass, because silence must not read as consent.
+    status: CheckStatus.Warned,
+    code: HealthCode.CypressConfigurationNotInspected,
+  },
+  "cypress.configuration-located.not-applicable": {
+    check: CheckId.CypressConfigurationLocated,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(NOT_APPLICABLE, VALIDATION_SKIPPED),
+    },
+    // Normally unreachable — the precondition skips a non-Cypress project first — and asserted anyway, because a runner
+    // that could not skip must still get a pass rather than a finding about a file nobody expected.
+    status: CheckStatus.Passed,
+  },
+
+  // cypress configuration — validity
+  //
+  // Two codes and eleven cases: one per terminal outcome, plus one per gap cause. The gaps are the interesting half —
+  // "not validated" is a legitimate result and would otherwise be the branch nobody proves.
+  "cypress.configuration-validatable.validated-json": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LOCATED, VALIDATED_JSON),
+    },
+    // A parser is definitive about syntax, so this is a pass with the strongest available authority behind it.
+    status: CheckStatus.Passed,
+  },
+  "cypress.configuration-validatable.validated-loader": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LOCATED, VALIDATED_LOADER),
+    },
+    status: CheckStatus.Passed,
+  },
+  "cypress.configuration-validatable.invalid-syntax": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LOCATED, INVALID_SYNTAX),
+    },
+    status: CheckStatus.Failed,
+    code: HealthCode.CypressConfigurationInvalid,
+  },
+  "cypress.configuration-validatable.invalid-shape": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LOCATED, INVALID_SHAPE),
+    },
+    // A shape problem is not a syntax problem: the file parses and is still unusable, and the remedy is different.
+    status: CheckStatus.Failed,
+    code: HealthCode.CypressConfigurationInvalid,
+  },
+  "cypress.configuration-validatable.invalid-load": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LOCATED, INVALID_LOAD),
+    },
+    // The only case where the authority is the project's own loader rather than a parser.
+    status: CheckStatus.Failed,
+    code: HealthCode.CypressConfigurationInvalid,
+  },
+  "cypress.configuration-validatable.not-validated-deep-disabled": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LOCATED, gap("deep-validation-disabled")),
+    },
+    // A warning rather than a pass, even though deep validation being off is the default: a green check would claim a
+    // verification that never ran.
+    status: CheckStatus.Warned,
+    code: HealthCode.CypressConfigurationUnverified,
+  },
+  "cypress.configuration-validatable.not-validated-deep-unavailable": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(
+        LOCATED,
+        gap("deep-validation-unavailable"),
+      ),
+    },
+    status: CheckStatus.Warned,
+    code: HealthCode.CypressConfigurationUnverified,
+  },
+  "cypress.configuration-validatable.not-validated-probe-timeout": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LOCATED, gap("probe-timeout")),
+    },
+    // An exhausted budget proves nothing about the file. Reporting it as invalid would blame the user for our own bound.
+    status: CheckStatus.Warned,
+    code: HealthCode.CypressConfigurationUnverified,
+  },
+  "cypress.configuration-validatable.not-validated-undecodable": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LOCATED, gap("undecodable-text")),
+    },
+    status: CheckStatus.Warned,
+    code: HealthCode.CypressConfigurationUnverified,
+  },
+  "cypress.configuration-validatable.not-validated-size-budget": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(LOCATED, gap("size-budget-exceeded")),
+    },
+    // Nothing was read at all, so no tier spoke — which is why this gap carries `none` rather than `T0-text`.
+    status: CheckStatus.Warned,
+    code: HealthCode.CypressConfigurationUnverified,
+  },
+  "cypress.configuration-validatable.not-validated-text-sanity": {
+    check: CheckId.CypressConfigurationValidatable,
+    facts: {
+      ...HEALTHY,
+      cypressConfiguration: decided(
+        LOCATED,
+        gap("text-sanity-not-established"),
+      ),
+    },
+    status: CheckStatus.Warned,
+    code: HealthCode.CypressConfigurationUnverified,
+  },
+
+  // cypress layout
   "cypress.layout-driveable.supported": {
     check: CheckId.CypressLayoutDriveable,
     facts: HEALTHY,

@@ -75,7 +75,13 @@ export const CheckCategory = {
   ProjectStructure: "project-structure",
   /** Whether the framework is installed, and at a version this tool will drive. */
   CypressInstallation: "cypress-installation",
-  /** Whether there is exactly one readable configuration and a spec location QAT can drive. */
+  /**
+   * Whether there is exactly one readable configuration and a spec location QAT can drive.
+   *
+   * Two questions share this group — is the file there, and can anything establish that it is valid — because a reader
+   * fixing a configuration problem works through both in one sitting, and a report that put them in different sections
+   * would have them scrolling between two halves of one answer.
+   */
   CypressConfiguration: "cypress-configuration",
   /** Whether the QAT configuration file itself can be read. */
   QatConfiguration: "qat-configuration",
@@ -88,7 +94,7 @@ export const CheckCategory = {
 export type CheckCategory = (typeof CheckCategory)[keyof typeof CheckCategory];
 
 /**
- * The thirteen health checks.
+ * The fourteen health checks.
  *
  * An identifier is a dotted slug rather than a code, because it names a *question* and is quoted in documentation and
  * in the identifier of the scenario that verifies it. The diagnostic *code* is attached to the finding a check
@@ -105,6 +111,18 @@ export type CheckCategory = (typeof CheckCategory)[keyof typeof CheckCategory];
  * shape rather than an oversight: a check is one *question* — "is this project's package-manager environment
  * healthy?" — and the several conditions it may find are codes, not questions. One identifier per rung would fill the
  * report with rows that can never appear together, because each rung is only reachable when the one above it passed.
+ *
+ * ### Why the configuration pair did gain a second identifier
+ *
+ * Those eight package-manager conditions are rungs of one question: each is only reachable when the one above passed,
+ * so they can never appear side by side. Location and validity are not rungs — they are two questions with a
+ * **precondition** between them. A file can be located and provably unvalidatable; a file can be located and answer
+ * nothing at all because no mechanism was entitled to speak. Collapsing them into one identifier would force one row to
+ * carry two different remedies and would hide which of the two answered.
+ *
+ * A `precondition` link is the mechanism, and it is why the second identifier exists rather than an eleventh code on
+ * the first: the runner can skip validity with a named cause — "not located" — which no code on a single check could
+ * express without reporting a consequence as a problem in its own right.
  */
 export const CheckId = {
   /**
@@ -128,6 +146,16 @@ export const CheckId = {
   PackageMetadata: "project.package-metadata",
   /** Is there exactly one Cypress configuration, in a format QAT can read? */
   CypressConfigurationLocated: "cypress.configuration-located",
+  /**
+   * Can anything establish that the located configuration is valid?
+   *
+   * The second half of the configuration pair, and the precondition of nothing — nothing else waits on validity, which
+   * is why it comes after location in declaration order and before the layout question that a run actually needs.
+   *
+   * Appended rather than inserted, for the same reason a code is: the identifiers above keep the positions they had when
+   * they were first quoted.
+   */
+  CypressConfigurationValidatable: "cypress.configuration-validatable",
   /** Is there a spec location QAT can drive? */
   CypressLayoutDriveable: "cypress.layout-driveable",
   /** Is the framework installed here or above? */
@@ -224,6 +252,26 @@ export type CheckSkipReason =
  * They are all advisory. None of them stops a run of an already-installed suite — they predict a confusing install —
  * so severity lives on the check, and the catalogue test holds each of these entries to `warning`.
  *
+ * ## Why the Cypress-configuration codes are split the same way
+ *
+ * Ten conditions for one file, and the same rule applied: one code per remedy. "There is no configuration", "there are
+ * two", "it is in a format Cypress does not load", "it is in a place Cypress does not look", "the path is not a file",
+ * "it leads outside the project", "it cannot be read", "it is empty", "it is the pre-v10 format" and "it was located
+ * but never inspected" are ten different sentences with ten different fixes. A shared code would have to describe one
+ * of them and would be wrong for the other nine.
+ *
+ * Two more cover the validity question, and they are split on *evidence* rather than on cause: a mechanism spoke and
+ * said no, or no mechanism was entitled to speak. That is the distinction the whole configuration pair rests on, and
+ * the six ways the second can happen share one code because they share one remedy — get a mechanism, then ask again.
+ *
+ * These are `QAT-H` and not `QAT-D`, even though a configuration is a property of a project: the codes above for QAT's
+ * *own* configuration document (`QAT-H004`–`H006`) are also about a file in a project, and what a `QAT-H` code denotes
+ * is who is speaking — this layer, about something it had to inspect itself — rather than what the inspected thing is.
+ *
+ * Unlike the package-manager group these are not all advisory. Three are conditions a project can run with (a legacy
+ * format, a stale copy in the wrong place, a file nothing would inspect) and the rest block, which is exactly the case
+ * `CheckSeverity` and `CheckStatus` are separate for: one declared severity, two statuses, decided by the condition.
+ *
  * New codes are appended, never inserted, so a number quoted in a report keeps its meaning.
  */
 export const HealthCode = {
@@ -309,6 +357,91 @@ export const HealthCode = {
    * edited. Naming both managers is the whole value of reporting it early.
    */
   PackageManagerForeignInstall: "QAT-H017",
+  /**
+   * No Cypress configuration file was found.
+   *
+   * One code for two situations — nothing about the project says "Cypress", or Cypress is evidenced but never
+   * configured — because the remedy is the same sentence with a different opening clause: create one. The distinction
+   * survives in the finding's explanation, which is derived from evidence rather than re-read from the directory.
+   */
+  CypressConfigurationMissing: "QAT-H018",
+  /**
+   * More than one Cypress configuration file is present.
+   *
+   * Cypress refuses to start with two, so this is a report of the same fact rather than a preference QAT could resolve.
+   * Naming a winner here would decide which file the next install rewrites.
+   */
+  CypressConfigurationAmbiguous: "QAT-H019",
+  /**
+   * A configuration-looking file exists in a form Cypress does not load.
+   *
+   * Distinct from `QAT-H018`: something here is plainly intended as configuration, so telling the reader nothing was
+   * found sends them looking for a file they already have.
+   */
+  CypressConfigurationUnsupportedFormat: "QAT-H020",
+  /**
+   * A configuration exists where Cypress never reads one — inside `cypress/`.
+   *
+   * Advisory when it accompanies a working configuration, because the project runs; the stale copy is worth mentioning
+   * and not worth blocking. The fix is to move a file rather than to write one.
+   */
+  CypressConfigurationMisplaced: "QAT-H021",
+  /**
+   * A configuration path is not a regular file — a directory, or a link that leads nowhere.
+   *
+   * Covers the case a file probe cannot see at all (a directory on `cypress.config.ts`) and the case it sees and cannot
+   * use, because both remedies are the same sentence: put a regular file there. It is the one fact that turns an
+   * otherwise baffling "no configuration found" into something a reader can act on.
+   */
+  CypressConfigurationPathNotAFile: "QAT-H022",
+  /**
+   * The configuration is a symbolic link that resolves outside the project.
+   *
+   * A boundary, not a preference: a file outside the project does not describe this project, and reading it would let a
+   * repository point a diagnostic at something the developer never meant to expose.
+   */
+  CypressConfigurationOutsideProject: "QAT-H023",
+  /**
+   * The configuration exists and cannot be read.
+   *
+   * Distinct from missing on purpose: the file is there, so telling the reader to create one would be actively
+   * misleading. The cause distinguishes "you are not allowed" from "the disk misbehaved".
+   */
+  CypressConfigurationUnreadable: "QAT-H024",
+  /** The configuration exists and carries nothing — no content, or whitespace only. */
+  CypressConfigurationEmpty: "QAT-H025",
+  /**
+   * The configuration is readable and in the pre-v10 format.
+   *
+   * Advisory, not blocking: it works today, and failing a project that runs would be wrong. Silence would be worse —
+   * it would let a team meet this during an upgrade instead of now.
+   */
+  CypressConfigurationLegacyFormat: "QAT-H026",
+  /**
+   * The configuration was located and never inspected.
+   *
+   * A question we could not answer, so a warning: never a pass, because silence must not read as consent, and never a
+   * failure, because a question we failed to answer must not block work we can still perform.
+   */
+  CypressConfigurationNotInspected: "QAT-H027",
+  /**
+   * A supported mechanism established that the configuration is invalid.
+   *
+   * The only configuration code that can honestly block, because it is only reachable when a JSON parser or the
+   * project's own loader said so. The mechanism is named in the explanation and the location is described by line and
+   * kind — never by an excerpt, because a line of a configuration file can hold an environment value and a loader's
+   * message can carry a code frame of one.
+   */
+  CypressConfigurationInvalid: "QAT-H028",
+  /**
+   * No mechanism was entitled to a verdict about the configuration.
+   *
+   * Deep validation off, a loader unavailable, a probe that timed out, a file that is not text, a file beyond the read
+   * budget, or a sample that never established anything. One code for six causes because the remedy is one thing — get
+   * a mechanism, then ask again — while the cause still decides the sentence, since "off by default" and "timed out"
+   * are different mornings for whoever has to debug it.
+   */
+  CypressConfigurationUnverified: "QAT-H029",
 } as const;
 
 export type HealthCode = (typeof HealthCode)[keyof typeof HealthCode];

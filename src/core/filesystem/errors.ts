@@ -9,11 +9,19 @@
  * Translated errors keep the original as `cause`. The errno is also recorded in the context, because it is the first
  * thing anyone diagnosing a filesystem problem looks for.
  *
- * ## Two functions, and the order they are used in
+ * ## Three functions, and the order they are used in
  *
  * `isMissingPathError` answers whether a failure means "there is nothing at that path". `translateFilesystemError`
- * converts everything else. A caller that treats absence as an answer — discovery, the configuration loader — checks the
- * first and translates only what is left, which is what keeps "the file is not there" from arriving as a failure.
+ * converts everything else. A caller that treats absence as an answer — detection, the configuration loader, the
+ * read-only file inspector — checks the first and translates only what is left, which is what keeps "the file is not
+ * there" from arriving as a failure.
+ *
+ * `translateUnlessMissing` is that pair, in that order, encoded once. It exists because the two-step stopped being a
+ * description of what two callers happened to do and became a rule a third caller had to remember: three copies of "check
+ * absence, then translate" is three chances to forget the first half and report a missing optional file as a filesystem
+ * fault. The predicate stays exported for callers that need absence for something other than "do nothing" — a boolean
+ * answer, a branch with its own message — because a helper that only knew how to return `undefined` would be a narrower
+ * tool than the one this module is meant to be.
  */
 import { ErrorCode } from "../errors/codes.js";
 import { FilesystemError } from "../errors/errors.js";
@@ -58,6 +66,42 @@ export function isMissingPathError(error: unknown): boolean {
   if (!hasErrorCode(error)) return false;
 
   return error.code === "ENOENT" || error.code === "ENOTDIR";
+}
+
+/**
+ * Translates a failure, or answers `undefined` when the failure was absence.
+ *
+ * The two-step the module's own header describes, encoded once. Callers use it like this:
+ *
+ * ```ts
+ * const stats = await lstat(path).catch((error: unknown) => {
+ *   const failure = translateUnlessMissing(error, "inspect", path);
+ *   if (failure === undefined) return undefined;
+ *   throw failure;
+ * });
+ * ```
+ *
+ * ## Read-shaped operations only, and the name says so
+ *
+ * `undefined` means "the caller's question has a legitimate empty answer". That is true for `stat`, `readFile` and
+ * `realpath`; it is **not** true for a write, where `ENOTDIR` means the caller was asked to create a file inside a file.
+ * Passing a write through this helper would convert a genuine failure into silence, which is the one outcome worse than a
+ * confusing message.
+ *
+ * ## Why `undefined` rather than a sentinel error
+ *
+ * A sentinel would be a `FilesystemError` that every caller has to remember not to report, and forgetting would be
+ * invisible: the type would be satisfied and the report would carry a finding for a file that is simply absent. `undefined`
+ * cannot be reported by accident — the caller has to write the branch that produces an answer instead.
+ */
+export function translateUnlessMissing(
+  error: unknown,
+  operation: string,
+  path: string,
+): FilesystemError | undefined {
+  return isMissingPathError(error)
+    ? undefined
+    : translateFilesystemError(error, operation, path);
 }
 
 /**
@@ -142,6 +186,24 @@ export function translateFilesystemError(
         {
           ...base,
           remediation: "Replace the symlink loop with a path that resolves.",
+        },
+      );
+
+    /**
+     * A hardware or filesystem-level fault.
+     *
+     * Named separately because it is the one failure a reader cannot fix by correcting a path or a permission: the
+     * message has to say that the storage is misbehaving, or the reader will spend an afternoon checking a file that is
+     * fine. It arises in practice from removable media, a network mount that lost its server, and a failing disk.
+     */
+    case "EIO":
+      return new FilesystemError(
+        ErrorCode.filesystemFailure,
+        `Cannot ${operation} ${path}: the storage reported an I/O error.`,
+        {
+          ...base,
+          remediation:
+            "Check the drive or network mount holding the file, then run the command again.",
         },
       );
 

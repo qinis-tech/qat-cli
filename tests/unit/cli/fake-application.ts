@@ -31,14 +31,15 @@
  *
  * ## Why the evidence is a value and not a trap
  *
- * `runtime`, `nodeRequirement` and `executables` are the three members the health checks were given, and they are
+ * `runtime`, `nodeRequirement`, `executables` and `files` are the four members the health checks were given, and they are
  * treated differently from the collaborators above — because they are not collaborators. They are *evidence*: a version
- * string, a declared range and a way to find a command, all of which a doctor run reads as a matter of course.
+ * string, a declared range, a way to find a command and a way to read what is on disk, all of which a doctor run reads as
+ * a matter of course.
  *
  * Trapping them would make a legitimate read fail with "runtime is unused in this test", which is worse than useless: it
- * names the wrong problem, and it teaches whoever hits it to loosen the trap. A fixture that states a version, a range
- * and a search result admits itself, is visible at the call site, and is overridable when a test needs a different
- * answer.
+ * names the wrong problem, and it teaches whoever hits it to loosen the trap. A fixture that states a version, a range, a
+ * search result and a path that does not exist admits itself, is visible at the call site, and is overridable when a test
+ * needs a different answer.
  *
  * The defaults are **fixtures, not claims about this machine**. The shipped policy is `engines.node`, and the contract
  * suite is the only place entitled to assert anything about it; a unit test must not depend on the machine it runs on,
@@ -54,6 +55,7 @@
 import type {
   Application,
   ExecutableLocator,
+  FileInspector,
   RuntimeProbe,
 } from "~/core/application/ports.js";
 // The widened name. This fake stands in for an assembly that produces one value of this shape, whatever owns the
@@ -110,6 +112,15 @@ export interface FakeApplicationOptions {
    * reading the fixture's opinion instead of the code's.
    */
   readonly executables?: ExecutableLocator;
+
+  /**
+   * Replaces what is on disk. Supply one to exercise a readable file, a directory occupying the path, or a symlink that
+   * escapes the project.
+   *
+   * The default reports that nothing exists anywhere, which is the only answer that cannot be mistaken for evidence
+   * about a real file — see the note on the member itself.
+   */
+  readonly files?: FileInspector;
 }
 
 /**
@@ -191,6 +202,27 @@ export function fakeApplication(
     executables: options.executables ?? {
       locateExecutable: (command) =>
         Promise.resolve(fakeExecutablePath(command)),
+    },
+
+    /**
+     * Evidence, like the three above, and for the same reason: a doctor run reads the filesystem as a matter of course.
+     *
+     * The default reports **that nothing exists at any path**, which is the only answer that cannot be mistaken for
+     * evidence about a real file. A fixture claiming a mode, a size or a symlink target would be inventing facts about a
+     * tree the test never created — and invented facts in a fixture are how a test starts asserting its own assumptions
+     * back at itself.
+     *
+     * `resolveRealPath` echoes its input rather than fabricating a destination, the same convention `fakeExecutablePath`
+     * follows: a caller that resolves a path it was given gets that path back, and no test is ever written against a
+     * target that does not exist. `readPrefix` resolves an empty array for the same reason it exists at all — it is a
+     * bounded read, and zero bytes is the honest answer when there is no file.
+     *
+     * Asynchronous, matching the port, so a caller cannot forget an `await` the implementation requires.
+     */
+    files: options.files ?? {
+      inspect: () => Promise.resolve(undefined),
+      resolveRealPath: (path) => Promise.resolve(path),
+      readPrefix: () => Promise.resolve(new Uint8Array(0)),
     },
 
     // One member, and it throws rather than rejecting: see `unusedImmediately`. A command that needs a resolved

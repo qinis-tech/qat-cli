@@ -24,6 +24,21 @@
  * inspection, and one severity field cannot say both. The per-operation verdict belongs to the validation layer's gate,
  * which reads these severities rather than re-deciding them.
  *
+ * ## Why the placement facts earn a clause and not a code
+ *
+ * The detection engine reports where a configuration *is* as well as whether one was found: a configuration filed inside
+ * `cypress/`, and a directory sitting on a configuration path. Both are real, both are diagnosable, and both currently
+ * arrive here as "no configuration found".
+ *
+ * They do not get their own codes, for the reason this catalogue exists: a code names a *condition*, and the condition is
+ * the same one — Cypress cannot load a configuration from this directory. What the placement facts change is the
+ * explanation and the remedy, which is the difference between "create a file" (wrong, and actively harmful when a
+ * directory is in the way) and "move the file you already have".
+ *
+ * The doctor layer does carry finer-grained codes for these, because it reads file bytes and can tell "unreadable" from
+ * "misplaced" from "a directory on the path". This layer answers what detection found about the tree; it stops where the
+ * tree stops.
+ *
  * ## Why this catalogue holds no runtime entry
  *
  * The Node.js runtime conditions are `QAT-H` codes owned by `src/diagnostics/checks`. They are properties of the machine a
@@ -100,6 +115,21 @@ export interface DiagnosticFacts {
   readonly installationVersion?: string;
   readonly configurations: readonly string[];
   readonly unsupportedConfigurations: readonly string[];
+  /**
+   * Configuration files that exist where Cypress never reads one — inside `cypress/`.
+   *
+   * An empty array is a real answer ("there is none") rather than an omission, which is why this is required: a message
+   * that said "create a configuration file" to a reader who already has one, one directory away, is the failure mode this
+   * field prevents.
+   */
+  readonly misplacedConfigurations: readonly string[];
+  /**
+   * Paths carrying a configuration filename that are directories rather than files.
+   *
+   * Separate from "missing" because the remedy is the opposite of creating a file: the path is occupied, so a create
+   * attempt fails, and a reader told to create one concludes the tool is broken.
+   */
+  readonly occupiedConfigurationPaths: readonly string[];
   readonly hasCypressDirectory: boolean;
 }
 
@@ -136,20 +166,31 @@ function listOf(values: readonly string[]): string {
 }
 
 /**
- * What to suggest when there is no usable Cypress configuration.
+ * What to suggest when there is no *usable* configuration.
  *
- * A declared workspace changes the advice entirely: the reader is almost certainly one directory too high, and telling
- * them to create a configuration file would create a second project instead of finding the first. The patterns are named
- * and never expanded.
+ * Ordered by specificity, because the general advice is wrong more often than it is right:
  *
- * The file is named in the first sentence because the alternative reading is now live: "create a configuration file" in a
+ * 1. A directory on the path — creating a file cannot succeed, so say what is actually in the way.
+ * 2. A configuration one directory away — the file exists, so sending the reader to write another one creates a second
+ *    project instead of finding the first.
+ * 3. A declared workspace — the reader is almost certainly one level too high, which is why the patterns are named rather
+ *    than expanded.
+ * 4. Nothing known — the honest general instruction, with both common extensions, because naming only `.ts` sends a
+ *    JavaScript project looking for a toolchain it does not need.
+ *
+ * The file is named in every branch because the alternative reading is now live: "create a configuration file" in a
  * project that already has `qat.config.json` sounds like advice to create a second one of those, which would satisfy the
  * instruction and change nothing about the condition being reported.
- *
- * Both common extensions are offered. Naming only `.ts` sends a JavaScript project looking for a TypeScript toolchain it
- * does not need, and the condition is "no configuration", not "no TypeScript configuration".
  */
 function configurationRemedy(facts: DiagnosticFacts): string {
+  if (facts.occupiedConfigurationPaths.length > 0) {
+    return `Rename or remove the directory at ${listOf(facts.occupiedConfigurationPaths)}, then create cypress.config.ts (or cypress.config.js).`;
+  }
+
+  if (facts.misplacedConfigurations.length > 0) {
+    return `Move ${listOf(facts.misplacedConfigurations)} to the project root and rename it to cypress.config.ts.`;
+  }
+
   if (facts.workspaces.length === 0) {
     return "Create cypress.config.ts (or cypress.config.js) for Cypress, or run this in the right directory.";
   }
@@ -170,9 +211,26 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
     severity: DiagnosticSeverity.Error,
 
     describe: (facts) => {
-      // Four causes, four explanations, because they have four different next steps: one file to create, the same file
-      // plus an install, a configuration that was deleted, or a directory that never had one. The last branch exists so
-      // the message never claims a `cypress` directory was found when the facts do not say so.
+      // Most specific first. The two placement branches exist because a file probe answers "is there a regular file with
+      // this name", so a directory on the path and a configuration inside `cypress/` both arrive here as "missing" — and
+      // both make the generic remedy actively wrong.
+      if (facts.occupiedConfigurationPaths.length > 0) {
+        return {
+          explanation: `A directory occupies ${listOf(facts.occupiedConfigurationPaths)} in ${facts.root}, so no Cypress configuration file can be found there.`,
+          remediation: configurationRemedy(facts),
+        };
+      }
+
+      if (facts.misplacedConfigurations.length > 0) {
+        return {
+          explanation: `A Cypress configuration exists in ${facts.root}, but not where Cypress looks: ${listOf(facts.misplacedConfigurations)}.`,
+          remediation: configurationRemedy(facts),
+        };
+      }
+
+      // Then the four causes that have four different next steps: one file to create, the same file plus an install, a
+      // configuration that was deleted, or a directory that never had one. The last branch exists so the message never
+      // claims a `cypress` directory was found when the facts do not say so.
       if (facts.installationVersion !== undefined) {
         return {
           explanation: `Cypress ${facts.installationVersion} is installed in ${facts.root}, but no Cypress configuration file was found.`,
@@ -215,11 +273,14 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
 
     describe: (facts) => {
       // A list that is empty cannot be joined into a sentence. The condition implies a non-empty list, but a message
-      // reading "uses , which this build cannot read" is worse than a general one, and the general one is still true.
+      // reading "uses , which this build cannot use" is worse than a general one, and the general one is still true.
+      //
+      // "Use", not "read": a legacy `cypress.json` is perfectly readable JSON. What it cannot be is *used* as a
+      // configuration by this build, and saying "read" sends a reader to check file permissions on a file that is fine.
       const explanation =
         facts.unsupportedConfigurations.length === 0
-          ? `${facts.root} uses a Cypress configuration format this build cannot read.`
-          : `${facts.root} uses ${listOf(facts.unsupportedConfigurations)}, which this build cannot read as a Cypress configuration.`;
+          ? `${facts.root} uses a Cypress configuration format this build cannot use.`
+          : `${facts.root} uses ${listOf(facts.unsupportedConfigurations)}, which this build cannot use as a Cypress configuration.`;
 
       return {
         explanation,

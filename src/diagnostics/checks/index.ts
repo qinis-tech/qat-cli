@@ -24,14 +24,31 @@
  * gatherer, and a function returning `OutputFacts` is clearer than one returning an anonymous object literal that
  * happens to match.
  *
- * That reasoning now covers two groups and three groups' worth of shapes, which is worth stating plainly rather than
- * leaving to inference. The runtime group needs `RuntimeRequirementFact` and `RuntimeFacts`; the package-manager group
- * needs `PackageManagerFacts` plus the four pieces it is assembled from — how identity was established, what the
- * executable probe found, how far an install got, and why a version could not be read. A gatherer produces all of them,
- * and a gatherer that had to deep-import `./contracts.js` to name its own output would be a caller of this layer
- * reaching around its surface for no reason.
+ * That reasoning now covers three groups and their parts, which is worth stating plainly rather than leaving to
+ * inference:
  *
- * They are inputs, not decisions: nothing here reads them.
+ * - the runtime group needs `RuntimeRequirementFact` and `RuntimeFacts`;
+ * - the package-manager group needs `PackageManagerFacts` plus the four pieces it is assembled from — how identity was
+ *   established, what the executable probe found, how far an install got, and why a version could not be read;
+ * - the Cypress-configuration group needs `CypressConfigurationFacts`, whose two members are the project layer's own
+ *   decided verdicts.
+ *
+ * A gatherer produces all of them, and a gatherer that had to deep-import `./contracts.js` to name its own output would
+ * be a caller of this layer reaching around its surface for no reason. They are inputs, not decisions: nothing here
+ * reads them.
+ *
+ * ## Why the configuration group's members are not re-exported with it
+ *
+ * `CypressConfigurationFacts` holds a `ConfigDiscovery` and a `ConfigValidation`, and those belong to
+ * `src/project/cypress-config`. This barrel exports the *group* — the shape a gatherer hands over — and not the two
+ * verdict types it composes, because re-exporting another layer's vocabulary would make this file a second place where
+ * that vocabulary can be declared, and the doctor would become the authority on what a location reason means. A
+ * gatherer imports them from the module that owns them, exactly as it imports `PackageDiscovery` to build the
+ * assessment it passes alongside.
+ *
+ * The difference from `PackageManagerSelection` is that the doctor *does* own that one: package-manager evidence is
+ * assembled here from primitives, whereas the configuration verdicts arrive already decided, by a pure function this
+ * layer never calls.
  *
  * ## Why `FactGroup` and `FACT_KEYS` are not
  *
@@ -46,8 +63,8 @@
  * ## Why the rule definitions are not exported
  *
  * `CHECKS` is the register, and a definition reachable a second way is a definition that can be registered twice or
- * registered in the wrong order. The runtime pair and the package-manager ladder live in `./rules/*.js`, are pulled in
- * by `./rules.js`, and surface here only as entries in the table.
+ * registered in the wrong order. The runtime pair, the package-manager ladder and the configuration pair live in
+ * `./rules/*.js`, are pulled in by `./rules.js`, and surface here only as entries in the table.
  *
  * A test that needs one definition finds it in `CHECKS` by identifier, which is also how the runner finds it — so the
  * test and the product agree about where a check comes from rather than the test having a private route.
@@ -70,6 +87,7 @@
  * invisible to the coverage report without anyone noticing. Logic belongs in a sibling module — and the siblings import
  * each other directly rather than through this file, so the barrel can never become part of an import cycle.
  */
+
 export { runChecks } from "./run.js";
 
 /**
@@ -94,6 +112,14 @@ export type {
   PackageManagerExecutableFact,
   PackageManagerInstallState,
   UnverifiedVersionReason,
+  /**
+   * The Cypress-configuration group.
+   *
+   * Both members, always: they were decided from one capture of one file, so a fact set holding one without the other
+   * could produce a validity verdict about a file it never located. The two verdict types it composes are the project
+   * layer's, and are imported from there rather than re-exported here — see the note above.
+   */
+  CypressConfigurationFacts,
   /** The configuration-file and environment groups. */
   EnvironmentFacts,
   /** The two output directories, and the values a prober reports for each. */

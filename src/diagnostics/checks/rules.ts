@@ -1,16 +1,16 @@
 /**
  * The catalogue.
  *
- * Thirteen checks, keyed by identifier so a missing entry does not compile, in the order a reader fixes things in. Every
+ * Fourteen checks, keyed by identifier so a missing entry does not compile, in the order a reader fixes things in. Every
  * field the task asks for is a field on an entry, which is what makes "every check has a documented purpose" something a
  * test can hold rather than something a reviewer has to remember.
  *
  * ## Two kinds of check, and the difference is visible in the body
  *
- * Six **forward** a conclusion a lower layer already drew: they find the finding the assessment carries and carry it
- * onward unchanged. Seven **judge** something nothing else looks at — the runtime QAT requires, the runtime a framework
- * requires, the package manager, the configuration file, the selected environment, the two output directories — and
- * author a `QAT-H` finding of their own.
+ * Five **forward** a conclusion a lower layer already drew: they find the finding the assessment carries and carry it
+ * onward unchanged. Nine **judge** something nothing else looks at — the runtime QAT requires, the runtime a framework
+ * requires, the package manager, the Cypress configuration's location and its validity, the QAT configuration file, the
+ * selected environment, the two output directories — and author a `QAT-H` finding of their own.
  *
  * The forwarding checks are deliberately thin. Their value is not the logic; it is that the question a *user* asks is
  * answered where they look for it, with the severity and the remedy the layer that noticed the condition chose.
@@ -30,13 +30,28 @@
  * engine: the installed tool's version against whatever the project declared, quoted back with its provenance. What it
  * contributes is the *ladder* — which of several conditions to report first — and nothing about what "supported" means.
  *
- * ## Why three checks are not defined in this file
+ * ## Why the configuration pair is judged rather than forwarded
+ *
+ * `cypress.configuration-located` used to forward the three detection codes — missing, ambiguous, unusable format — and
+ * could report nothing else, because those are the only configuration conditions the detection engine looks for. It
+ * probes *names* at the project root and deliberately never reads a file.
+ *
+ * The rest are file-level facts it cannot see: a directory sitting on the configuration path, a file the user may not
+ * read, an empty file, a symlink that escapes the project, a legacy format, a stale copy in the wrong place. Reporting
+ * those needs bytes, and bytes are exactly what the detection layer refuses to touch — so a doctor forwarding only the
+ * detection codes would call a project configured while its configuration was unreadable, which is the one condition its
+ * owner most needs to hear about.
+ *
+ * Both halves of the pair therefore consume one decided verdict, taken from one capture of one file. Neither re-reads the
+ * tree, and the detection codes those three conditions produced remain in the diagnosis for every other consumer.
+ *
+ * ## Why five checks are not defined in this file
  *
  * Because their comparisons have real branches, and a branch that lives inside a map literal is a branch nobody tests in
  * isolation. The runtime pair has a floor, a ceiling, gap alternatives, pre-release admission and three unreadable states;
- * the package-manager check has seven conditions that each send a reader somewhere different. All three live in
- * `./rules/*.js` and are registered here, so this file keeps its single job: decide *which* questions exist, in *what*
- * order, under *which* identifier.
+ * the package-manager check has seven conditions that each send a reader somewhere different; the configuration pair has
+ * ten location reasons and six validation gaps. All five live in `./rules/*.js` and are registered here, so this file
+ * keeps its single job: decide *which* questions exist, in *what* order, under *which* identifier.
  *
  * ## Why the package manager is one check and not seven
  *
@@ -46,6 +61,12 @@
  * reasoning that makes a failed precondition skip a check rather than fail it.
  *
  * The ladder's order is the order a reader fixes things in, so it is also the order the report tells the story in.
+ *
+ * ## Why the configuration pair is two checks and not one
+ *
+ * Unlike the package manager, these are not rungs of one ladder: they are two questions with a precondition between them.
+ * A file can be located and provably unvalidatable; a file can be located and answer nothing at all, because nothing was
+ * entitled to speak. One identifier would carry two remedies and would hide which of the two answered.
  */
 
 import { ConfigurationLoad } from "../../config/loader/index.js";
@@ -77,6 +98,8 @@ import {
   type CheckVerdict,
 } from "./contracts.js";
 import { healthFinding, unwritableFinding } from "./guidance.js";
+import { cypressConfigDiscoveryCheck } from "./rules/cypress-config-discovery.js";
+import { cypressConfigValidityCheck } from "./rules/cypress-config-validity.js";
 import {
   frameworkRuntimeCheck,
   nodeRuntimeCheck,
@@ -95,13 +118,6 @@ import { packageManagerCheck } from "./rules/package-manager.js";
 const RECOGNITION_CODES: readonly DoctorDiagnosticCode[] = [
   DiagnosticCode.FrameworkNotDetected,
   DiagnosticCode.ManifestUnreadable,
-];
-
-/** The codes that answer "is there exactly one Cypress configuration QAT can read". */
-const CONFIGURATION_CODES: readonly DoctorDiagnosticCode[] = [
-  DiagnosticCode.ConfigurationMissing,
-  DiagnosticCode.ConfigurationAmbiguous,
-  DiagnosticCode.ConfigurationUnsupported,
 ];
 
 /** The code for "there is a configuration, and no spec location this tool can drive". */
@@ -208,11 +224,6 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
    * names a package manager: "install the dependencies" is advice a reader has to translate when nothing says which tool
    * installs them. Answering it first is what makes the later messages actionable.
    *
-   * Registered from `./rules/package-manager.js` because the check walks seven conditions — identification, conflicting
-   * lockfiles, an unusable declaration, an unsupported manager, a missing binary, a version that disagrees with the pin, an
-   * installation that never happened — and each of those is a branch with its own sentence. Defining that inside a map
-   * literal would make it the one check in this file nobody could test in isolation.
-   *
    * Carries no precondition on the runtime checks: a project can be un-runnable on this Node *and* still have a perfectly
    * reportable package-manager problem, and the reader may well be able to fix the second on a machine that has no
    * supported interpreter.
@@ -270,28 +281,31 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
     },
   },
 
-  [CheckId.CypressConfigurationLocated]: {
-    category: CheckCategory.CypressConfiguration,
-    title: "Cypress configuration located",
-    purpose:
-      "A configuration file is what makes a directory a Cypress project, and its absence, ambiguity or unusable format is the first thing its owner can fix.",
-    procedure:
-      "Carries forward the finding for a missing, ambiguous or unusable configuration, if the diagnosis holds one.",
-    requires: [FactGroup.Assessment],
-    precondition: CheckId.ProjectRecognised,
-    severity: CheckSeverity.Error,
-    scenarios: [
-      "cypress.configuration-located.located",
-      "cypress.configuration-located.missing",
-      "cypress.configuration-located.ambiguous",
-      "cypress.configuration-located.unusable-format",
-    ],
-    evaluate: (facts) => {
-      const finding = firstOf(facts, CONFIGURATION_CODES);
+  /**
+   * Registered from the rule module because the question outgrew forwarding.
+   *
+   * It used to carry the three detection codes onward and nothing else, which was correct while the only conditions
+   * anyone looked for were ones a name probe can find. The conditions its owner actually hits include a directory on the
+   * path, a file they may not read, an empty file and a symlink out of the project — all of which need bytes, and bytes are
+   * what the detection layer refuses to read. Ten reasons with ten remedies is a branch, so it lives in
+   * `./rules/cypress-config-discovery.js` and is registered here.
+   *
+   * The precondition stays: a project that is not recognisable has no configuration to discuss, and saying so twice would
+   * report one condition as two problems.
+   */
+  [CheckId.CypressConfigurationLocated]: withoutId(cypressConfigDiscoveryCheck),
 
-      return finding === undefined ? PASS : verdictFrom(finding);
-    },
-  },
+  /**
+   * The second half of the pair, immediately after the first so declaration order satisfies its precondition.
+   *
+   * A separate question, not a rung of the same ladder: a located file can be provably invalid, and it can also answer
+   * nothing at all because no mechanism was entitled to speak. Registered from its rule module because the verdict has
+   * four outcomes, one of them a correct refusal to have an opinion, and because the guidance for its six gaps branches on
+   * the cause.
+   */
+  [CheckId.CypressConfigurationValidatable]: withoutId(
+    cypressConfigValidityCheck,
+  ),
 
   [CheckId.CypressLayoutDriveable]: {
     category: CheckCategory.CypressConfiguration,
