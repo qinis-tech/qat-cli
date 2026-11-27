@@ -47,32 +47,27 @@ import { ExitCode } from "~/core/errors/index.js";
  * target, no secret source. Naming the environment is enough for an operator, and a report that dumped a profile would
  * put the contents of a committed file into a log line by default.
  *
- * ## The runtime question, and why there is no unsupported-runtime case here
+ * ## Which layer's codes appear here
  *
- * `doctor` reports the runtime checks alongside everything else, and a **passing check contributes no finding** — so on a
- * supported interpreter this file's assertions are unchanged and the runtime work is invisible from the outside. That is
- * the correct observable behaviour, and it is load-bearing: a check that warned on a supported runtime would make every
- * clean project's report noisy in every pipeline. The cases near the end of this file are what would catch it.
+ * `QAT-D` and `QAT-V`, from the assessment's gate. **Not** `QAT-H`, from the check layer: the two Cypress-configuration
+ * checks are registered, covered and correct, and this command does not render their outcomes yet — it renders the gate.
+ * Two vocabularies therefore exist for the same conditions, which is the duplication the diagnostics architecture warns
+ * about, and the honest status is "wired into the catalogue and the runner, not into this command's output".
  *
- * There is deliberately no case that *forces* an unsupported runtime. That needs a second interpreter, and adding an
- * override to arrange it would create exactly the bypass the policy exists to prevent — an environment variable that lets
- * CI fake compatibility. The unsupported paths are covered where they can be driven honestly: `run.test.ts` for the
- * report, and the compatibility suites for the comparison itself.
+ * The consequence for these cases is concrete: asserting a `QAT-H` code here would fail, and would keep failing until the
+ * presenter is switched to `DoctorReport`. When that happens every code in "a blocking condition" changes at once, which
+ * is the signal that it is one decision made in the CLI rather than a per-message edit.
  *
- * ## The tooling question, and the same rule
+ * ## The runtime and tooling questions, and why neither has a "broken" case here
  *
- * The package-manager check follows the runtime one exactly: mandatory, advisory, and silent when it passes. So a project
- * that declares its manager contributes no finding, and the clean-report assertions below are unchanged.
+ * A **passing check contributes no finding**, so on a supported interpreter, with a declared package manager, this file's
+ * assertions are unchanged and both bodies of work are invisible from the outside. That is the correct observable
+ * behaviour, and it is load-bearing: a check that warned on a runtime or a toolchain that is fine would make every clean
+ * project's report noisy in every pipeline.
  *
- * Two consequences of that wiring, both of which land here rather than in the checks:
- *
- *   • The fixtures must declare a manager — a lockfile or a `packageManager` field. A fixture with neither is a project
- *     QAT cannot identify the tooling of, and the check would correctly warn, turning `ready` into
- *     `ready-with-warnings`. That would be a *fixture* defect reported by a *product* assertion, which is exactly the
- *     sort of failure this paragraph exists to make diagnosable in one reading.
- *   • There is no case forcing a conflicting pair of lockfiles. `doctor` would report it honestly as `QAT-H012` with a
- *     zero exit, and the second half of that — that an advisory condition does not change the status — is what
- *     `run.test.ts` asserts against literal facts, where the arrangement costs one object rather than two files.
+ * There is deliberately no case that *forces* an unsupported runtime, and none that forces conflicting lockfiles. Both
+ * need arrangements — a second interpreter, two lockfiles — and the unsupported paths are covered where they can be
+ * driven honestly: `run.test.ts` for the report, and the compatibility suites for the comparisons themselves.
  *
  * ## Two imports, and the split is the modules'
  *
@@ -133,8 +128,8 @@ interface DoctorFinding {
  * because a `toContain("demo")` would pass whatever column the name happened to land in.
  *
  * The trailing space is implied by the column arithmetic rather than matched literally: a label that is a prefix of
- * another — `config` and, one day, something longer — cannot collide, because the slice starts past the padded column
- * rather than immediately after the label's last character.
+ * another cannot collide, because the slice starts past the padded column rather than immediately after the label's last
+ * character.
  *
  * `find` returns the *first* matching line, which matters now that `config` appears twice: once in the summary for the
  * framework's configuration file, and once in the output block for the anchored path of one. The summary always comes
@@ -175,8 +170,8 @@ describe("doctor", () => {
 
       expect(result.exitCode).toBe(ExitCode.Success);
 
-      // Nine labelled lines in the summary, read by label rather than by substring. The spec directory and the package
-      // manager are deliberately not among them: they are facts about a project's shape, and the assessment carries the
+      // Labelled lines in the summary, read by label rather than by substring. The spec directory and the package manager
+      // are deliberately not among them: they are facts about a project's shape, and the assessment carries the
       // correctness facts this command now reports.
       expect(valueOfLabel(result.stdout, "project")).toBe("demo");
       expect(valueOfLabel(result.stdout, "root")).toBe(root);
@@ -190,6 +185,9 @@ describe("doctor", () => {
       expect(valueOfLabel(result.stdout, "config")).toBe("cypress.config.ts");
       expect(valueOfLabel(result.stdout, "detection")).toBe("detected");
       expect(valueOfLabel(result.stdout, "compatibility")).toBe("consistent");
+
+      // `ready`, not `ready-with-warnings`. A supported runtime, a declared manager and a located configuration are all
+      // satisfied conditions, and a satisfied condition prints nothing.
       expect(valueOfLabel(result.stdout, "result")).toBe("ready");
     });
 
@@ -228,6 +226,42 @@ describe("doctor", () => {
       const result = await qat(["doctor", root]);
 
       // A successful command that also logs to stderr makes a pipeline's error output noise.
+      expect(result.stderr).toBe("");
+    });
+  });
+
+  describe("the configuration it found", () => {
+    it("says nothing about a configuration that is where Cypress expects it", async () => {
+      const root = await temporaryProject();
+
+      const result = await qat(["doctor", root]);
+
+      // The load-bearing absence, stated over both vocabularies. A located, readable module configuration is a satisfied
+      // condition and produces no finding, so this report has no findings block at all.
+      //
+      // Asserting only that `QAT-H029` is absent would pass trivially — no `QAT-H` code can appear here today — so the
+      // `QAT-D` half is the assertion with teeth, and it is what catches a configuration check that starts warning on
+      // every TypeScript project.
+      expect(valueOfLabel(result.stdout, "result")).toBe("ready");
+      expect(result.stdout).not.toContain("QAT-D");
+      expect(result.stdout).not.toContain("QAT-H");
+    });
+
+    it("reports a Cypress project with no configuration file", async () => {
+      const root = await temporaryProject({ configured: false });
+
+      const result = await qat(["doctor", root]);
+
+      // Declared but unconfigured: the project is identifiable as Cypress and cannot start. One condition, one status.
+      expect(result.exitCode).toBe(ExitCode.InvalidInput);
+      expect(valueOfLabel(result.stdout, "result")).toBe("blocked");
+
+      // `QAT-D002`, from the assessment. The remedy offers both common extensions rather than naming only `.ts`, which
+      // would send a JavaScript project looking for a toolchain it does not need.
+      expect(result.stdout).toContain("QAT-D002 error");
+      expect(result.stdout).toContain(
+        "Create cypress.config.ts (or cypress.config.js) for Cypress",
+      );
       expect(result.stderr).toBe("");
     });
   });
@@ -361,6 +395,15 @@ describe("doctor", () => {
       // The status still says the command failed, because a caller checking `$?` is entitled to know.
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
       expect(valueOfLabel(result.stdout, "result")).toBe("blocked");
+
+      // The placement facts doing their job: the explanation says the file exists and is one directory away, rather than
+      // telling the reader to create one that is already there.
+      expect(result.stdout).toContain("QAT-D002 error");
+      expect(result.stdout).toContain("but not where Cypress looks");
+      expect(result.stdout).toContain("Move cypress/cypress.config.ts");
+
+      // Two conditions, both true, and neither redundant: one says the project has no configuration it can load, the
+      // other says where the configuration it does have is sitting.
       expect(result.stdout).toContain("QAT-V001 error");
       // Detail lines hang two spaces beneath their code, so the codes stay one scannable column.
       expect(result.stdout).toContain("at:  cypress/cypress.config.ts");
@@ -396,10 +439,14 @@ describe("doctor", () => {
 
       // A Cypress project QAT cannot drive. The remedy is an upgrade, and telling its owner they are in the wrong
       // directory would send them looking for something that is already there.
+      //
+      // `QAT-D004`, not a `QAT-H` code: this command prints the assessment's findings, and a legacy configuration is one
+      // the assessment already names. The configuration check that could describe it better — it knows the file is
+      // readable JSON in a deprecated format — is not on this output path yet.
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
       expect(result.stdout).toContain("QAT-D004 error");
       expect(result.stdout).toContain("cypress.json");
-      expect(result.stdout).toContain("fix: Upgrade to cypress.config.ts");
+      expect(result.stdout).toContain("Upgrade to cypress.config.ts");
     });
   });
 
@@ -522,16 +569,16 @@ describe("doctor", () => {
     });
   });
 
-  describe("the runtime it is running on", () => {
+  describe("the runtime and toolchain it did not have to complain about", () => {
     it("adds nothing to a clean report on a supported interpreter", async () => {
       const root = await temporaryProject();
 
       const result = await qat(["doctor", root]);
 
-      // A passing check produces no finding, so a healthy project's report is exactly what it was before the runtime work
-      // existed. The absence assertions below are the load-bearing ones: if the runtime check ever warned on a runtime
-      // this build supports, every clean project in every pipeline would start reporting noise, and this is the only case
-      // in the suite that would notice.
+      // A passing check produces no finding, so a healthy project's report is exactly what it was before this work
+      // existed. The absence assertions below are the load-bearing ones: if any check ever warned on a runtime or a
+      // toolchain that is fine, every clean project in every pipeline would start reporting noise, and this is the only
+      // case in the suite that would notice.
       expect(result.exitCode).toBe(ExitCode.Success);
       expect(valueOfLabel(result.stdout, "result")).toBe("ready");
       expect(result.stdout).not.toContain("QAT-H001");
@@ -546,9 +593,9 @@ describe("doctor", () => {
 
       const document = parseDocument(result.stdout);
 
-      // The gate the document exposes is the assessment's. A runtime finding would have to reach that gate to change an
-      // exit status, and on a supported interpreter there is none to reach it — so a consumer sees the same document it saw
-      // before the check existed.
+      // The gate the document exposes is the assessment's. A check finding would have to reach that gate to change an
+      // exit status, and on a healthy project there is none to reach it — so a consumer sees the same document it saw
+      // before any of these checks existed.
       expect(document.assessment?.gates?.execute?.blocking).toStrictEqual([]);
       expect(JSON.stringify(document)).not.toContain("QAT-H");
     });
@@ -562,8 +609,8 @@ describe("doctor", () => {
       const result = await qat(["doctor", root]);
 
       // One condition, one status. Adding a second possible blocker must not change what a caller sees for the first, and
-      // the code stays `InvalidInput` rather than becoming something runtime-specific — the exit-code contract is
-      // `core/errors`'s to own, and the runtime work adds no entry to it.
+      // the code stays `InvalidInput` rather than becoming something check-specific — the exit-code contract is
+      // `core/errors`'s to own, and none of this work adds an entry to it.
       expect(result.exitCode).toBe(ExitCode.InvalidInput);
       expect(result.stdout).not.toContain("QAT-H001");
     });

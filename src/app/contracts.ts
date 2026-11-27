@@ -20,6 +20,7 @@ import type { DestinationStream } from "pino";
 import type {
   ExecutionRepository,
   ExecutableLocator,
+  FileInspector,
   RuntimeProbe,
 } from "../core/application/ports.js";
 // The widened name. The runtime-era alias still exists in `core/compatibility` so that call sites in flight keep
@@ -95,4 +96,13 @@ export interface ApplicationOptions {
    * whoever assembled it cannot make a support claim at all.
    */
   readonly nodeRequirement?: VersionRequirement;
+
+  /**
+   * Overrides what is on disk.
+   *
+   * The snapshot matrix — unreadable, oversize, a link escaping the project, a directory occupying a configuration path —
+   * is a set of *states*, and a test should supply them as values rather than mangle a directory tree and hope it can
+   * put it back. Same reasoning as `executables`: a real filesystem makes the suite a test of the machine.
+   */
+  readonly files?: FileInspector;
 }

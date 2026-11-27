@@ -7,5 +7,6 @@
 export * from "./atomic-write.js";
 export * from "./errors.js";
 export * from "./file-system.js";
+export * from "./file-inspector.js";
 export * from "./json.js";
 export * from "./paths.js";

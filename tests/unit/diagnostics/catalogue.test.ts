@@ -191,7 +191,9 @@ describe("preconditions", () => {
 describe("severity, mandatory-ness and blocking are three separate facts", () => {
   it("marks a check mandatory exactly when it has no precondition", () => {
     // Derived rather than stored, so there is no second list to drift. This pins the derivation against the policy the
-    // architecture note states, and it is the assertion that fails when a precondition is added or removed carelessly.
+    // architecture note states, and it is the assertion that fails when a precondition is added or removed carelessly —
+    // which is exactly what happened when the configuration location check moved out of the catalogue and briefly lost the
+    // precondition it had carried.
     //
     // The advisory runtime check is in this list, and that is the point of it: "always asked" and "can stop a run" are
     // different questions, and the framework's runtime bound is always worth asking about even though the answer never
@@ -270,9 +272,9 @@ describe("the guidance table", () => {
       // the state a caller reaches by passing a fact set gathered for a different check — and that no template hole printed
       // the word `undefined` into a sentence a user will read.
       //
-      // The package-manager entries are the ones most likely to fail here: each reads several optional facts, so every one of
-      // them has a degraded branch that must still compose a sentence. A single missing `??` in any of them surfaces as
-      // `undefined` in the explanation, and this is the case that catches it.
+      // The package-manager and Cypress-configuration entries are the ones most likely to fail here: each reads several
+      // optional facts, so every one of them has a degraded branch that must still compose a sentence. A single missing
+      // `?.` or `??` in any of them surfaces as `undefined` in the explanation, and this is the case that catches it.
       expect(text.explanation.length).toBeGreaterThan(0);
       expect(text.explanation).not.toContain("undefined");
       expect(text.remediation).toBeDefined();
@@ -361,6 +363,62 @@ describe("the guidance table", () => {
     expect(text.explanation).toContain("9.0.9");
     expect(text.explanation).toContain(">=9.1.0 <10.0.0");
     expect(text.explanation).toContain("package.json#engines.pnpm");
+  });
+
+  it("describes a located configuration without inventing one it was not told about", () => {
+    // The configuration entries read their own verdict out of the facts rather than from a directory, so every one of them
+    // has a degraded branch. This drives the pair that differ most: a located file whose validity nothing established, and
+    // a project with no configuration at all — the two states a reader is most likely to hit.
+    const unvalidated = HEALTH_GUIDANCE[
+      HealthCode.CypressConfigurationUnverified
+    ].describe({
+      cypressConfiguration: {
+        location: {
+          reason: "CYPRESS_CONFIG_FOUND",
+          outcome: "pass",
+          file: "cypress.config.ts",
+          format: "executable",
+          sizeBytes: 512,
+        },
+        validation: {
+          reason: "CYPRESS_CONFIG_NOT_VALIDATED",
+          outcome: "indeterminate",
+          file: "cypress.config.ts",
+          tier: "T0-text",
+          cause: "deep-validation-disabled",
+        },
+      },
+    });
+
+    expect(unvalidated.explanation).toContain("cypress.config.ts");
+    // The sentence must say the file was *not* validated. A message that read as reassurance about a file nothing loaded
+    // would be worse than the absence of a check.
+    expect(unvalidated.explanation).toContain("not validated");
+    expect(unvalidated.explanation).not.toContain("undefined");
+    expect(unvalidated.path).toBe("cypress.config.ts");
+
+    const missing = HEALTH_GUIDANCE[
+      HealthCode.CypressConfigurationMissing
+    ].describe({
+      cypressConfiguration: {
+        location: {
+          reason: "CYPRESS_CONFIG_MISSING",
+          outcome: "fail",
+          context: "cypress-evidenced",
+        },
+        validation: {
+          reason: "CYPRESS_CONFIG_SKIPPED",
+          outcome: "skipped",
+          prerequisite: "CFG-003",
+          detail: "Nothing was located to validate.",
+        },
+      },
+    });
+
+    // The clause that distinguishes "Cypress is here but unconfigured" from "nothing here is Cypress" — the whole reason
+    // the location verdict carries a context.
+    expect(missing.explanation).toContain("references Cypress");
+    expect(missing.remediation).toContain("cypress open");
   });
 });
 

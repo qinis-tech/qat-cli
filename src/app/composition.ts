@@ -17,12 +17,16 @@
  *
  * ## What is deliberately not constructed
  *
- * The filesystem and process helpers are modules of functions with no state. Wrapping them in objects so that something
- * can be "constructed" would add a layer that exists only to be injected, and every caller would then need the wrapper
- * instead of the function. They are imported where they are used.
+ * The process helpers are modules of functions with no state. Wrapping them in objects so that something can be
+ * "constructed" would add a layer that exists only to be injected, and every caller would then need the wrapper instead
+ * of the function. They are imported where they are used — including by the gatherer that runs a bounded loader probe,
+ * which builds that probe itself from the stateless process utility rather than receiving a wired one from here.
  *
- * What *is* adapted here is only what the port's shape requires. The port has eight members; six need an adaptation and
- * two need none, and those six fall into four kinds:
+ * The same is true of the filesystem helpers a *workflow* uses: detection, the path resolver and the configuration
+ * inspector all call stateless functions directly, and none of them needs an assembly decision.
+ *
+ * What *is* adapted here is only what a port's shape requires. The port has nine members; six need an adaptation and
+ * three need none, and those six fall into four kinds:
  *
  * | Port member | Implementation | Adaptation |
  * | --- | --- | --- |
@@ -34,16 +38,18 @@
  * | `initialisation.initialise(root)` | `createInitialisationService({ assess: assessProject, readConfiguration, createFile })` | Composed — three existing operations, assigned directly |
  * | `runtime.readNodeVersion()` | `createProcessRuntime()` | **None** — assigned directly, because the factory *is* the implementation |
  * | `executables.locateExecutable(command)` | `createPathLocator()` | **None** — assigned directly, now that the factory's method carries the port's name |
+ * | `files.inspect` / `resolveRealPath` / `readPrefix` | `createFileInspector()` | **None** — assigned directly, for the same reason: three methods named exactly as the port names them |
  *
  * Every adapted member does one of those, and some do a pair; that is the rule worth keeping: **narrow a test seam,
  * reshape an argument, translate a vocabulary, or compose a workflow — and know which of them you are doing.** A member
  * that needed none of them is assigned directly rather than wrapped for symmetry, because an adapter with no translation
  * in it is a second name for the same thing.
  *
- * Two members are the worked examples, and the second one arrived by deleting code rather than adding it. The runtime
+ * Three members are the worked examples, and the second one arrived by deleting code rather than adding it. The runtime
  * probe is constructed and returned; the path locator was *wrapped* while its method was called `locate`, and the wrapper
  * existed solely to bridge that word to `locateExecutable`. Renaming the method removed the adapter, the option, and the
- * local that fed it — three things that existed to say one thing twice.
+ * local that fed it — three things that existed to say one thing twice. The file inspector never had an adapter at all,
+ * because its factory was written against the port in the first place.
  *
  * The narrowing is deliberate rather than incidental. A command should not be able to tune the parent search depth: the
  * engine's default is right for every real invocation, and putting it on a port turns a constant into a decision each
@@ -61,8 +67,8 @@
  *
  * The catalogue is static data — a keyed table of definitions, each a pure function of the evidence it declared a need for
  * — so there is nothing for a factory to build and nothing to inject. What assembly supplies is the *evidence*, not the
- * questions: the running interpreter, the range this build declares and the tool locator are exposed for whichever
- * workflow gathers facts, and the checks then read exactly the groups they asked for.
+ * questions: the running interpreter, the range this build declares, the tool locator and the file inspector are exposed
+ * for whichever workflow gathers facts, and the checks then read exactly the groups they asked for.
  *
  * The obvious design is the wrong one, which is why it is worth naming. Injecting a requirement into a check would make
  * every definition a closure over policy, and then the same catalogue entry would behave differently depending on who
@@ -116,12 +122,33 @@
  *   it. Assembly names the factory and nothing about how a file is inspected, which is the same reason it does not name
  *   how a directory listing is read.
  *
+ * ## Where filesystem evidence comes from
+ *
+ * The configuration checks need file-level facts that no other layer gathers: is the path a regular file, where does a
+ * symlink lead, what do the first bytes say. All of it is I/O, so none of it can live in a check, and it arrives through
+ * one port with three methods.
+ *
+ * The implementation is **core's**, not the project layer's, and that is the point of naming it here. A project-layer
+ * factory would be a second implementation of a machine concern — the exact shape this file exists to prevent — and the
+ * snapshot code that first needed it would then own a copy of `stat`, `realpath` and a bounded read. Core owns the
+ * factory; the project layer owns only the interpretation of what comes back, which is where its vocabulary actually is.
+ *
+ * The port is **read-only by construction**: no write member exists, so a diagnostic built on it cannot modify the project
+ * it is diagnosing, whatever a future contributor intends. That matters more here than anywhere else in this file,
+ * because the one writer in the system — `initialisation` — is deliberately a separate port with a separate purpose, and
+ * a single object offering both would make "which of these can change my repository" a question a reader has to answer
+ * from memory.
+ *
+ * The seam exists for the same reason `runtime` and `executables` do: a test of the snapshot matrix — unreadable, oversize,
+ * a link escaping the project, a directory on the path — must supply those states as values rather than construct the
+ * filesystem it is testing. One seam, on the port.
+ *
  * ## One seam per port, never one per object
  *
- * `executables` is the only test seam for tooling. An option for the locator as well would let a caller swap the locator
- * *without* swapping the port, which is a configuration with no meaning: the port is what the workflow asks, and the
- * locator is the implementation it happens to have. Every extra seam is a question a reviewer has to answer about
- * combinations that will never occur.
+ * `executables` is the only test seam for tooling, and `files` the only one for inspection. An option for the
+ * implementation as well would let a caller swap the factory *without* swapping the port, which is a configuration with no
+ * meaning: the port is what the workflow asks, and the implementation is what it happens to have. Every extra seam is a
+ * question a reviewer has to answer about combinations that will never occur.
  */
 
 import { join } from "node:path";
@@ -142,6 +169,7 @@ import type {
 import type {
   Application,
   ExecutableLocator,
+  FileInspector,
   ProjectDiscovery,
   RuntimeProbe,
 } from "../core/application/ports.js";
@@ -159,9 +187,11 @@ import {
   type EnvironmentSource,
 } from "../core/environment/index.js";
 import { ErrorCode, InvalidArgumentError } from "../core/errors/index.js";
-// Only what core actually exports: `writeNewFile`. An `isExecutableFile` helper does not exist there and should not —
-// that rule belongs to the locator, which supplies it as a default beside the tests that prove it.
-import { writeNewFile } from "../core/filesystem/index.js";
+// Only what core actually exports: `writeNewFile` and `createFileInspector`. An `isExecutableFile` helper does not exist
+// there and should not — that rule belongs to the locator, which supplies it as a default beside the tests that prove it.
+// `createFileInspector` is here for the opposite reason: it *is* a machine concern, and the alternative is a duplicate of
+// it living in the project layer.
+import { createFileInspector, writeNewFile } from "../core/filesystem/index.js";
 import {
   createLogger,
   isLogLevel,
@@ -195,7 +225,7 @@ import type { ApplicationOptions } from "./contracts.js";
  * and the only caller is the entry point — one line to change, which is cheaper than a signature claiming to wait when it
  * does not.
  *
- * @throws {InvalidArgumentError} when the log level is not one of the known levels.
+ * _@throws_ {InvalidArgumentError} when the log level is not one of the known levels.
  */
 export function createApplication(
   options: ApplicationOptions = {},
@@ -263,6 +293,22 @@ export function createApplication(
    */
   const executables: ExecutableLocator =
     options.executables ?? createPathLocator();
+
+  /**
+   * What is on disk, behind its port.
+   *
+   * Assigned directly, like the two above: `createFileInspector()` returns an object whose three methods are already named
+   * `inspect`, `resolveRealPath` and `readPrefix`, so an adapter here would be a second name for the same thing.
+   *
+   * Read-only by construction, and the factory is core's rather than the project layer's — see the note at the top of this
+   * file. Constructing it once matters for the same reason it matters for the locator: the factory closes over its own
+   * filesystem probe, and a per-call construction would make two inspections within one run answer differently.
+   *
+   * Overridable so the snapshot matrix can be driven from values rather than from a temporarily mangled directory tree:
+   * unreadable, oversize, a symlink escaping the project, a directory occupying a configuration path. Testing those against
+   * a real filesystem would test the machine the suite happens to run on.
+   */
+  const files: FileInspector = options.files ?? createFileInspector();
 
   const configuration: ConfigurationResolver = {
     resolve: (projectRoot, loaded) => {
@@ -392,13 +438,15 @@ export function createApplication(
     configuration,
     initialisation,
 
-    // All three pieces of compatibility evidence, exposed rather than combined here: the probe answers "what is running",
-    // the requirement answers "what is required", and the locator answers "where is the tool". Whoever gathers facts pairs
-    // them into the shapes a check reads, because that pairing is a gathering decision — this file supplies the inputs and
-    // takes no view on how a particular check shapes them.
+    // All four pieces of compatibility and inspection evidence, exposed rather than combined here: the probe answers "what
+    // is running", the requirement answers "what is required", the locator answers "where is the tool", and the inspector
+    // answers "what is actually on disk". Whoever gathers facts pairs them into the shapes a check reads, because that
+    // pairing is a gathering decision — this file supplies the inputs and takes no view on how a particular check shapes
+    // them.
     runtime,
     nodeRequirement,
     executables,
+    files,
 
     async dispose(): Promise<void> {
       if (disposed) return;

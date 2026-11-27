@@ -42,6 +42,21 @@
  * neighbouring message. The order of work is therefore: add the member, then the union complains, then this table
  * complains — never the other way round.
  *
+ * ## Why the Cypress-configuration entries are split, and split twice
+ *
+ * Ten entries describe one file, for the same reason: "there is no configuration", "there are two", "it is in a format
+ * Cypress does not load", "it is in a place Cypress does not look", "the path is not a file", "it leads outside the
+ * project", "it cannot be read", "it is empty", "it is the pre-v10 format" and "it was located but never inspected" are
+ * ten sentences with ten different fixes.
+ *
+ * The other two answer a different question — could anything establish that the file is *valid* — and they are split on
+ * *evidence* rather than on cause: a mechanism spoke and said no, or no mechanism was entitled to speak. The second
+ * covers six causes under one code for the reason `RuntimeUnknown` covers three: the remedy is one thing, and a code per
+ * cause would put QAT's own default behaviour in the same list as the project's defects.
+ *
+ * None of them quotes the file. A loader's message can carry a code frame, and a code frame is file content; the
+ * finding prints the kind of failure and its line, and points at the command that will print the rest.
+ *
  * ## Guarding evidence: extract the value, then test the parent
  *
  * Several entries below lift a value through an optional chain and then test both the value and the object it came
@@ -413,7 +428,7 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
 
       // The leading space belongs inside the value: the clause is spliced directly after the filename list, and a
       // missing space there produces "pnpm-lock.yaml, package-lock.json(npm, pnpm)".
-      const namedBy = managers.length === 0 ? "" : ` (${listOf(managers)})`;
+      const namedBy = managers.length === 0 ? "" : `(${listOf(managers)})`;
 
       return {
         explanation: `The project contains lockfiles for more than one package manager: ${listOf(lockfiles)}${namedBy}. QAT cannot tell which one your CI installs from.`,
@@ -588,9 +603,9 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
     severity: DiagnosticSeverity.Error,
     describe: () => ({
       // Deliberately does not name a directory. One code covers both output paths, and the check that raised it knows
-      // which one it was about — so the path is supplied by the caller (`unwritableFinding`) rather than guessed here from
-      // a facts object that holds both. A message that said "the reports directory" while the evidence directory was the
-      // problem would be worse than saying nothing.
+      // which one it was about — so the path is supplied by the caller (`unwritableFinding`) rather than guessed here
+      // from a facts object that holds both. A message that said "the reports directory" while the evidence directory
+      // was the problem would be worse than saying nothing.
       explanation: "The configured output directory cannot be written to.",
       remediation:
         "Choose a writable output directory, or correct the permissions on it.",
@@ -697,6 +712,420 @@ export const HEALTH_GUIDANCE: Readonly<Record<HealthCode, Guidance>> = {
           declared.length === 0
             ? "Declare the environment in the configuration, or remove the selection."
             : `Declare it, or choose one of: ${declared.join(", ")}.`,
+      };
+    },
+  },
+
+  // ───────────────────────────────────────────────────────────────────────────
+  // Cypress configuration
+  //
+  // Twelve entries for one file: ten about locating it and two about validating it. Every one names what was found and
+  // what to do, and none of them quotes the file — a line of a Cypress configuration can hold an environment value, and
+  // a loader's message can carry a code frame of one. Kind, line and path are printed; content never is.
+  //
+  // The remedy for each is the reason they are separate codes: "create one", "delete the others", "rename it", "move
+  // it", "put a file there", "keep it inside the project", "make it readable", "write something in it" and "migrate it"
+  // are nine different actions, and one message covering all of them would name none.
+  // ───────────────────────────────────────────────────────────────────────────
+
+  /**
+   * Nothing configures the project.
+   *
+   * One code for two openings because the remedy is the same sentence with a different first clause — create a
+   * configuration — and the context decides which opening is honest. Derived from evidence rather than re-read: this
+   * entry must not open a directory to decide what to say.
+   */
+  [HealthCode.CypressConfigurationMissing]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+      const context =
+        location?.reason === "CYPRESS_CONFIG_MISSING"
+          ? location.context
+          : undefined;
+
+      return context === "cypress-evidenced"
+        ? {
+            explanation:
+              "This project references Cypress but has no configuration file, so Cypress cannot start.",
+            remediation: `Generate the configuration with ${inlineCode("npx cypress open")}, commit it, then re-run ${inlineCode("qat doctor")}.`,
+          }
+        : {
+            explanation:
+              "No Cypress configuration was found, and nothing else in the project identifies it as a Cypress project.",
+            remediation: `If this repository should run Cypress, generate the configuration with ${inlineCode("npx cypress open")} and commit it.`,
+          };
+    },
+  },
+
+  /**
+   * Two configuration files.
+   *
+   * Both are named and the choice is left to the reader, because naming one would be a guess — and a guess here decides
+   * which file the next install rewrites. Cypress itself refuses to start in this state, so the message reports a fact
+   * rather than expressing a preference.
+   */
+  [HealthCode.CypressConfigurationAmbiguous]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+      const files =
+        location?.reason === "CYPRESS_CONFIG_AMBIGUOUS"
+          ? location.files
+          : undefined;
+
+      return files === undefined
+        ? {
+            explanation:
+              "More than one Cypress configuration file is present, and Cypress will not start with more than one.",
+            remediation:
+              "Keep the file your project uses and delete the others, then commit.",
+          }
+        : {
+            explanation: `Cypress refuses to start when more than one configuration file is present. Found: ${listOf(files)}.`,
+            remediation: `Keep the file your project actually uses and delete the others (${listOf(files)}), then commit. Do not run an install first — it may rewrite the file you meant to keep.`,
+          };
+    },
+  },
+
+  /**
+   * A configuration-looking file Cypress does not load.
+   *
+   * Distinct from missing on purpose: something here is plainly intended as configuration, so telling the reader nothing
+   * was found sends them looking for a file they already have.
+   */
+  [HealthCode.CypressConfigurationUnsupportedFormat]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+      const files =
+        location?.reason === "CYPRESS_CONFIG_UNSUPPORTED_NAME"
+          ? location.files
+          : undefined;
+
+      return {
+        explanation:
+          files === undefined
+            ? "A Cypress-looking configuration exists in a form Cypress does not load."
+            : `A Cypress-looking configuration exists in a form Cypress does not load: ${listOf(files)}.`,
+        remediation: `Rename it to ${inlineCode("cypress.config.ts")} (or ${inlineCode(".js")}, ${inlineCode(".mjs")}, ${inlineCode(".cjs")}) at the project root. Cypress only reads a supported configuration filename in that location.`,
+      };
+    },
+  },
+
+  /**
+   * Configured, but not where Cypress looks.
+   *
+   * Advisory when it accompanies a working configuration — which is how it reaches here — because the project runs and
+   * the stale copy is worth mentioning rather than blocking. The fix is to move a file, not to write one.
+   */
+  [HealthCode.CypressConfigurationMisplaced]: {
+    severity: DiagnosticSeverity.Warning,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+      const files =
+        location?.reason === "CYPRESS_CONFIG_MISPLACED"
+          ? location.files
+          : undefined;
+
+      return {
+        explanation:
+          files === undefined
+            ? "A Cypress configuration exists somewhere Cypress never reads."
+            : `A Cypress configuration exists somewhere Cypress never reads: ${listOf(files)}.`,
+        remediation: `Move it to the project root and rename it to ${inlineCode("cypress.config.ts")}. Cypress only loads a configuration from the directory it is started in.`,
+      };
+    },
+  },
+
+  /**
+   * A configuration path is not a regular file.
+   *
+   * Two reasons arrive here, and they share a code because they share a remedy: put a regular file there. The first is
+   * the case a file probe cannot see at all — a directory sitting on `cypress.config.ts` — and it is the one fact that
+   * turns an otherwise baffling "no configuration found" into something a reader can act on.
+   */
+  [HealthCode.CypressConfigurationPathNotAFile]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+      const occupied =
+        location?.reason === "CYPRESS_CONFIG_PATH_OCCUPIED"
+          ? location.paths
+          : undefined;
+      const notAFile =
+        location?.reason === "CYPRESS_CONFIG_NOT_A_FILE"
+          ? location.file
+          : undefined;
+
+      if (occupied !== undefined) {
+        return {
+          explanation: `A directory is occupying a Cypress configuration path: ${listOf(occupied)}. Cypress needs a file there, so no configuration can be found.`,
+          remediation:
+            "Remove or rename the directory, then re-run the command.",
+        };
+      }
+
+      if (notAFile !== undefined) {
+        return {
+          explanation: `${notAFile} exists but is not a regular file, so Cypress cannot load it.`,
+          remediation:
+            "Replace it with a regular file containing the configuration.",
+          path: notAFile,
+        };
+      }
+
+      return {
+        explanation:
+          "A Cypress configuration path is not a regular file, so Cypress cannot load it.",
+        remediation:
+          "Replace it with a regular file containing the configuration.",
+      };
+    },
+  },
+
+  /**
+   * The configuration is a link out of the project.
+   *
+   * The destination is printed, because it is the fact the reader needs to see where the link goes — and because a
+   * boundary they cannot see is a boundary they cannot respect. This is the one entry in the group that prints an
+   * absolute path, and it prints it for exactly that reason.
+   */
+  [HealthCode.CypressConfigurationOutsideProject]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+
+      if (location?.reason !== "CYPRESS_CONFIG_OUTSIDE_PROJECT") {
+        return {
+          explanation:
+            "The Cypress configuration resolves to a location outside the project, so it does not describe this project.",
+          remediation:
+            "Replace the link with a real file inside the project, or with a relative link that stays inside it.",
+        };
+      }
+
+      return {
+        explanation: `${location.file} is a symbolic link that resolves outside the project (${location.resolvedPath}), so its contents do not describe this project.`,
+        remediation:
+          "Replace the link with a real file inside the project, or with a relative link that stays inside it. QAT will not read configuration from outside the project root.",
+        path: location.file,
+      };
+    },
+  },
+
+  /**
+   * Present, and not readable.
+   *
+   * Its own code rather than "missing" because the file is *there* — telling the reader to create one would be actively
+   * misleading, and the fix is a permission or a lock, not a new file.
+   */
+  [HealthCode.CypressConfigurationUnreadable]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+
+      if (location?.reason !== "CYPRESS_CONFIG_UNREADABLE") {
+        return {
+          explanation: "The Cypress configuration could not be read.",
+          remediation:
+            "Make the file readable by your user and check nothing else holds it open, then re-run the command.",
+        };
+      }
+
+      return {
+        explanation: `${location.file} could not be read (${location.cause === "permissions" ? "permission denied" : "I/O error"}).`,
+        remediation: `Make the file readable by your user (for example ${inlineCode(`chmod 644 ${location.file}`)}) and check it is not locked by another process, then re-run the command.`,
+        path: location.file,
+      };
+    },
+  },
+
+  /** Present, readable, and carrying nothing. Cypress cannot load a configuration with no content. */
+  [HealthCode.CypressConfigurationEmpty]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+      const file =
+        location?.reason === "CYPRESS_CONFIG_EMPTY" ? location.file : undefined;
+
+      return {
+        explanation:
+          file === undefined
+            ? "The Cypress configuration file is empty."
+            : `${file} is empty, so Cypress cannot load a configuration from it.`,
+        remediation: `Write the configuration into it, or delete it and regenerate one with ${inlineCode("npx cypress open")}.`,
+        ...(file === undefined ? {} : { path: file }),
+      };
+    },
+  },
+
+  /**
+   * Readable, and in the pre-v10 format.
+   *
+   * Advisory, because it works today: failing a project that runs would be wrong, and silence would let a team meet this
+   * during an upgrade instead of now. The migration command is named because "migrate" alone is not an instruction.
+   */
+  [HealthCode.CypressConfigurationLegacyFormat]: {
+    severity: DiagnosticSeverity.Warning,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+      const file =
+        location?.reason === "CYPRESS_CONFIG_LEGACY_FORMAT"
+          ? location.file
+          : undefined;
+
+      return {
+        explanation:
+          file === undefined
+            ? "The Cypress configuration uses the pre-v10 format."
+            : `The Cypress configuration at ${file} uses the pre-v10 format.`,
+        remediation: `Migrate to ${inlineCode("cypress.config.ts")}: run ${inlineCode("npx cypress open")} to generate one, port the settings across, then delete the old file.`,
+        ...(file === undefined ? {} : { path: file }),
+      };
+    },
+  },
+
+  /**
+   * Located, and never inspected.
+   *
+   * A question we could not answer, so a warning: never a pass, because silence must not read as consent, and never a
+   * failure, because a question we failed to answer must not block work we can still perform.
+   */
+  [HealthCode.CypressConfigurationNotInspected]: {
+    severity: DiagnosticSeverity.Warning,
+
+    describe: (facts) => {
+      const location = facts.cypressConfiguration?.location;
+      const file =
+        location?.reason === "CYPRESS_CONFIG_NOT_INSPECTED"
+          ? location.file
+          : undefined;
+
+      return {
+        explanation:
+          file === undefined
+            ? "The Cypress configuration was reported but could not be inspected, so QAT cannot say whether it is usable."
+            : `${file} was reported as the project's configuration but could not be inspected, so QAT cannot say whether it is usable.`,
+        remediation:
+          "Run the command again. If this repeats, include the JSON output in a bug report — this is the case where QAT has no opinion and should not pretend otherwise.",
+        ...(file === undefined ? {} : { path: file }),
+      };
+    },
+  },
+
+  /**
+   * A mechanism established that the configuration is invalid.
+   *
+   * The only configuration code that can honestly block, and the only one that names its authority: a JSON parser and the
+   * project's own loader are not equally strong witnesses. Kind and line are printed; the message is not, because a
+   * loader's message can carry a code frame and a code frame is file content. The command that will print it is given
+   * instead, which puts the decision in the reader's hands.
+   */
+  [HealthCode.CypressConfigurationInvalid]: {
+    severity: DiagnosticSeverity.Error,
+
+    describe: (facts) => {
+      const validation = facts.cypressConfiguration?.validation;
+
+      if (validation?.reason !== "CYPRESS_CONFIG_INVALID") {
+        return {
+          explanation: "The Cypress configuration could not be loaded.",
+          remediation: "Correct the configuration and run the command again.",
+        };
+      }
+
+      const where =
+        validation.failure.line === undefined
+          ? ""
+          : ` at line ${String(validation.failure.line)}`;
+
+      const what =
+        validation.failure.kind === "syntax"
+          ? "is not syntactically valid"
+          : validation.failure.kind === "shape"
+            ? "does not have the expected shape"
+            : "could not be loaded by Cypress";
+
+      const authority =
+        validation.tier === "T1-json"
+          ? "the JSON parser"
+          : "the project's Cypress loader";
+
+      return {
+        explanation: `${validation.file} ${what}${where} (established by ${authority}).`,
+        remediation: `Correct the problem${where} and run the command again. To see ${authority === "the JSON parser" ? "the parser's" : "the loader's"} own message, run ${inlineCode("npx cypress config")}.`,
+        path: validation.file,
+      };
+    },
+  },
+
+  /**
+   * No mechanism was entitled to a verdict.
+   *
+   * Six causes under one code, for the reason `RuntimeUnknown` covers three: the remedy is one thing — get a mechanism,
+   * then ask again — and a code per cause would put QAT's own default behaviour in the same list as the project's
+   * defects.
+   *
+   * The cause still decides the sentence, and one of them deliberately does not sound alarming: deep validation being
+   * off is the *default*, and a healthy TypeScript project must not show green on a check that never ran nor red on one
+   * that was never asked to.
+   */
+  [HealthCode.CypressConfigurationUnverified]: {
+    severity: DiagnosticSeverity.Warning,
+
+    describe: (facts) => {
+      const validation = facts.cypressConfiguration?.validation;
+
+      if (validation?.reason !== "CYPRESS_CONFIG_NOT_VALIDATED") {
+        return {
+          explanation:
+            "The Cypress configuration was not validated, so QAT cannot say whether it is valid.",
+          remediation:
+            "Run the command again, or validate the configuration with Cypress directly.",
+        };
+      }
+
+      const file = validation.file;
+      const cause = validation.cause;
+
+      // Not a defect: the default. Saying so plainly is what stops the check from claiming a verification it never
+      // performed, without dressing the gap up as a problem.
+      if (cause === "deep-validation-disabled") {
+        return {
+          explanation: `${file} was read and is decodable text, but its syntax was not validated: deep validation is off.`,
+          remediation: `Re-run with deep validation enabled to load the configuration through Cypress, or accept that only its readability was confirmed.`,
+          path: file,
+        };
+      }
+
+      const detail =
+        cause === "probe-timeout"
+          ? "the loader did not answer in time"
+          : cause === "size-budget-exceeded"
+            ? "the file is larger than QAT will read"
+            : cause === "undecodable-text"
+              ? "the file is not valid UTF-8"
+              : cause === "deep-validation-unavailable"
+                ? "no configuration loader is available for this project"
+                : "the file's text could not be established";
+
+      return {
+        explanation: `${file} could not be validated: ${detail}. QAT is not claiming the configuration is valid.`,
+        remediation:
+          cause === "deep-validation-unavailable"
+            ? `Install the project's dependencies so its Cypress loader is available, then run the command again.`
+            : `Run the command again once the condition above is resolved. To see the loader's own message, run ${inlineCode("npx cypress config")}.`,
+        path: file,
       };
     },
   },

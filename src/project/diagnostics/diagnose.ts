@@ -108,7 +108,7 @@ export async function diagnoseProject(
  * Exported because the validation layer catches the same throw and needs the same diagnosis. Duplicating the
  * construction would give one condition two renderings, and the two would drift.
  *
- * @throws {ApplicationError} normalised, when the failure is not an unreadable manifest — a permission error or a
+ * _@throws_ {ApplicationError} normalised, when the failure is not an unreadable manifest — a permission error or a
  *   failing disk says nothing about the project, and neither layer has anything to add about it.
  */
 export function unreadableProjectDiagnosis(
@@ -175,6 +175,16 @@ function relativePathOf(
  *
  * Only for the unreadable-manifest path, where there is genuinely nothing to describe. Used rather than duplicating
  * the entry's text, so the wording still lives in one place.
+ *
+ * Every member is a zero: no workspaces, no configurations, no `cypress` directory, and no misplaced or occupying
+ * paths. That is a statement about the type rather than about the tree — detection aborted before it looked at any
+ * of it — and it is safe here for one specific reason: the only entry this object is ever handed to is
+ * `ManifestUnreadable`, which reads none of these fields.
+ *
+ * The trigger for changing that is explicit, because this is the one place in the module where "none" stands in for
+ * "unknown". If an entry ever renders on this path *and* reads a placement fact, the two placement fields should
+ * become optional in `DiagnosticFacts` and the catalogue should fall back to its general remedy when they are
+ * absent. Until then the zeros cost nothing and the required shape keeps every other producer honest.
  */
 function emptyFacts(root: string): DiagnosticFacts {
   return {
@@ -182,10 +192,20 @@ function emptyFacts(root: string): DiagnosticFacts {
     workspaces: [],
     configurations: [],
     unsupportedConfigurations: [],
+    misplacedConfigurations: [],
+    occupiedConfigurationPaths: [],
     hasCypressDirectory: false,
   };
 }
 
+/**
+ * The facts a catalogue entry may read, taken from the evidence detection gathered.
+ *
+ * The placement pair matters more than it looks: without them the catalogue cannot tell "there is no configuration"
+ * from "the configuration is one directory away" or "a directory is occupying the path", and its remedy sends the
+ * reader to create a file that either already exists elsewhere or cannot be created at all. They come straight from
+ * the layout, which already carries them — nothing here reads the tree again.
+ */
 function factsOf(detection: CypressDetection): DiagnosticFacts {
   const { packages, layout } = detection;
   const { declaration, installation } = packages;
@@ -199,6 +219,8 @@ function factsOf(detection: CypressDetection): DiagnosticFacts {
       : { installationVersion: installation.version }),
     configurations: detection.configurations,
     unsupportedConfigurations: detection.unsupportedConfigurations,
+    misplacedConfigurations: layout.misplacedConfigurations,
+    occupiedConfigurationPaths: layout.occupiedConfigurationPaths,
     hasCypressDirectory: layout.hasCypressDirectory,
   };
 }

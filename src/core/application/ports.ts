@@ -151,7 +151,7 @@ export interface ProjectDiscovery {
    * Checks existence and refuses anything that is not a directory, so an invalid input
    * never reaches `diagnose`, `assess` or `discover`.
    *
-   * @throws {ApplicationError} when the chosen directory does not exist or is not a
+   * _@throws_ {ApplicationError} when the chosen directory does not exist or is not a
    *   directory.
    */
   resolveWorkingDirectory(
@@ -166,8 +166,8 @@ export interface ProjectDiscovery {
    * an unusable format and an unreadable manifest all come back as findings, because the
    * caller asking this question is usually about to display them.
    *
-   * @param root Absolute path to the directory to inspect.
-   * @throws {ApplicationError} only when something outside the project could not be read:
+   * _@param_ root Absolute path to the directory to inspect.
+   * _@throws_ {ApplicationError} only when something outside the project could not be read:
    *   a permission failure, an I/O error.
    */
   diagnose(root: string): Promise<ProjectDiagnosis>;
@@ -186,8 +186,8 @@ export interface ProjectDiscovery {
    * caller's job, which is what keeps a gating policy and a gating message in different
    * places.
    *
-   * @param root Absolute path to the directory to inspect.
-   * @throws {ApplicationError} only when something outside the project could not be read.
+   * _@param_ root Absolute path to the directory to inspect.
+   * _@throws_ {ApplicationError} only when something outside the project could not be read.
    */
   assess(root: string): Promise<ProjectAssessment>;
 
@@ -198,8 +198,8 @@ export interface ProjectDiscovery {
    * `diagnose` to obtain the same findings without an exception, and `assess` to obtain a
    * per-operation verdict.
    *
-   * @param root Absolute path to the directory to inspect.
-   * @throws {ApplicationError} when the directory is not a project QAT can run: no project
+   * _@param_ root Absolute path to the directory to inspect.
+   * _@throws_ {ApplicationError} when the directory is not a project QAT can run: no project
    *   markers, no supported configuration, more than one configuration, a configuration in
    *   an unusable format, or no installed framework.
    */
@@ -255,7 +255,7 @@ export interface FrameworkAdapter {
    * the whole error model rests on — a failing assertion must never arrive here as a
    * rejection.
    *
-   * @throws {ApplicationError} only when the framework could not run at all.
+   * _@throws_ {ApplicationError} only when the framework could not run at all.
    */
   execute(
     request: ExecutionRequest,
@@ -275,7 +275,7 @@ export interface ExecutionService {
    * Resolves a request against the project, drives the adapter, records the result and
    * returns it.
    *
-   * @throws {ApplicationError} for any expected failure: discovery, configuration,
+   * _@throws_ {ApplicationError} for any expected failure: discovery, configuration,
    *   framework unavailability, storage.
    */
   run(
@@ -411,13 +411,13 @@ export interface ExecutionSummary {
  * a failure, because it means the store lost something a caller had just written.
  */
 export interface ExecutionRepository {
-  /** @throws {ApplicationError} when a record with this identifier already exists. */
+  /** _@throws_ {ApplicationError} when a record with this identifier already exists. */
   create(record: ExecutionRecord): Promise<void>;
 
   /**
    * Records how a run ended.
    *
-   * @throws {ApplicationError} when the record does not exist, or has already been
+   * _@throws_ {ApplicationError} when the record does not exist, or has already been
    *   completed — both indicate a second writer or a retry defect, and silently
    *   overwriting would hide it.
    */
@@ -493,7 +493,7 @@ export interface ReportArtifact {
  */
 export interface ReportGenerator {
   readonly format: ReportFormat;
-  /** @throws {ApplicationError} when the report could not be written. */
+  /** _@throws_ {ApplicationError} when the report could not be written. */
   generate(request: ReportRequest): Promise<ReportArtifact>;
 }
 
@@ -566,10 +566,21 @@ export interface RuntimeProbe {
  * the command to see the message, is exactly the kind of hidden second execution a
  * read-only diagnostic must never contain.
  *
+ * `durationMs` is reported by the runner rather than measured by the caller. Three separate
+ * health checks want to record what a bounded probe cost, and a caller that timed itself
+ * would be reading the clock outside the `Clock` port — in a layer that has been careful
+ * not to. It is also the more accurate number: the runner knows when the process actually
+ * started, not when the caller asked for it.
+ *
+ * `failed` carries no `durationMs` because no process existed to time. That asymmetry is
+ * deliberate: a uniform field would have to be invented as `0`, and a zero meaning "not
+ * measurable" is indistinguishable from a zero meaning "instant".
+ *
  * The shape mirrors what the process layer already produces, so binding one to the other is
  * a structural match rather than an adapter with a mapping table. Any tool-specific probe
- * shape elsewhere (a framework's binary check, a package-manager probe) should be deleted in
- * favour of this one, since this is the layer that owns the machine-level vocabulary.
+ * shape elsewhere (a framework's binary check, a package-manager probe, a configuration
+ * loader) should be deleted in favour of this one, since this is the layer that owns the
+ * machine-level vocabulary.
  */
 export type CommandOutcome =
   | {
@@ -579,13 +590,46 @@ export type CommandOutcome =
       readonly stdout: string;
       /** Captured error output, already truncated by the runner to the same budget. */
       readonly stderr: string;
+      /** Wall-clock cost of the invocation, including process start-up. */
+      readonly durationMs: number;
     }
   | {
       readonly status: "timed-out";
       readonly stdout: string;
       readonly stderr: string;
+      /** Time actually spent before the runner killed the process — close to `timeoutMs`. */
+      readonly durationMs: number;
     }
   | { readonly status: "failed"; readonly reason: string };
+
+/**
+ * The bounds a command runs under, and where it runs.
+ *
+ * A named type rather than an inline object, because two of these fields are a *contract* —
+ * a timeout and an output cap are required, never optional — and a contract restated at
+ * every call site and in every fake is a contract that drifts. Naming it also gives a
+ * future member one place to be added.
+ *
+ * `env` holds overrides merged over the inherited environment, not a replacement for it.
+ * Two reasons it exists at all:
+ *
+ * - a tool may legitimately read values the project depends on, so stripping the
+ *   environment would change the very answer the check is trying to observe;
+ * - colour control is a *capture* concern. `NO_COLOR` belongs to whoever reads the output,
+ *   and asking every caller to post-process escape sequences — instead of not emitting
+ *   them — is how the same sanitising code ends up in three modules.
+ *
+ * Implementations must never log it: an environment is where credentials live, and a
+ * runner that echoed its own invocation would put them into a diagnostic log.
+ */
+export interface CommandLimits {
+  readonly timeoutMs: number;
+  readonly maxOutputBytes: number;
+  /** Absolute when supplied; the process directory otherwise. */
+  readonly cwd?: string;
+  /** Overrides merged over the inherited environment. Never logged. */
+  readonly env?: Readonly<Record<string, string | undefined>>;
+}
 
 /**
  * Runs an external command, shell-free and bounded.
@@ -610,11 +654,7 @@ export interface CommandRunner {
   run(
     command: string,
     args: readonly string[],
-    options: {
-      readonly timeoutMs: number;
-      readonly maxOutputBytes: number;
-      readonly cwd?: string;
-    },
+    limits: CommandLimits,
   ): Promise<CommandOutcome>;
 }
 
@@ -643,6 +683,81 @@ export interface CommandRunner {
  */
 export interface ExecutableLocator {
   locateExecutable(command: string): Promise<string | undefined>;
+}
+
+/**
+ * Inspecting the filesystem, read-only.
+ *
+ * One question — "what is actually at this path" — plus the two follow-ups a health check
+ * genuinely needs: where a symlink really leads, and the first bytes of a file.
+ *
+ * ## Why a port, and why it is here
+ *
+ * The configuration checks must judge a file the project controls: is it there, is it a
+ * file, can it be read, what does it point at, is it text. All of that is I/O, so it cannot
+ * live in a check; and the application layer is forbidden from importing
+ * `core/filesystem` for the same reason it may not import `core/logging` — that is an
+ * implementation. Without this port the project layer grows its own three-method interface,
+ * which is precisely the duplication the `CommandOutcome` doc calls out one section above.
+ *
+ * ## Read-only by construction
+ *
+ * There is no write member, and no option that would enable one. That is not a convention
+ * to be respected but a property of the type: a diagnostic built on this port cannot modify
+ * the project it is diagnosing, whatever a future contributor intends. A workflow that must
+ * write uses a different, narrower port that names the write.
+ *
+ * ## Error contract, as it applies here
+ *
+ * - **Resolves** normally for a path that exists, whatever it is — file, directory, symlink.
+ * - **Resolves `undefined`** for a path that does not exist, or whose symlink leads nowhere.
+ *   Absence is an ordinary answer and the caller is expected to report it as one; throwing
+ *   would make "no configuration file" look like a defect in QAT.
+ * - **Rejects** with `ApplicationError` only when the path exists but cannot be inspected:
+ *   permission denied, an I/O error, a link cycle. Those are distinct from absence because
+ *   the caller's message is distinct — "not allowed to read this" is a different sentence
+ *   from "there is nothing here".
+ *
+ * `readPrefix` returns `Uint8Array` rather than `Buffer` so no runtime-specific type reaches
+ * a caller: the application layer has no business knowing which runtime supplied the bytes,
+ * and a fake can produce them from a string literal.
+ */
+export interface FileEntryInspection {
+  readonly isFile: boolean;
+  readonly isDirectory: boolean;
+  /** True for the entry itself; following it is `resolveRealPath`'s job, and a separate decision. */
+  readonly isSymbolicLink: boolean;
+  /** Size in bytes. Absent when the entry is not a regular file. */
+  readonly sizeBytes?: number;
+}
+
+export interface FileInspector {
+  /**
+   * Describes the entry at `path` without following a symlink.
+   *
+   * `lstat` semantics rather than `stat`: whether something *is* a link is a fact a caller
+   * needs before deciding whether following it is safe.
+   */
+  inspect(path: string): Promise<FileEntryInspection | undefined>;
+
+  /**
+   * The path a symlink ultimately points at, normalised and absolute.
+   *
+   * Exposed rather than folded into `inspect` because the two are separate decisions with a
+   * security boundary between them: describing a link and trusting its destination are not
+   * the same act, and a caller must be able to refuse the second while still performing the
+   * first.
+   */
+  resolveRealPath(path: string): Promise<string>;
+
+  /**
+   * At most `maxBytes` from the start of the file.
+   *
+   * Bounded by the caller rather than by the file, because "how much am I willing to read"
+   * is a policy decision belonging to the check, not to the machine. Returns fewer bytes at
+   * end of file; returns no bytes for an empty file.
+   */
+  readPrefix(path: string, maxBytes: number): Promise<Uint8Array>;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -718,10 +833,10 @@ export interface IdGenerator {
  * derive correlated children. Anything that needs a run-scoped logger receives one as a
  * parameter later.
  *
- * Three of these members are *evidence*, not services: `runtime`, `nodeRequirement` and
- * `executables`. They are exposed because the health checks consume gathered facts rather
- * than dependencies, and the gatherer is a command-level workflow — so the halves of each
- * compatibility question have to be reachable from outside without any command resolving
+ * Four of these members are *evidence*, not services: `runtime`, `nodeRequirement`,
+ * `executables` and `files`. They are exposed because the health checks consume gathered
+ * facts rather than dependencies, and the gatherer is a command-level workflow — so the
+ * halves of each question have to be reachable from outside without any command resolving
  * them for itself. None is a second source: all come from the assembly, once.
  */
 export interface Application {
@@ -787,6 +902,22 @@ export interface Application {
   readonly executables: ExecutableLocator;
 
   /**
+   * Reads what is on disk, read-only, for the checks that must judge a file the project
+   * controls.
+   *
+   * A machine fact like `runtime` and `executables`, exposed for the same reason: the
+   * configuration checks are a command-level workflow that decides *what* to inspect from
+   * project evidence, then asks this port. Keeping the decision outside and the inspection
+   * here is what lets the project layer own its vocabulary — configuration filenames, size
+   * budgets, symlink containment — while this file stays free of it.
+   *
+   * Deliberately the primitive port rather than a configuration-shaped one, and deliberately
+   * without a write member. A wider interface here would drag project vocabulary into
+   * `core`; a write member would let a diagnostic modify the project it is diagnosing.
+   */
+  readonly files: FileInspector;
+
+  /**
    * The configuration a project supplied, defaulted and anchored.
    *
    * Beside `discovery` rather than inside it, because the two answer different questions and
@@ -822,7 +953,7 @@ export interface Application {
    * answer: a permission failure, a full disk, a filesystem that cannot create a file
    * atomically.
    *
-   * @throws {ApplicationError} only when the filesystem could not answer or refused to
+   * _@throws_ {ApplicationError} only when the filesystem could not answer or refused to
    *   create the file.
    */
   readonly initialisation: InitialisationService;

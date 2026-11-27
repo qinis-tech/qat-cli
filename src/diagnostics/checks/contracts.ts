@@ -8,13 +8,29 @@
  * ## Facts are grouped by source, not by check
  *
  * One source usually answers several checks: the assessment answers five, the configuration load
- * result three. Grouping by check would mean reading the same tree twice, and two readings of one
- * tree are two readings that can disagree.
+ * result three, the Cypress configuration snapshot two. Grouping by check would mean reading the
+ * same tree twice, and two readings of one tree are two readings that can disagree.
  *
  * The Cypress group is the clearest case of the rule: three checks read one assessment of one
  * installation, so the installation is captured once and the conditions are decided once. A group
  * per check would have meant three captures, three chances to see three different filesystems and
  * three findings that contradict each other about what is installed.
+ *
+ * ## Three near-identical names, three different subjects
+ *
+ * The vocabulary is close enough to be worth stating once, because choosing the wrong group is a
+ * mistake the compiler cannot catch:
+ *
+ * | Group | Subject | Answers |
+ * | --- | --- | --- |
+ * | `configuration` | **QAT's** own configuration file | Can this file be trusted, and what did it say |
+ * | `cypress` | The **installed** Cypress package and binary | Is the framework healthy enough to run |
+ * | `cypressConfiguration` | The **project's** Cypress configuration file | Can it be located, and can it be validated |
+ *
+ * The last two are both "Cypress health" and neither subsumes the other: a project with a perfect
+ * configuration and no installed binary is broken in one place, and a project with a healthy
+ * installation and no configuration is broken in another. Merging them would produce one finding
+ * per project instead of one finding per problem.
  *
  * ## Absent is not the same as empty
  *
@@ -70,6 +86,13 @@ import type { ProjectAssessment } from "../../core/application/validation.js";
 // layer narrows it once, by `Pick`, rather than declaring three near-identical fact types and
 // hoping they stay in step.
 import type { VersionRequirement } from "../../core/compatibility/index.js";
+// The two decided configuration verdicts. Imported as verdicts rather than as raw observation —
+// the file was read once, by the gatherer, and what reaches a check is the conclusion plus the
+// evidence that supports it.
+import type {
+  ConfigDiscovery,
+  ConfigValidation,
+} from "../../project/cypress-config/index.js";
 // Framework health conditions are decided by a pure assessment inside the gatherer, so this layer
 // imports the *result* type only. Diagnostics depends on the project layer; the project layer
 // knows nothing about diagnostics, so the direction stays acyclic.
@@ -92,6 +115,8 @@ export const FactGroup = {
   Output: "output",
   /** The installed framework's health conditions, already decided. */
   Cypress: "cypress",
+  /** The project's Cypress configuration, located and validated, already decided. */
+  CypressConfiguration: "cypress-configuration",
 } as const;
 
 export type FactGroup = (typeof FactGroup)[keyof typeof FactGroup];
@@ -296,6 +321,43 @@ export interface CypressFacts {
   readonly results: readonly CypressConditionResult[];
 }
 
+/**
+ * The project's Cypress configuration: located, and validated as far as anything was entitled to.
+ *
+ * Both verdicts are required, and both are required *together*, because they were decided from one
+ * capture of one file. Location depends on facts read from disk and validation depends on those
+ * same facts plus, at most, one bounded loader invocation; a group that could hold one without the
+ * other would let a check report a validity verdict about a file it never located — or a location
+ * verdict that contradicts the validation performed seconds later.
+ *
+ * `location` answers "is it there, is it usable as a file", and is the subject of CFG-003.
+ * `validation` answers "could anything establish that it is valid, and if so what", and is the
+ * subject of CFG-004. Neither is derivable from the other: a located file may be unvalidatable, and
+ * a validation can only exist because something was located first.
+ *
+ * ## Why this is not on `assessment`
+ *
+ * `assessment` carries what detection found, and detection deliberately never reads file contents —
+ * it probes names at the root and reports a verdict. The configuration checks need bytes: is the
+ * file readable, is it text, does a parser accept it. Putting their verdicts on `assessment` would
+ * either force detection to become a file reader or leave the assessment carrying a decision whose
+ * evidence came from somewhere else. A separate group keeps each claim traceable to the capture that
+ * produced it.
+ *
+ * ## Why the loader's own result is not a third member
+ *
+ * The bounded loader invocation is already recorded inside `validation`: its tier says which
+ * mechanism spoke, its cause says why none did, and its duration says what it cost. A separate
+ * member would be a second place to look for one fact.
+ */
+export interface CypressConfigurationFacts {
+  /** CFG-003's decided subject: where the configuration is, or why it is not usable. */
+  readonly location: ConfigDiscovery;
+
+  /** CFG-004's decided subject: the furthest safe conclusion about its validity. */
+  readonly validation: ConfigValidation;
+}
+
 export interface EnvironmentFacts {
   /** The profile a command asked for: a flag, or the file's default. Absent when neither named one. */
   readonly selected?: string;
@@ -339,6 +401,8 @@ export interface CheckFacts {
   readonly output?: OutputFacts;
   /** The installed framework's health conditions, decided once for the checks that read them. */
   readonly cypress?: CypressFacts;
+  /** The project's Cypress configuration: located and validated, decided once for the two checks that read them. */
+  readonly cypressConfiguration?: CypressConfigurationFacts;
 }
 
 /**
@@ -361,6 +425,7 @@ export const FACT_KEYS = Object.freeze({
   [FactGroup.Environment]: "environment",
   [FactGroup.Output]: "output",
   [FactGroup.Cypress]: "cypress",
+  [FactGroup.CypressConfiguration]: "cypressConfiguration",
 } as const satisfies Record<FactGroup, keyof CheckFacts>);
 
 /**
@@ -403,7 +468,8 @@ export interface CheckDefinition {
    * in one pass.
    *
    * Framework checks use it for their real dependency: a binary cache is keyed by version, so a check
-   * that inspects the cache declares the check that establishes the version.
+   * that inspects the cache declares the check that establishes the version. The configuration checks
+   * use it the same way: nothing can be validated until something has been located.
    */
   readonly precondition?: CheckId;
   /** What an unfavourable answer means. The same value for every run, whatever condition fired. */
