@@ -1,40 +1,41 @@
 # Doctor checks
 
-|               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| ------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| **Status**    | Normative                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
-| **Contract**  | `src/core/application/checks.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                 |
-| **Catalogue** | `src/diagnostics/checks/rules.ts`, with the branch-heavy checks in `rules/node-runtime.ts`, `rules/package-manager.ts`, `rules/cypress-config-discovery.ts`, `rules/cypress-config-validity.ts`, `rules/qat-config-discovery.ts` and `rules/qat-config-schema.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
-| **Guidance**  | `src/diagnostics/checks/guidance.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
-| **Runner**    | `src/diagnostics/checks/run.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                  |
-| **Companion** | [diagnostics.md](diagnostics.md), [validation.md](validation.md), [configuration-validation.md](configuration-validation.md), [configuration-diagnostics.md](configuration-diagnostics.md), [runtime-compatibility.md](runtime-compatibility.md), [package-managers.md](package-managers.md), [cypress-configuration-checks.md](cypress-configuration-checks.md), [ADR-0032](./adr/0032-skip-a-check-whose-precondition-failed-rather-than-reporting.md), [ADR-0034](./adr/0034-detect-the-package-manager-from-declared-metadata-and-lockfi.md), [ADR-0036](./adr/0036-inspect-the-cypress-configuration-as-data-and-never-import-i.md), [ADR-0037](./adr/0037-project-the-configuration-pipeline-into-a-non-throwing-inspe.md) |
+|               |                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| ------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Status**    | Normative                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                          |
+| **Contract**  | `src/core/application/checks.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| **Catalogue** | `src/diagnostics/checks/rules.ts`, with the branch-heavy checks in `rules/node-runtime.ts`, `rules/package-manager.ts`, `rules/cypress-config-discovery.ts`, `rules/cypress-config-validity.ts`, `rules/qat-config-discovery.ts`, `rules/qat-config-schema.ts`, `rules/environment-profile.ts` and `rules/environment-variables.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| **Guidance**  | `src/diagnostics/checks/guidance.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| **Runner**    | `src/diagnostics/checks/run.ts`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| **Companion** | [diagnostics.md](diagnostics.md), [validation.md](validation.md), [configuration-validation.md](configuration-validation.md), [configuration-diagnostics.md](configuration-diagnostics.md), [environment-diagnostics.md](environment-diagnostics.md), [runtime-compatibility.md](runtime-compatibility.md), [package-managers.md](package-managers.md), [cypress-configuration-checks.md](cypress-configuration-checks.md), [ADR-0032](./adr/0032-skip-a-check-whose-precondition-failed-rather-than-reporting.md), [ADR-0034](./adr/0034-detect-the-package-manager-from-declared-metadata-and-lockfi.md), [ADR-0036](./adr/0036-inspect-the-cypress-configuration-as-data-and-never-import-i.md), [ADR-0037](./adr/0037-project-the-configuration-pipeline-into-a-non-throwing-inspe.md), [ADR-0038](./adr/0038-select-one-environment-by-declared-precedence-and-report-why.md) |
 
 The questions `qat doctor` answers about a project, and the rules its report obeys.
 
 ## 1. A check is a question
 
 Every check in this catalogue is a pure function of evidence somebody else gathered — a runtime version, an assessment, a
-composed configuration verdict, a writability fact. Nothing in the catalogue reads a file, spawns a process or writes to a
-stream.
+composed configuration verdict, an environment inspection, a writability fact. Nothing in the catalogue reads a file, spawns
+a process or writes to a stream.
 
 That constraint is not tidiness. A documented _purpose_ and four documented _outcome conditions_ per check are only
 verifiable if the check can be run from a value; a rule that touches a disk can only be checked by building a disk, and the
 branches nobody bothers to build a directory for are exactly the ones that go wrong. So the catalogue is a table of values,
 and the twenty-odd probes it depends on belong to whoever gathers the facts.
 
-**Ten checks judge** something no other layer looks at: the runtime QAT itself requires, the runtime a project's framework
+**Eleven checks judge** something no other layer looks at: the runtime QAT itself requires, the runtime a project's framework
 requires, the project's package-manager environment, where the Cypress configuration is and whether anything can establish
 that it is valid, whether QAT's own configuration document can be obtained and whether it is one this release can interpret,
-the selected environment, and the two output directories.
+the selected environment profile and the variables it references, and the two output directories.
 
 **Five checks forward** a conclusion a lower layer already drew. They find the finding the assessment carries and carry it
 onward unchanged — same code, same severity, same remedy. Their value is not the logic; it is that the question a user asks
 is answered where the user looks for it, with the words the layer that noticed the condition chose.
 
-Seven judging checks have real branches — a floor, a ceiling, gap alternatives, pre-release admission, seven package-manager
-conditions, thirteen Cypress configuration-location reasons, six validation gaps, and the six configuration states behind
-two more — and those live in `rules/*.ts` rather than inside the map literal, so each branch can be tested on its own. The
-catalogue's job is to say which questions exist, in what order, under which identifier.
+Nine judging checks have real branches — a floor, a ceiling, gap alternatives, pre-release admission, seven package-manager
+conditions, thirteen Cypress configuration-location reasons, six validation gaps, the six configuration states behind two
+more, and an environment selection with three possible origins plus a profile that can fail in five ways and references that
+can fail in four more — and those live in `rules/*.ts` rather than inside the map literal, so each branch can be tested on
+its own. The catalogue's job is to say which questions exist, in what order, under which identifier.
 
 The runtime pair is the one place where "judging" needed an authority it does not own. Neither question can be answered by
 restating a conclusion — QAT's own range and a project's framework range are separate declarations — and both delegate to
@@ -45,7 +46,7 @@ same engine, so there is one notion of "satisfies" in the product.
 
 ## 2. The register
 
-Fifteen checks, in the order a report presents them, which is the order a reader fixes things in: causes before
+Sixteen checks, in the order a report presents them, which is the order a reader fixes things in: causes before
 consequences.
 
 | Check                               | Category              | Severity | Mandatory | Precondition                    | Codes it may report                | Purpose                                                                       |
@@ -62,21 +63,24 @@ consequences.
 | `cypress.version-supported`         | cypress-installation  | error    | no        | `cypress.installed`             | `QAT-D006`, `QAT-V005`, `QAT-V006` | The installed major is inside the range this tool drives                      |
 | `qat.configuration-loadable`        | qat-configuration     | error    | yes       | —                               | `QAT-H004`–`QAT-H006`, `QAT-H032`  | QAT's configuration file is a document that can be obtained                   |
 | `qat.configuration-valid`           | qat-configuration     | error    | no        | `qat.configuration-loadable`    | `QAT-H033`–`QAT-H037`              | That document conforms to a schema this release supports                      |
-| `qat.environment-resolvable`        | environment-profiles  | error    | no        | `qat.configuration-loadable`    | `QAT-H007`                         | The environment a command selected exists                                     |
+| `qat.environment-resolvable`        | environment-profiles  | error    | no        | `qat.configuration-loadable`    | `QAT-H007`, `QAT-H039`–`QAT-H043`  | The selected environment is a profile this configuration declares             |
+| `qat.environment-variables-present` | environment-profiles  | error    | no        | `qat.environment-resolvable`    | `QAT-H044`–`QAT-H050`              | The variables that profile references are usable                              |
 | `output.reports-writable`           | output-permissions    | error    | no        | `qat.configuration-loadable`    | `QAT-H003`                         | A report can be written where the configuration says                          |
 | `output.evidence-writable`          | output-permissions    | error    | no        | `qat.configuration-loadable`    | `QAT-H003`                         | Evidence can be written where the configuration says                          |
 
-**Mandatory** is derived, not stored: a check with no precondition is always asked. That is five of the fifteen, and the
+**Mandatory** is derived, not stored: a check with no precondition is always asked. That is five of the sixteen, and the
 derivation is asserted rather than trusted, so the word cannot drift from the table.
 
-**Twelve checks are fatal and three are advisory.** The advisory ones — the package manager, the project's own metadata, and
-the project's framework runtime bound — share the property that their worst answer is _advice_: a project that names no
+**Thirteen checks are fatal and three are advisory.** The advisory ones — the package manager, the project's own metadata,
+and the project's framework runtime bound — share the property that their worst answer is _advice_: a project that names no
 manager is still runnable, a project with no manifest is legal, and a framework's declared bound is metadata QAT neither
 controls nor verifies. Both Cypress configuration checks declare `error`, and three of the conditions they report still
 conclude as warnings — a legacy format, a stale copy in the wrong place, a file nothing inspected — because one declared
 severity and a status decided by the condition is what §3 is for. QAT's configuration pair declares `error` throughout and
 never warns: every condition it reports is either a document nobody can obtain or a field the schema refused, and there is
-no middle case worth softening.
+no middle case worth softening. The environment pair joins the Cypress configuration checks in that arrangement: both
+declare `error`, and three of the conditions they report — a variable whose requirement the profile never stated, and a
+presence question nothing could answer — conclude as warnings.
 
 The two runtime checks are the clearest illustration of why mandatory-ness and blocking are different questions. Both are
 always asked, because a runtime question has an answer on every machine; only one can refuse a run, because only one of the
@@ -94,7 +98,7 @@ installer predicts a confusing `install` later rather than preventing a run now.
 | cypress-configuration | 3      |
 | cypress-installation  | 2      |
 | qat-configuration     | 2      |
-| environment-profiles  | 1      |
+| environment-profiles  | 2      |
 | output-permissions    | 2      |
 
 Each has at least one check, and the set is closed: a category with no check is a heading a reader expects and does not
@@ -121,14 +125,15 @@ not. A test holds every advisory check to never returning `fail`, driven from th
 
 `warn` also carries a condition that is neither a pass nor a failure: **the check could not establish the answer**. An
 unreadable runtime version, a declared range the parser cannot interpret, a package-manager version that was expected and
-never obtained, or a configuration no mechanism was entitled to validate are all reported as warnings rather than as
-failures — and never as passes. An unanswered question must not block work we can still perform, and it must not read as
-consent either.
+never obtained, a configuration no mechanism was entitled to validate, or a presence question the host would not answer are
+all reported as warnings rather than as failures — and never as passes. An unanswered question must not block work we can
+still perform, and it must not read as consent either.
 
 There is one further outcome worth naming here because the package-manager check makes it visible: **nobody asked**. A
 manager whose version was never declared is not compared, and a platform whose shims cannot be spawned without a shell is not
 probed. That produces no finding at all — reporting "unverified" for a question we chose not to ask would teach readers to
-ignore the code that means something.
+ignore the code that means something. The environment check applies the same rule to a variable the profile marks
+_optional_: absent is the documented default, so it is a pass with no finding rather than advice nobody can act on.
 
 **A skipped check never blocks.** That is not an oversight. A check is skipped _because_ another check did not pass, and
 that failure is already in the list — counting the consequence as well would report one condition as several, which is the
@@ -153,6 +158,7 @@ project.recognised ────────────────────�
 qat.configuration-loadable ────────────────────────── mandatory
 ├── qat.configuration-valid
 ├── qat.environment-resolvable
+│   └── qat.environment-variables-present
 ├── output.reports-writable
 └── output.evidence-writable
 ```
@@ -170,6 +176,12 @@ than "the file could not be validated".
 file that cannot be read has nothing to validate, so the runner skips the validity check with a named cause rather than
 letting it invent a schema verdict about bytes nobody parsed. That is the whole reason QAT's configuration is two
 identifiers and not one with an arm for every state: no verdict is possible, so none is claimed.
+
+`qat.environment-variables-present` is the third of that shape, and the deepest link in the tree. References inside a profile
+that failed the schema belong to a document nobody parsed, so their presence is not a fact about the project; the second
+environment question is skipped with `qat.environment-resolvable` named as the check that stopped it. Without that link the
+report would show a missing variable against a profile the reader had already been told to correct — two problems where
+there is one, and the second impossible to act on.
 
 Neither runtime check carries a precondition, and that is deliberate rather than an omission. A precondition exists so a
 _consequence_ is not reported as a second, separate problem; a framework bound is not a consequence of QAT's own range. The
@@ -211,7 +223,9 @@ in a report the report becomes the definition.
 `runtime.node-version` compares a version, and it is not an exception to that rule. It compares by delegating to the one
 compatibility engine, using the range the manifest declares, both supplied as evidence. The distinction is between _using_ an
 authority and _being_ one: the check contributes no floor, no operator and no tolerance of its own. Delete it and the policy
-is unchanged; delete the engine and nothing compiles.
+is unchanged; delete the engine and nothing compiles. The environment pair follows the same discipline one level further: it
+maps a reason the classifier already decided onto the code that owns its prose, and re-derives neither the reason nor its
+weight.
 
 ### Why the configuration location check stopped forwarding
 
@@ -236,7 +250,13 @@ question at all. It now consumes the composed six-state inspection, so both chec
 describe different bytes. The states that followed are in §5 below; the reasoning is in
 [configuration-diagnostics.md](configuration-diagnostics.md).
 
-The thirty-seven `QAT-H` codes are the conditions nothing else owns:
+The environment pair is a third instance of the same shape, and the one with the most states behind it. One resolution of one
+configuration produces an inspection with five outcomes — nothing selected, an unusable selection, an undeclared profile, an
+invalid profile, a usable profile with its reference facts — and two checks project from it: the profile question and the
+references question. Neither resolves anything itself, so the two cannot disagree about which profile applied. The detail is
+in [environment-diagnostics.md](environment-diagnostics.md).
+
+The fifty `QAT-H` codes are the conditions nothing else owns:
 
 | Code       | Severity    | Condition                                                                   |
 | ---------- | ----------- | --------------------------------------------------------------------------- |
@@ -277,6 +297,19 @@ The thirty-seven `QAT-H` codes are the conditions nothing else owns:
 | `QAT-H035` | error       | The document parsed and the schema rejected one or more fields              |
 | `QAT-H036` | error       | An output path is absolute, escapes the project, or is not portable         |
 | `QAT-H037` | error       | The framework identifier is not an adapter this release can run             |
+| `QAT-H038` | information | No environment was selected, and this command does not need one             |
+| `QAT-H039` | error       | No environment was selected, and this command requires one                  |
+| `QAT-H040` | error       | The supplied environment selection is empty or unusable                     |
+| `QAT-H041` | error       | The configuration's `defaultEnvironment` names an undeclared profile        |
+| `QAT-H042` | error       | The selected profile exists and the schema rejected it                      |
+| `QAT-H043` | error       | The profile is valid and a path it declares is not usable                   |
+| `QAT-H044` | error       | A variable the profile marks required is not set                            |
+| `QAT-H045` | warning     | A referenced variable is not set, and its requirement is unstated           |
+| `QAT-H046` | error       | A variable the profile marks required is set to nothing                     |
+| `QAT-H047` | warning     | A referenced variable is set to nothing, and its requirement is unstated    |
+| `QAT-H048` | error       | A reference reads from a source QAT does not approve                        |
+| `QAT-H049` | error       | A declared variable name cannot be passed to a child process faithfully     |
+| `QAT-H050` | warning     | Whether a referenced variable is set could not be established               |
 
 `QAT-H001` and `QAT-H008` are two codes and not one, because they are two different reader actions: a mismatch that was
 _measured_ blocks and is fixed by moving the runtime, while an answer that could not be _obtained_ warns and is fixed by
@@ -296,24 +329,35 @@ put a regular file there. The validity question adds two: one for "a mechanism s
 to speak". The six ways the second can happen share a code because they share a remedy: get a mechanism, then ask again.
 
 QAT's configuration family grew from three codes to eleven when the check moved from the loader's outcome to the composed
-verdict. `QAT-H004`–`H006` remain the loader's own: empty, not JSON, too large. `QAT-H032` is the fourth access condition —
-present and unreadable — which the loader never sees, because it is the filesystem that says so. `QAT-H033`–`H037` are the
-validity family, one per fix: an unsupported schema version, a version field that cannot be used, a rejected field, an
-output path, a framework identifier. `QAT-H030` and `QAT-H031` are the one pair the doctor does not emit — absence is a pass
-here, and whether a _command_ may proceed without a configuration is that command's preflight — and they are listed anyway
-because the vocabulary is one set and the preflight shares it.
+verdict. `QAT-H004`–`QAT-H006` remain the loader's own: empty, not JSON, too large. `QAT-H032` is the fourth access
+condition — present and unreadable — which the loader never sees, because it is the filesystem that says so. `QAT-H033`–
+`QAT-H037` are the validity family, one per fix: an unsupported schema version, a version field that cannot be used, a
+rejected field, an output path, a framework identifier. `QAT-H030` and `QAT-H031` are the one pair the doctor does not emit —
+absence is a pass here, and whether a _command_ may proceed without a configuration is that command's preflight — and they
+are listed anyway because the vocabulary is one set and the preflight shares it.
+
+The environment family is thirteen codes for one profile and its references, and three splits inside it are worth defending
+because each looks like over-elaboration until the failure mode is stated. **"Not selected" is two codes**
+(`QAT-H038`, `QAT-H039`) rather than one with a conditional severity, because severity is a property of the code — a
+selection that is a non-event for `doctor` and a blocker for a command about to execute tests is not two weights of one
+outcome, it is a pass and a failure. **"Missing" and "empty" are four codes**, because a deployment that sets `API_TOKEN=` is
+not one that forgot it, and telling a reader "it is not set" when they can see it in their shell costs the diagnostic its
+credibility in one sentence. **The profile check and the reference check keep separate codes even where the profile is the
+cause**, because a reference inside a profile that could not be parsed is not a fact about the variable. The one merge is
+`ENV_SETTING_MISSING` into `QAT-H042`: a required setting that is absent is a schema rejection like any other, and the remedy
+— correct the listed fields — is identical.
 
 ## 6. The evidence a check may read
 
-| Group                   | Holds                                                                                                                                                                                    | Read by                              |
-| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
-| `runtime`               | The running Node version, the range this build declares, and any range the project's framework declares                                                                                  | The two runtime checks               |
-| `package-manager`       | How identity was established, the lockfiles seen, the executable evidence, the manager version the project expects, how far an install got, and who created the tree if not this manager | `environment.package-manager`        |
-| `assessment`            | The structured detection result and its per-operation gates                                                                                                                              | Four checks                          |
-| `cypress-configuration` | The located verdict and the validation verdict, decided from one capture of one file                                                                                                     | The two Cypress configuration checks |
-| `configuration`         | The composed verdict — one of six states, from absent through unreadable, malformed, unsupported version and schema-invalid to a resolved configuration                                  | The two QAT configuration checks     |
-| `environment`           | The selected profile and the declared ones                                                                                                                                               | `qat.environment-resolvable`         |
-| `output`                | Both resolved output paths, and whether each accepts a write                                                                                                                             | The two output checks                |
+| Group                   | Holds                                                                                                                                                                                                                                                                | Read by                              |
+| ----------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------ |
+| `runtime`               | The running Node version, the range this build declares, and any range the project's framework declares                                                                                                                                                              | The two runtime checks               |
+| `package-manager`       | How identity was established, the lockfiles seen, the executable evidence, the manager version the project expects, how far an install got, and who created the tree if not this manager                                                                             | `environment.package-manager`        |
+| `assessment`            | The structured detection result and its per-operation gates                                                                                                                                                                                                          | Four checks                          |
+| `cypress-configuration` | The located verdict and the validation verdict, decided from one capture of one file                                                                                                                                                                                 | The two Cypress configuration checks |
+| `configuration`         | The composed verdict — one of six states, from absent through unreadable, malformed, unsupported version and schema-invalid to a resolved configuration                                                                                                              | The two QAT configuration checks     |
+| `environment`           | The decided inspection of the selected profile — its state, the origin of the selection, per-reference presence verdicts and per-path resolution verdicts — whether the invoking operation requires an environment, and the profile names the configuration declares | The two environment checks           |
+| `output`                | Both resolved output paths, and whether each accepts a write                                                                                                                                                                                                         | The two output checks                |
 
 **A group being absent means nobody gathered it**, which is `input-unavailable` — not the same as gathering it and finding
 nothing. That distinction is why the package-manager group's identity member is a discriminated union with an `undeclared`
@@ -329,6 +373,17 @@ as an empty range and is reported as unreadable policy rather than skipped.
 An inspection whose state is `missing` means we looked, found nothing, and have something to say about it — a pass, because
 the documented defaults are a supported state. A check that skipped because the _group_ was absent would be silent on
 precisely the condition `qat.configuration-loadable` exists to report.
+
+`environment` is the fourth, and it fails in the more expensive direction. A configuration that exists but selects no profile
+is a _result_: most projects have no environment-specific settings, and the documented behaviour for a run with no selection
+is to use the defaults. Skipping because the group was absent and skipping because nothing was selected would look identical
+in a report while meaning opposite things — one is a bug in QAT, the other is a bug in the project. The group therefore
+carries the inspection, which has a `not-selected` state of its own, rather than an optional selection field.
+
+The environment group also carries the one fact the inspection cannot know: `requiredForOperation`. Whether a command needs an
+environment is a property of the command, not of the project, and it changes a finding's weight without changing a single
+fact about the files. Recording it as evidence is what lets the finding explain its own severity instead of applying one
+silently.
 
 The package-manager group follows the same rule at a finer grain. `selection` is required and always says one of four things;
 `executable` becomes required once a manager is identified, because a gatherer that named a manager and never looked for its
@@ -367,11 +422,12 @@ separator makes a rule and its verification disagree while both read correctly i
 | `cypress.version-supported`         | `in-range`, `below-floor`, `above-known-good`                                                                                                                                                                                                                                  |
 | `qat.configuration-loadable`        | `absent`, `loaded`, `unreadable`, `not-json`, `too-large`, `schema-invalid-is-still-readable`, `version-unsupported-is-still-readable`                                                                                                                                         |
 | `qat.configuration-valid`           | `valid`, `absent-nothing-to-validate`, `version-unsupported`, `version-invalid`, `field-rejected`, `output-path-rejected`, `framework-rejected`, `skipped-when-unreadable`                                                                                                     |
-| `qat.environment-resolvable`        | `none-selected`, `declared`, `undeclared`                                                                                                                                                                                                                                      |
+| `qat.environment-resolvable`        | `none-selected`, `declared`, `undeclared`, `selection-unusable`, `default-dangling`, `profile-invalid`, `paths-unusable`                                                                                                                                                       |
+| `qat.environment-variables-present` | `all-present`, `none-declared`, `required-missing`, `unspecified-missing`, `blank-required`, `source-unapproved`, `name-unusable`, `unverified`                                                                                                                                |
 | `output.reports-writable`           | `writable`, `unwritable`                                                                                                                                                                                                                                                       |
 | `output.evidence-writable`          | `writable`, `unwritable`, `reports-usable-evidence-not`                                                                                                                                                                                                                        |
 
-Eighty-four scenarios across fifteen checks.
+Ninety-six scenarios across sixteen checks.
 
 The inventory is enforced rather than described: the behaviour suite's fixtures are keyed by these identifiers, and its first
 case asserts the two sets are equal in both directions. A scenario declared without a fixture fails, and a fixture for a
@@ -405,17 +461,29 @@ while a version from the future means the reader is on the wrong release of QAT,
 the general field report because its fix is a shape rather than a value. `skipped-when-unreadable` is the whole reason the
 pair has two identifiers.
 
+The environment pair is seven and eight, and the split between them is the split the checks make. Four of the seven profile
+scenarios reach different codes because they end in four different actions — select something, correct an empty flag, declare
+a profile, correct a committed default — and the remaining three are the two ways a usable profile can still be wrong plus the
+one way it can be right. Every one of the eight reference scenarios uses a _usable_ profile, deliberately: a failing profile
+makes the runner skip the second check, so a fixture built on one would assert a skip instead of the presence verdict it is
+named for. Two of the eight are passes — one variable present, none declared — and they are the cases that prove a healthy
+project is silent rather than merely non-blocking.
+
 **Reachability is the gap the design cannot close.** A code could be a member of the union and be emitted by nothing. The
 pair of guarantees closest to reachability is that a scenario is declared per outcome a check distinguishes _and_ that each
 scenario is driven — which is why the register withholds a diagnostic code for any condition it cannot name, and why the
 package-manager check's code-to-scenario map is itself asserted: every code it can emit names a scenario the catalogue
-declares, and no declared scenario is without one. The same map exists for both configuration pairs, in the rule modules
-themselves: a reason without a code does not compile.
+declares, and no declared scenario is without one. The same map exists for both configuration pairs and for both environment
+rules, in the rule modules themselves: a reason without a code does not compile, and a reason attributed to the wrong check
+throws rather than rendering under a neighbouring code.
 
 ## 8. What the catalogue does not do
 
 - **It does not read anything.** Every fact is supplied. Gathering is a separate module, and its probes are the only code in
   this chain that touches a disk.
+- **It does not read a variable's value.** The environment port answers `set`, `blank` or `unset` and has no accessor that
+  could return a value, so a finding cannot print a credential however it is written. A proposed entry that needs a value
+  does not need a redaction step; it needs a different requirement.
 - **It does not decide the exit status.** `isBlocked(report)` answers whether anything failed. What a command does with
   that — which status, which stream — is the command's decision, and mapping it here would put a second exit-code table
   beside the one in `core/errors`.
@@ -427,6 +495,10 @@ themselves: a reason without a code does not compile.
   works.
 - **It does not detect the runtime.** `process.versions.node` is read behind a port; the catalogue receives the string and
   never reaches for it.
+- **It does not read the process environment.** Presence arrives through a port the assembly binds to one source, once. A
+  probe that shelled out to `printenv` would be a hidden second execution inside a read-only diagnostic, and a `.env` reader
+  would make the answer depend on a file the project can change while the run that follows uses only the process
+  environment.
 - **It does not execute a package manager to identify it.** Identity comes from declared metadata and root lockfiles. A
   binary is located and asked for its version only once a manager has been named by evidence, and never from a project-local
   binary directory.
@@ -436,25 +508,30 @@ themselves: a reason without a code does not compile.
 
 ## 9. Known limits
 
-| Limit                                                                                               | Why it stands                                                                                                                                                                                                                                                                     |
-| --------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| An output directory is probed for writability, which is a side effect that leaves nothing behind    | The alternative — inferring from a mode bit — reports a directory as writable when it is owned by someone else. A probe that creates and removes a temporary file is the honest test, and it belongs to the gatherer rather than to this table                                    |
-| `QAT-H003` covers both directories                                                                  | One condition, one code. Two codes for "the same thing happened at a different path" is two permanent identifiers that eventually disagree                                                                                                                                        |
-| The supported Node range is read from `engines.node`, not held as a constant                        | Pure functions cannot open a manifest, so the range arrives as evidence from composition. A constant here would have been a second copy of a policy, and the two would diverge on the first release that changed one of them                                                      |
-| A version that cannot be parsed warns rather than failing                                           | "I cannot tell" is neither "supported" nor "unsupported". It is reported, it does not block, and it never counts as clean — the alternative, treating an unmeasured runtime as a pass, is how a report blesses what it never checked                                              |
-| Only a subset of range syntax is accepted                                                           | Floors, ceilings, `^`, `~` and `\|\|` alternatives. Wildcards, hyphen ranges and partial versions are refused rather than guessed at, because each would require inventing a component. A refused range is reported, never assumed                                                |
-| Nothing gathers the project's framework runtime bound yet                                           | `cypress.runtime-supported` is implemented and covered, and its fact is optional, so it passes by absence on every project today. The advisory appears when a gatherer reads a declaration; until then the report is silent rather than wrong                                     |
-| Installation state is `unknown` whenever `node_modules` exists and no marker was inspected          | Attributing a tree means reading inside `node_modules`, which the root snapshot deliberately does not do. The check therefore reports nothing rather than guessing, and `QAT-H016` / `QAT-H017` are reachable but not observed in the doctor until a gatherer attributes the tree |
-| A package-manager version is compared only when the project declares one                            | Comparing against a bound QAT invented would be a support policy this tool does not have. No declaration means no comparison, and `QAT-H015` reports the case where one was declared and could not be read                                                                        |
-| `environment.package-manager` is the one identifier whose first segment does not match its category | Its subject segment says `environment` and it is grouped under package-manager availability. Renaming it is a one-line change while no support document quotes it                                                                                                                 |
-| Nothing verifies the framework executable                                                           | The check exists in the contract — a verification operation would set `binaryAvailable` — and no producer exists. The catalogue does not pretend otherwise                                                                                                                        |
-| Deep validation of an executable configuration is opt-in                                            | Loading a configuration runs project code. `QAT-H029` reports `deep-validation-disabled` as a warning on every TypeScript project, which is the honest middle: a green check would claim a verification that never ran                                                            |
-| Configuration filenames are matched case-sensitively                                                | `Cypress.Config.ts` is not a configuration file, because Cypress does not read it either. A case-insensitive match would report a file the framework ignores                                                                                                                      |
-| A configuration symlink is resolved exactly once                                                    | A file reachable only through a chain of links is reported as not-a-file rather than chased. A chain that long is rare enough that "cannot establish" is a better answer than a clever resolver                                                                                   |
-| A configuration in an unrecognised format is invisible to detection                                 | `cypress.config.yaml` is not in the candidate list, so it is indistinguishable from no configuration at all. Detection probes fixed names rather than listing the directory, and that determinism is worth more than the coverage                                                 |
-| `QAT-H004` is emitted only where the loader distinguishes an empty document from a malformed one    | Today an empty file arrives as `QAT-H005`, and that is the honest report: an empty file is not a JSON document. A seventh state for "zero bytes" would put a distinction in the state machine that only one release of one loader could observe                                   |
-| `QAT-H030` and `QAT-H031` are declared and never emitted by this catalogue                          | Absence is a pass here, because the documented defaults are a supported state; whether a _command_ may proceed without a configuration is that command's preflight, which knows what the user asked for and the doctor does not. They are declared so the vocabulary is one set   |
-| The configuration state machine has no `empty` state                                                | Six states are six reader actions. "Empty" and "not JSON" end in the same instruction — put a document there — and the code that distinguishes them already exists for the day a loader can tell them apart                                                                       |
+| Limit                                                                                               | Why it stands                                                                                                                                                                                                                                                                                                                                         |
+| --------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| An output directory is probed for writability, which is a side effect that leaves nothing behind    | The alternative — inferring from a mode bit — reports a directory as writable when it is owned by someone else. A probe that creates and removes a temporary file is the honest test, and it belongs to the gatherer rather than to this table                                                                                                        |
+| `QAT-H003` covers both directories                                                                  | One condition, one code. Two codes for "the same thing happened at a different path" is two permanent identifiers that eventually disagree                                                                                                                                                                                                            |
+| The supported Node range is read from `engines.node`, not held as a constant                        | Pure functions cannot open a manifest, so the range arrives as evidence from composition. A constant here would have been a second copy of a policy, and the two would diverge on the first release that changed one of them                                                                                                                          |
+| A version that cannot be parsed warns rather than failing                                           | "I cannot tell" is neither "supported" nor "unsupported". It is reported, it does not block, and it never counts as clean — the alternative, treating an unmeasured runtime as a pass, is how a report blesses what it never checked                                                                                                                  |
+| Only a subset of range syntax is accepted                                                           | Floors, ceilings, `^`, `~` and `\|\|` alternatives. Wildcards, hyphen ranges and partial versions are refused rather than guessed at, because each would require inventing a component. A refused range is reported, never assumed                                                                                                                    |
+| Nothing gathers the project's framework runtime bound yet                                           | `cypress.runtime-supported` is implemented and covered, and its fact is optional, so it passes by absence on every project today. The advisory appears when a gatherer reads a declaration; until then the report is silent rather than wrong                                                                                                         |
+| Installation state is `unknown` whenever `node_modules` exists and no marker was inspected          | Attributing a tree means reading inside `node_modules`, which the root snapshot deliberately does not do. The check therefore reports nothing rather than guessing, and `QAT-H016` / `QAT-H017` are reachable but not observed in the doctor until a gatherer attributes the tree                                                                     |
+| A package-manager version is compared only when the project declares one                            | Comparing against a bound QAT invented would be a support policy this tool does not have. No declaration means no comparison, and `QAT-H015` reports the case where one was declared and could not be read                                                                                                                                            |
+| `environment.package-manager` is the one identifier whose first segment does not match its category | Its subject segment says `environment` and it is grouped under package-manager availability. Renaming it is a one-line change while no support document quotes it                                                                                                                                                                                     |
+| Nothing verifies the framework executable                                                           | The check exists in the contract — a verification operation would set `binaryAvailable` — and no producer exists. The catalogue does not pretend otherwise                                                                                                                                                                                            |
+| Deep validation of an executable configuration is opt-in                                            | Loading a configuration runs project code. `QAT-H029` reports `deep-validation-disabled` as a warning on every TypeScript project, which is the honest middle: a green check would claim a verification that never ran                                                                                                                                |
+| Configuration filenames are matched case-sensitively                                                | `Cypress.Config.ts` is not a configuration file, because Cypress does not read it either. A case-insensitive match would report a file the framework ignores                                                                                                                                                                                          |
+| A configuration symlink is resolved exactly once                                                    | A file reachable only through a chain of links is reported as not-a-file rather than chased. A chain that long is rare enough that "cannot establish" is a better answer than a clever resolver                                                                                                                                                       |
+| A configuration in an unrecognised format is invisible to detection                                 | `cypress.config.yaml` is not in the candidate list, so it is indistinguishable from no configuration at all. Detection probes fixed names rather than listing the directory, and that determinism is worth more than the coverage                                                                                                                     |
+| `QAT-H004` is emitted only where the loader distinguishes an empty document from a malformed one    | Today an empty file arrives as `QAT-H005`, and that is the honest report: an empty file is not a JSON document. A seventh state for "zero bytes" would put a distinction in the state machine that only one release of one loader could observe                                                                                                       |
+| `QAT-H030`, `QAT-H031` and `QAT-H038` are declared and never emitted by this catalogue              | Absence is a pass here, because the documented defaults are a supported state; whether a _command_ may proceed without a configuration or an environment is that command's preflight, which knows what the user asked for and the doctor does not. They are declared so the vocabulary is one set                                                     |
+| The configuration state machine has no `empty` state                                                | Six states are six reader actions. "Empty" and "not JSON" end in the same instruction — put a document there — and the code that distinguishes them already exists for the day a loader can tell them apart                                                                                                                                           |
+| `ENV_SETTING_MISSING` reports under `QAT-H042`                                                      | A required setting that is absent is a schema rejection like any other, and the remedy is the same sentence: correct the listed fields. A separate code would be a second identifier for one instruction, and the two would eventually word it differently                                                                                            |
+| An environment name is matched exactly and case-sensitively                                         | `Staging` and `staging` are different profiles, because the configuration schema defines them that way. A selector that folded case would agree with a matcher that does not exist and hide a typo the reader can see                                                                                                                                 |
+| The environment check reports names and presence states, never values                               | Deliberate and structural rather than a policy: the port has no value accessor, so nothing downstream could print one. Redacting at the finding layer would imply values were arriving and merely being hidden — the assumption the port exists to prevent                                                                                            |
+| An informational pass cannot carry its observation                                                  | `CheckPassed.finding` is declared with the invariant "an informational observation attached to a pass", but `CheckVerdict` has no slot for it, so `QAT-H030` and `QAT-H038` are computed and dropped. The fix is one line on the verdict union; until then both rules return a bare pass                                                              |
+| `toProjectRelative` exists twice                                                                    | `config/diagnostics/evidence.ts` and `config/environment/diagnostics/evidence.ts` both render project-relative paths, with slightly different handling of Windows and UNC paths. The root barrel publishes only the first, so the ambiguity is resolved at a boundary rather than by a wildcard — but two implementations of one idea is one too many |
 
 ## 10. Extending the catalogue
 
@@ -478,18 +555,22 @@ and the register asserts all eight are covered.
 label a report prints differ from the property a type declares, and it is the reason a group can be added without renaming
 anything a message quotes.
 
-**Adding a reason to a judged verdict** — the pattern both configuration pairs follow — is three edits that must agree: a
-member in the verdict union, an entry in the rule's reason-to-code map, and a guidance entry for that code. The first makes
-the second a compile error if forgotten; the second makes the third a compile error; and the scenario list then needs one
-fixture per new reason. That ordering is deliberate: work from the union outward, so the compiler tells you what is missing
-rather than a reader discovering a reason with no sentence.
+**Adding a reason to a judged verdict** — the pattern both configuration pairs and both environment rules follow — is three
+edits that must agree: a member in the verdict union, an entry in the rule's reason-to-code map, and a guidance entry for
+that code. The first makes the second a compile error if forgotten; the second makes the third a compile error; and the
+scenario list then needs one fixture per new reason. That ordering is deliberate: work from the union outward, so the
+compiler tells you what is missing rather than a reader discovering a reason with no sentence. Two rules reading one verdict
+add a fourth obligation — the reason must be attributed to exactly one of them, and the rule that receives a reason it does
+not own throws rather than rendering it under a neighbouring code.
 
 **Adding a code to an existing check's list** is a change to what that check answers. Before doing it, ask whether the
 condition deserves its own check: a check is a question, and two conditions a reader fixes differently are two questions.
 The package-manager family is the worked example of the opposite decision — one question, nine codes — which was right there
 because the conditions are mutually exclusive rungs of one ladder rather than nine independent questions. The configuration
 pairs are the counter-example: two questions with a precondition between them, because "where is it / can it be obtained"
-and "can anything vouch for it" have different answers and different evidence.
+and "can anything vouch for it" have different answers and different evidence. The environment pair is the counter-example
+twice over: the profile and the references inside it are fixed by two different people — one edits a committed file, the
+other exports a value on the machine — and the second question is unanswerable until the first is.
 
 **Adding a supported version** is not an edit to this document at all. It is an edit to `package.json#engines.node`, the CI
 matrix that must cover it, and the release notes — see
@@ -505,3 +586,7 @@ layer enumerates filenames: the location check maps _reasons_, not names, which 
 **Adding a supported QAT configuration schema version** is one edit in the schema module. The façade receives the supported
 set as a value and the validity check reports what the gate refused, so neither restates it — and a version joining the set
 is a change to one array's contents, not to a signature.
+
+**Adding a supported environment name rule** is one edit in `config/environment/select.ts`, plus a fixture. Nothing here
+enumerates the character class: the profile check maps _states_, and the shape of a name is decided where names are
+selected.

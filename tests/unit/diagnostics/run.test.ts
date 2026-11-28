@@ -1,5 +1,49 @@
+/**
+ * The catalogue, run against evidence a test constructs.
+ *
+ * No filesystem anywhere. Every fact is a literal, which is what lets the skipped cases be arranged at all — on disk
+ * they need a failure in another layer, which is a slow and indirect way to test a rule that is one `if`.
+ *
+ * ## The scenario inventory is enforced, not described
+ *
+ * `CASES` is keyed by the identifiers the catalogue declares. The first case asserts the two sets are equal, so a
+ * scenario declared without a fixture fails here, and a fixture for a scenario nobody declared fails too. That is the
+ * traceability KPI made mechanical: the register cannot claim a case that does not exist.
+ *
+ * ## Fact groups are built by factories, never by literals in a spread
+ *
+ * `runtimeFacts` and `managerFacts` exist because a spread that replaces a whole group silently drops members the type
+ * requires: `{ ...facts, runtime: { nodeVersion } }` compiled, and then the comparison read `required.range` from
+ * `undefined`. A spread's result is never checked field-by-field, so nothing catches it — a factory is where the
+ * required members live, and an override can replace them but never omit them.
+ *
+ * The configuration group has the same property for a different reason: its two members were decided from one capture of
+ * one file, so `decided()` takes both. A fixture that supplied only the location would compile into a validity verdict
+ * nobody made.
+ *
+ * ## The environment group is a verdict read twice, and the group is not the selection
+ *
+ * `EnvironmentFacts` carries the *decided inspection* — one resolution of one profile — plus the two things a
+ * classification needs and the inspection cannot know: whether the operation requires an environment at all, and which
+ * profiles exist. There is deliberately no `selected` member: the inspection carries the selection *and* its origin,
+ * so a second copy could only disagree with it.
+ *
+ * Two checks read that one group, and the second declares the first as its precondition. That is why every ENV-001 case
+ * below uses a `profile-valid` inspection: if the profile check failed, the runner would skip the variables check and
+ * the case would assert a skip rather than the presence verdict it is named for.
+ *
+ * ## The configuration group is a state machine, and the discriminant matters
+ *
+ * `CheckFacts.configuration` is a `ConfigInspection` — six `state` values — not the loader's `kind`-keyed outcome.
+ * That distinction is load-bearing at runtime as well as in the type system: the rule switches on `inspection.state`,
+ * so a fixture carrying `kind` instead matches no case, falls through, and makes `evaluate` return `undefined`. The
+ * runner then reports `Cannot read properties of undefined` from inside itself, which names the runner rather than the
+ * fixture. Every fixture below therefore carries `state`, and the fixtures are named for the state they produce.
+ */
+
 import { describe, expect, it } from "vitest";
 
+import type { EnvironmentInspection } from "~/config/environment/index.js";
 import type { ConfigInspection } from "~/config/index.js";
 import {
   CheckId,
@@ -42,37 +86,6 @@ import type {
   ConfigValidationGapCause,
 } from "~/project/cypress-config/index.js";
 
-/**
- * The catalogue, run against evidence a test constructs.
- *
- * No filesystem anywhere. Every fact is a literal, which is what lets the skipped cases be arranged at all — on disk
- * they need a failure in another layer, which is a slow and indirect way to test a rule that is one `if`.
- *
- * ## The scenario inventory is enforced, not described
- *
- * `CASES` is keyed by the identifiers the catalogue declares. The first case asserts the two sets are equal, so a
- * scenario declared without a fixture fails here, and a fixture for a scenario nobody declared fails too. That is the
- * traceability KPI made mechanical: the register cannot claim a case that does not exist.
- *
- * ## Fact groups are built by factories, never by literals in a spread
- *
- * `runtimeFacts` and `managerFacts` exist because a spread that replaces a whole group silently drops members the type
- * requires: `{ ...facts, runtime: { nodeVersion } }` compiled, and then the comparison read `required.range` from
- * `undefined`. A spread's result is never checked field-by-field, so nothing catches it — a factory is where the
- * required members live, and an override can replace them but never omit them.
- *
- * The configuration group has the same property for a different reason: its two members were decided from one capture of
- * one file, so `decided()` takes both. A fixture that supplied only the location would compile into a validity verdict
- * nobody made.
- *
- * ## The configuration group is a state machine, and the discriminant matters
- *
- * `CheckFacts.configuration` is a `ConfigInspection` — six `state` values — not the loader's `kind`-keyed outcome.
- * That distinction is load-bearing at runtime as well as in the type system: the rule switches on `inspection.state`,
- * so a fixture carrying `kind` instead matches no case, falls through, and makes `evaluate` return `undefined`. The
- * runner then reports `Cannot read properties of undefined` from inside itself, which names the runner rather than the
- * fixture. Every fixture below therefore carries `state`, and the fixtures are named for the state they produce.
- */
 type AnyCode = DiagnosticCode | ValidationCode;
 
 const CONFIG_PATH = "/project/qat.config.json";
@@ -326,6 +339,100 @@ function managerFacts(
 }
 
 /* ─────────────────────────────────────────────────────────────────────────────
+ * Environment verdicts
+ *
+ * The inspection is a closed union, so each fixture names the state it produces. `selectedEnvironment` covers the two
+ * states a *healthy* profile can be in — valid, with its references examined — and the rest are one-off literals.
+ *
+ * The provenance of every fixture is `configuration-default`, which is the ordinary case: a project that declared a
+ * `defaultEnvironment` and did not pass `--env`. The two cases that need a different origin say so, because the origin
+ * is what distinguishes "a person asked for a profile that is not there" from "the file points at one that is not
+ * there".
+ * ───────────────────────────────────────────────────────────────────────────── */
+
+/** The `profile-valid` member, and the two arrays every reference fixture is shaped from. */
+type ProfileValid = Extract<EnvironmentInspection, { state: "profile-valid" }>;
+type VariableFact = ProfileValid["variables"][number];
+type PathFact = ProfileValid["paths"][number];
+
+/** A usable profile, with the references a case wants examined. */
+function selectedEnvironment(
+  variables: readonly VariableFact[] = [],
+  paths: readonly PathFact[] = [
+    { reason: "ENV_PATH_RESOLVED", field: "fixtures.directory" },
+  ],
+): EnvironmentFacts {
+  return {
+    inspection: {
+      state: "profile-valid",
+      origin: "configuration-default",
+      name: "staging",
+      variables,
+      paths,
+    },
+    // A doctor run describes the project; it is not about to execute anything, so an environment is not *required*.
+    requiredForOperation: false,
+    declared: ["staging"],
+  };
+}
+
+/** Nothing was supplied anywhere. A supported state, and the commonest project shape in the ecosystem. */
+const NO_SELECTION: EnvironmentFacts = {
+  inspection: { state: "not-selected", origin: "none" },
+  requiredForOperation: false,
+  declared: ["staging"],
+};
+
+/** Something was supplied and it is unusable as written. */
+const UNUSABLE_SELECTION: EnvironmentFacts = {
+  inspection: { state: "selection-invalid", origin: "explicit-cli", raw: "" },
+  requiredForOperation: false,
+  declared: ["staging"],
+};
+
+/** A person asked for a profile no file declares. */
+const UNKNOWN_PROFILE: EnvironmentFacts = {
+  inspection: {
+    state: "profile-not-found",
+    origin: "explicit-cli",
+    name: "production",
+    available: ["staging"],
+  },
+  requiredForOperation: false,
+  declared: ["staging"],
+};
+
+/** The file's own default points at a profile no file declares — a different owner, and a different code. */
+const DANGLING_DEFAULT: EnvironmentFacts = {
+  inspection: {
+    state: "profile-not-found",
+    origin: "configuration-default",
+    name: "staging",
+    available: ["development"],
+  },
+  requiredForOperation: false,
+  declared: ["development"],
+};
+
+/** Declared, and the schema rejected it. Field paths only; a rejected base URL can carry credentials. */
+const INVALID_PROFILE: EnvironmentFacts = {
+  inspection: {
+    state: "profile-invalid",
+    origin: "configuration-default",
+    name: "staging",
+    issues: [
+      {
+        path: "baseUrl",
+        code: "invalid_string",
+        expected: "an absolute URL",
+      },
+    ],
+  },
+  requiredForOperation: false,
+  declared: ["staging"],
+};
+
+/* ─────────────────────────────────────────────────────────────────────────────
  * Cypress configuration verdicts
  *
  * One constant per reason the location and validation verdicts can carry, named after the scenario that uses it. A
@@ -503,7 +610,9 @@ function decided(
  */
 const RUNTIME: RuntimeFacts = runtimeFacts();
 const MANAGER: PackageManagerFacts = managerFacts();
-const ENVIRONMENT: EnvironmentFacts = { declared: [] };
+const ENVIRONMENT: EnvironmentFacts = selectedEnvironment([
+  { reason: "ENV_VARIABLE_PRESENT", name: "API_TOKEN" },
+]);
 const OUTPUT: OutputFacts = {
   reports: { path: "results/reports", writable: true },
   evidence: { path: "results/evidence", writable: true },
@@ -583,7 +692,10 @@ function withWarnings(
 function caseOf(scenario: string): Case {
   const entry = CASES[scenario];
 
-  if (entry === undefined) throw new Error(`No fixture for ${scenario}.`);
+  if (entry === undefined) {
+    const message = `No fixture for ${scenario}.`;
+    throw new Error(message);
+  }
 
   return entry;
 }
@@ -673,6 +785,26 @@ describe("skipping", () => {
         CheckId.CypressConfigurationLocated,
       ) as string,
     });
+  });
+
+  it("skips the environment variable check when the profile itself is unusable", () => {
+    // The environment pair's precondition, exercised directly. A reference inside a profile that failed the schema
+    // belongs to a document nobody parsed, so presence is not a fact about the project — the skip names the cause
+    // rather than reporting a missing variable against a profile the reader has already been told to fix.
+    const report = runChecks({ ...HEALTHY, environment: INVALID_PROFILE });
+
+    expect([
+      fingerprint(outcomeOf(report, CheckId.EnvironmentResolvable)),
+      fingerprint(outcomeOf(report, CheckId.EnvironmentVariablesPresent)),
+    ]).toStrictEqual([
+      `${CheckStatus.Failed} ${HealthCode.EnvironmentProfileInvalid}`,
+      CheckStatus.Skipped,
+    ]);
+
+    // One failure, not two: the consequence is not reported as a problem in its own right.
+    expect(failedChecks(report).map((outcome) => outcome.check)).toStrictEqual([
+      CheckId.EnvironmentResolvable,
+    ]);
   });
 
   it("distinguishes missing evidence from a failed precondition", () => {
@@ -830,6 +962,113 @@ describe("the package-manager ladder", () => {
   });
 });
 
+describe("the environment pair", () => {
+  it("reports a profile problem on the profile check and never on the variables check", () => {
+    // One condition, one row. The variables check skips rather than repeating the failure, which is the whole reason
+    // the pair is two identifiers with a precondition between them.
+    const report = runChecks({ ...HEALTHY, environment: UNKNOWN_PROFILE });
+
+    expect(outcomeOf(report, CheckId.EnvironmentVariablesPresent)?.status).toBe(
+      CheckStatus.Skipped,
+    );
+  });
+
+  it("separates an unusable selection from an undeclared profile", () => {
+    // Both are failures and they are not the same failure: the first quotes what the caller typed, the second lists
+    // what exists. A single code would have to pick one message for both.
+    const unusable = runChecks({ ...HEALTHY, environment: UNUSABLE_SELECTION });
+    const undeclared = runChecks({ ...HEALTHY, environment: UNKNOWN_PROFILE });
+
+    expect([
+      fingerprint(outcomeOf(unusable, CheckId.EnvironmentResolvable)),
+      fingerprint(outcomeOf(undeclared, CheckId.EnvironmentResolvable)),
+    ]).toStrictEqual([
+      `${CheckStatus.Failed} ${HealthCode.EnvironmentSelectionInvalid}`,
+      `${CheckStatus.Failed} ${HealthCode.EnvironmentUndeclared}`,
+    ]);
+  });
+
+  it("distinguishes a dangling default from a request for something absent", () => {
+    // Same inspection state, different origin. A person naming something is fixed by changing the command; a file
+    // naming something is fixed by changing a committed default — and it strands *every* command, not one.
+    const report = runChecks({ ...HEALTHY, environment: DANGLING_DEFAULT });
+
+    expect(outcomeOf(report, CheckId.EnvironmentResolvable)).toMatchObject({
+      status: CheckStatus.Failed,
+      finding: { code: HealthCode.EnvironmentReferenceDangling },
+    });
+  });
+
+  it("does not block on a project that selected no environment", () => {
+    // The commonest shape in the ecosystem, and a supported state: the documented defaults apply. A doctor that failed
+    // — or warned — here would be read as noise about a project that is fine.
+    const report = runChecks({ ...HEALTHY, environment: NO_SELECTION });
+
+    expect([
+      fingerprint(outcomeOf(report, CheckId.EnvironmentResolvable)),
+      fingerprint(outcomeOf(report, CheckId.EnvironmentVariablesPresent)),
+    ]).toStrictEqual([CheckStatus.Passed, CheckStatus.Passed]);
+    expect(isBlocked(report)).toBe(false);
+  });
+
+  it("treats a required variable and an unstated one at different weights", () => {
+    // The conditional-severity rule, asserted where it is decided. The profile states the requirement, so the check
+    // does not have to infer it — and the two outcomes are a blocking failure and an advisory warning, not two
+    // strengths of one verdict.
+    const required = runChecks({
+      ...HEALTHY,
+      environment: selectedEnvironment([
+        {
+          reason: "ENV_VARIABLE_MISSING",
+          name: "API_TOKEN",
+          requirement: "required",
+        },
+      ]),
+    });
+    const unstated = runChecks({
+      ...HEALTHY,
+      environment: selectedEnvironment([
+        {
+          reason: "ENV_VARIABLE_MISSING",
+          name: "API_TOKEN",
+          requirement: "unspecified",
+        },
+      ]),
+    });
+
+    expect([
+      fingerprint(outcomeOf(required, CheckId.EnvironmentVariablesPresent)),
+      fingerprint(outcomeOf(unstated, CheckId.EnvironmentVariablesPresent)),
+      isBlocked(required),
+      isBlocked(unstated),
+    ]).toStrictEqual([
+      `${CheckStatus.Failed} ${HealthCode.EnvironmentVariableMissing}`,
+      `${CheckStatus.Warned} ${HealthCode.EnvironmentVariableMissingUnconfirmed}`,
+      true,
+      false,
+    ]);
+  });
+
+  it("reports nothing for a variable the profile marked optional and did not get", () => {
+    // The absence of a finding is the assertion. An optional variable that is missing is the documented default;
+    // reporting it would teach readers that the environment check produces noise.
+    const report = runChecks({
+      ...HEALTHY,
+      environment: selectedEnvironment([
+        {
+          reason: "ENV_VARIABLE_MISSING",
+          name: "OPTIONAL_FLAG",
+          requirement: "optional",
+        },
+      ]),
+    });
+
+    expect(outcomeOf(report, CheckId.EnvironmentVariablesPresent)?.status).toBe(
+      CheckStatus.Passed,
+    );
+  });
+});
+
 describe("the severity rule", () => {
   it.each(
     CHECKS.filter((check) => check.severity === CheckSeverity.Warning).flatMap(
@@ -893,6 +1132,10 @@ interface Case {
  * installation — because that is the order in which a rung becomes reachable. Reading down the list is reading the
  * check. The configuration groups are the same idea across two checks: readability first, then the validity that can
  * only be asked once a document was obtained.
+ *
+ * The environment groups follow the same shape: the profile first, then the references inside it. Every variables case
+ * uses a `profile-valid` inspection, because a failing profile would make the runner skip the variables check and the
+ * case would assert a skip instead of the presence verdict it is named for.
  */
 const CASES: Record<string, Case> = {
   // runtime compatibility — what QAT itself requires
@@ -1637,28 +1880,181 @@ const CASES: Record<string, Case> = {
     status: CheckStatus.Skipped,
   },
 
-  // environment profiles
+  // environment profiles — the profile itself (ENV-002)
+  //
+  // Seven states, four of which reach different codes. The first two are passes for different reasons: one because
+  // nothing needed doing, one because what was selected is usable.
   "qat.environment-resolvable.none-selected": {
     check: CheckId.EnvironmentResolvable,
-    facts: { ...HEALTHY, environment: { declared: ["staging"] } },
+    facts: { ...HEALTHY, environment: NO_SELECTION },
+    // A pass. Most projects have no environment-specific settings, and the documented behaviour for a run with no
+    // selection is to use the defaults.
     status: CheckStatus.Passed,
   },
   "qat.environment-resolvable.declared": {
     check: CheckId.EnvironmentResolvable,
-    facts: {
-      ...HEALTHY,
-      environment: { selected: "staging", declared: ["staging"] },
-    },
+    facts: HEALTHY,
     status: CheckStatus.Passed,
   },
   "qat.environment-resolvable.undeclared": {
     check: CheckId.EnvironmentResolvable,
-    facts: {
-      ...HEALTHY,
-      environment: { selected: "production", declared: ["staging"] },
-    },
+    facts: { ...HEALTHY, environment: UNKNOWN_PROFILE },
     status: CheckStatus.Failed,
     code: HealthCode.EnvironmentUndeclared,
+  },
+  "qat.environment-resolvable.selection-unusable": {
+    check: CheckId.EnvironmentResolvable,
+    facts: { ...HEALTHY, environment: UNUSABLE_SELECTION },
+    // Reported rather than replaced. Falling through to the default when the flag is present but empty is how a run
+    // ends up against an environment nobody chose.
+    status: CheckStatus.Failed,
+    code: HealthCode.EnvironmentSelectionInvalid,
+  },
+  "qat.environment-resolvable.default-dangling": {
+    check: CheckId.EnvironmentResolvable,
+    facts: { ...HEALTHY, environment: DANGLING_DEFAULT },
+    // The configuration points at a profile that does not exist. A different owner and a different code from the
+    // explicit case above, because the fix is to a committed default rather than to an invocation.
+    status: CheckStatus.Failed,
+    code: HealthCode.EnvironmentReferenceDangling,
+  },
+  "qat.environment-resolvable.profile-invalid": {
+    check: CheckId.EnvironmentResolvable,
+    facts: { ...HEALTHY, environment: INVALID_PROFILE },
+    status: CheckStatus.Failed,
+    code: HealthCode.EnvironmentProfileInvalid,
+  },
+  "qat.environment-resolvable.paths-unusable": {
+    check: CheckId.EnvironmentResolvable,
+    facts: {
+      ...HEALTHY,
+      environment: selectedEnvironment(
+        [],
+        [
+          {
+            reason: "ENV_PATH_OUTSIDE_PROJECT",
+            field: "fixtures.directory",
+            declared: "../../shared/fixtures",
+          },
+        ],
+      ),
+    },
+    // The profile is valid; a path it declares is not usable. A shape problem, not a value problem.
+    status: CheckStatus.Failed,
+    code: HealthCode.EnvironmentPathInvalid,
+  },
+
+  // environment profiles — the references inside it (ENV-001)
+  //
+  // Every case uses a usable profile, because a failing one would make the runner skip this check and the case would
+  // assert a skip rather than the presence verdict it is named for. Two of the eight are passes and the rest are the
+  // four shapes of variable problem at the two weights the catalogue allows.
+  "qat.environment-variables-present.all-present": {
+    check: CheckId.EnvironmentVariablesPresent,
+    facts: HEALTHY,
+    status: CheckStatus.Passed,
+  },
+  "qat.environment-variables-present.none-declared": {
+    check: CheckId.EnvironmentVariablesPresent,
+    facts: {
+      ...HEALTHY,
+      environment: selectedEnvironment([], []),
+    },
+    // A profile that references no variables has nothing to be missing. Silence here is correct, not incomplete.
+    status: CheckStatus.Passed,
+  },
+  "qat.environment-variables-present.required-missing": {
+    check: CheckId.EnvironmentVariablesPresent,
+    facts: {
+      ...HEALTHY,
+      environment: selectedEnvironment([
+        {
+          reason: "ENV_VARIABLE_MISSING",
+          name: "API_TOKEN",
+          requirement: "required",
+        },
+      ]),
+    },
+    // Blocking, because the profile stated the need: not meeting a stated requirement is a defect.
+    status: CheckStatus.Failed,
+    code: HealthCode.EnvironmentVariableMissing,
+  },
+  "qat.environment-variables-present.unspecified-missing": {
+    check: CheckId.EnvironmentVariablesPresent,
+    facts: {
+      ...HEALTHY,
+      environment: selectedEnvironment([
+        {
+          reason: "ENV_VARIABLE_MISSING",
+          name: "API_TOKEN",
+          requirement: "unspecified",
+        },
+      ]),
+    },
+    // Advisory, because QAT cannot establish the requirement. The honest answer is "I could not decide", which is
+    // neither a pass nor a failure — and it must not block.
+    status: CheckStatus.Warned,
+    code: HealthCode.EnvironmentVariableMissingUnconfirmed,
+  },
+  "qat.environment-variables-present.blank-required": {
+    check: CheckId.EnvironmentVariablesPresent,
+    facts: {
+      ...HEALTHY,
+      environment: selectedEnvironment([
+        {
+          reason: "ENV_VARIABLE_BLANK",
+          name: "API_TOKEN",
+          requirement: "required",
+        },
+      ]),
+    },
+    // Distinct from missing: `export API_TOKEN=` is a deliberate act in some pipelines and an inheritance accident in
+    // others, and telling a reader "it is not set" when they can see it in their shell costs the check its credibility.
+    status: CheckStatus.Failed,
+    code: HealthCode.EnvironmentVariableBlank,
+  },
+  "qat.environment-variables-present.source-unapproved": {
+    check: CheckId.EnvironmentVariablesPresent,
+    facts: {
+      ...HEALTHY,
+      environment: selectedEnvironment([
+        {
+          reason: "ENV_REFERENCE_SOURCE_NOT_APPROVED",
+          name: "API_TOKEN",
+          source: "file",
+        },
+      ]),
+    },
+    // Blocking: a reference whose source QAT will not read is a declaration it will never honour, so the run that
+    // follows fails on a variable that looks declared.
+    status: CheckStatus.Failed,
+    code: HealthCode.EnvironmentVariableSourceUnapproved,
+  },
+  "qat.environment-variables-present.name-unusable": {
+    check: CheckId.EnvironmentVariablesPresent,
+    facts: {
+      ...HEALTHY,
+      environment: selectedEnvironment([
+        { reason: "ENV_REFERENCE_NAME_INVALID", name: "api-token" },
+      ]),
+    },
+    // The variable may well be set and QAT still cannot deliver it. A name it cannot pass faithfully is refused rather
+    // than silently altered.
+    status: CheckStatus.Failed,
+    code: HealthCode.EnvironmentVariableNameInvalid,
+  },
+  "qat.environment-variables-present.unverified": {
+    check: CheckId.EnvironmentVariablesPresent,
+    facts: {
+      ...HEALTHY,
+      environment: selectedEnvironment([
+        { reason: "ENV_VARIABLE_UNVERIFIABLE", name: "API_TOKEN" },
+      ]),
+    },
+    // "I could not look" and "it is not set" lead a reader to different places. Never a pass, because silence must not
+    // read as consent; never a failure, because a question we could not answer must not block work we can still do.
+    status: CheckStatus.Warned,
+    code: HealthCode.EnvironmentVariableUnverifiable,
   },
 
   // output permissions

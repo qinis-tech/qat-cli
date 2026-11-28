@@ -5,6 +5,17 @@
  * usually harmless and occasionally terrible: a deployment that sets `API_URL=` to disable a
  * feature is not the same as one that never mentions it, and a tool that reports "missing" for both
  * sends the reader looking for the wrong problem.
+ *
+ * Two vocabularies live here, deliberately:
+ *
+ *   VariableState    faithful. Says what the source literally contains. Never trims, so a value of
+ *                    " " stays `present` — a caller that asked for a value must receive the value.
+ *   VariablePresence judgement. Says whether a variable is *usable*, so whitespace-only counts as
+ *                    blank. Used by diagnostics, which must not report "set" for something that
+ *                    will fail authentication.
+ *
+ * Keeping them apart is the whole discipline of this module: a value-faithful lookup is a terrible
+ * presenceness test, and a presenceness test is a terrible value source.
  */
 import { ErrorCode } from "../errors/codes.js";
 import { InvalidConfigurationError } from "../errors/errors.js";
@@ -58,13 +69,19 @@ export type EnvironmentVariable =
  *
  * A programming error rather than a user error, so it throws `TypeError` rather than an application
  * error — the same distinction `writeJson` draws for a value it cannot serialise.
+ *
+ * Control characters are rejected as well as `=` and NUL. That is not pedantry: names are printed in
+ * diagnostics and logs, and a name containing a newline or an escape sequence forges output. Since
+ * no legitimate deployment produces such a name, refusing it costs nothing and closes a
+ * log-injection hole.
  */
 function assertUsableName(name: string): void {
   if (name.trim().length === 0) {
     throw new TypeError("Environment variable name is empty.");
   }
 
-  if (name.includes("=") || name.includes("\0")) {
+  // eslint-disable-next-line no-control-regex -- rejecting control characters is the point
+  if (name.includes("=") || /[\u0000-\u001f\u007f]/.test(name)) {
     throw new TypeError(
       `Environment variable name ${JSON.stringify(name)} is not valid.`,
     );
@@ -75,7 +92,8 @@ function assertUsableName(name: string): void {
  * Looks a variable up, distinguishing absent from empty.
  *
  * A value of whitespace only is `present`. Trimming would change what a caller receives, and a
- * deliberate space is not the same as nothing.
+ * deliberate space is not the same as nothing. If you want the usability judgement instead, use
+ * `probeVariablePresence`.
  */
 export function readVariable(
   name: string,
@@ -99,6 +117,9 @@ export function readVariable(
  * @throws {InvalidConfigurationError} when it is missing or empty. The message names the variable
  *   and never its value: an error about a credential must not become a place a credential is
  *   printed.
+ *
+ * Note that an empty value is rejected here while whitespace is accepted — the same faithfulness
+ * rule as `readVariable`, applied to a call site that has explicitly asked for a usable value.
  */
 export function requireVariable(
   name: string,
@@ -135,6 +156,56 @@ export function variableOrDefault(
   return variable.state === VariableState.Present ? variable.value : fallback;
 }
 
+/**
+ * Whether a variable is usable — the diagnostics vocabulary.
+ *
+ * `blank` covers both the empty string and whitespace-only content. That is the one place this
+ * module deliberately disagrees with `VariableState.Empty`: a token of spaces will fail
+ * authentication exactly like a missing one, and telling a user "it is set" when it is not usable
+ * is the wrong answer to the question a diagnostic is asking.
+ *
+ * `unknown` is absent on purpose. This function cannot fail: either the source yields a value or it
+ * does not. The extra state belongs to the caller that might not have a source at all, and it is
+ * added there rather than invented here.
+ *
+ * Returns an enum, never a value. A caller that needs the value must go through `readVariable` and
+ * thereby accept the responsibility that comes with it.
+ */
+export const VariablePresence = {
+  /** Set to something usable. */
+  Set: "set",
+  /** Set to empty or whitespace-only content. */
+  Blank: "blank",
+  /** Not set at all. */
+  Unset: "unset",
+} as const;
+
+export type VariablePresence =
+  (typeof VariablePresence)[keyof typeof VariablePresence];
+
+/**
+ * Judges whether a variable is usable, without exposing what it contains.
+ *
+ * This is the function diagnostics are meant to call. It existed as a gap before: the only options
+ * were `readVariable`, which hands back a secret-shaped string, or a bare `source[name] !== undefined`
+ * check, which each caller implemented slightly differently and one of them got wrong.
+ */
+export function probeVariablePresence(
+  name: string,
+  source: EnvironmentSource = process.env,
+): VariablePresence {
+  assertUsableName(name);
+
+  const raw = source[name];
+
+  if (raw === undefined) return VariablePresence.Unset;
+
+  // Empty *or* whitespace-only: both are unusable for the purpose a diagnostic is asking about.
+  if (raw.trim().length === 0) return VariablePresence.Blank;
+
+  return VariablePresence.Set;
+}
+
 export interface EnvironmentEntry {
   readonly name: string;
   readonly state: VariableState;
@@ -156,6 +227,10 @@ export interface DescribeEnvironmentOptions {
  * Requires a prefix or an explicit list — there is no way to ask for "everything". Dumping a process
  * environment into a diagnostic output is how unrelated credentials end up in bug reports, and the
  * convenience is not worth the category of accident it creates.
+ *
+ * Output is de-duplicated and sorted regardless of how the names arrived. Evidence that changes
+ * order between runs is evidence nobody can diff, and a caller passing the same name twice is
+ * asking for two identical lines, not two facts.
  */
 export function describeEnvironment(
   options: DescribeEnvironmentOptions = {},
@@ -165,11 +240,9 @@ export function describeEnvironment(
 
   const names =
     options.names ??
-    Object.keys(source)
-      .filter((name) => name.startsWith(prefix))
-      .sort();
+    Object.keys(source).filter((name) => name.startsWith(prefix));
 
-  return names.map((name) => {
+  return [...new Set(names)].sort().map((name) => {
     const variable = readVariable(name, source);
 
     return {

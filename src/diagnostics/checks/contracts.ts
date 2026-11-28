@@ -8,15 +8,16 @@
  * ## Facts are grouped by source, not by check
  *
  * One source usually answers several checks: the assessment answers five, the composed
- * configuration verdict two, the Cypress configuration snapshot two. Grouping by check would mean
- * reading the same tree twice, and two readings of one tree are two readings that can disagree.
+ * configuration verdict two, the environment inspection two, and the Cypress configuration snapshot
+ * two. Grouping by check would mean reading the same tree twice, and two readings of one tree are
+ * two readings that can disagree.
  *
  * The Cypress group is the clearest case of the rule: three checks read one assessment of one
  * installation, so the installation is captured once and the conditions are decided once. A group
  * per check would have meant three captures, three chances to see three different filesystems and
  * three findings that contradict each other about what is installed.
  *
- * ## Three near-identical names, three different subjects
+ * ## Four near-identical names, four different subjects
  *
  * The vocabulary is close enough to be worth stating once, because choosing the wrong group is a
  * mistake the compiler cannot catch:
@@ -24,8 +25,13 @@
  * | Group | Subject | Answers |
  * | --- | --- | --- |
  * | `configuration` | **QAT's** own configuration file | Can this file be trusted, what did it say, and did the schema accept it |
+ * | `environment` | The **selected profile inside** that file | Which environment applies, and are the references it declares present |
  * | `cypress` | The **installed** Cypress package and binary | Is the framework healthy enough to run |
  * | `cypressConfiguration` | The **project's** Cypress configuration file | Can it be located, and can it be validated |
+ *
+ * `configuration` and `environment` are the pair most easily confused: the first is about a document,
+ * the second about one named section of it. A finding that quoted the wrong one would tell a user to
+ * fix a file that is fine.
  *
  * The last two are both "Cypress health" and neither subsumes the other: a project with a perfect
  * configuration and no installed binary is broken in one place, and a project with a healthy
@@ -53,6 +59,12 @@
  * documented defaults, blocking when it cannot. A check that skipped because the *group* was absent
  * would be silent on precisely the condition `CFG-001` exists to report.
  *
+ * `EnvironmentFacts` is the fourth, and it fails in the more expensive direction. A configuration
+ * that exists but selects no profile is a *result*: the run is fine on a laptop and wrong in CI, and
+ * saying so is the whole job of `ENV-002`. Skipping because the group was missing and skipping
+ * because no profile was selected would look identical in a report while meaning opposite things —
+ * one is a bug in QAT, the other is a bug in the project.
+ *
  * ## Why the runtime group carries a requirement as well as a version
  *
  * A check is data with one input: `evaluate(facts)`. It has no constructor, no injected dependency
@@ -78,7 +90,7 @@
  * Every field below is read by at least one check or by the sentence it produces. A fact nothing
  * reads is a fact the next person will assume is load-bearing.
  */
-
+import type { EnvironmentInspection } from "../../config/environment/index.js";
 import type { ConfigInspection } from "../../config/index.js";
 import type {
   CheckCategory,
@@ -87,21 +99,11 @@ import type {
   CheckSeverity,
 } from "../../core/application/checks.js";
 import type { ProjectAssessment } from "../../core/application/validation.js";
-// The widened name. One shape serves the runtime QAT requires, the bound a project's framework
-// release declares, and the version a project pins for its package manager — which is why this
-// layer narrows it once, by `Pick`, rather than declaring three near-identical fact types and
-// hoping they stay in step.
 import type { VersionRequirement } from "../../core/compatibility/index.js";
-// The two decided configuration verdicts. Imported as verdicts rather than as raw observation —
-// the file was read once, by the gatherer, and what reaches a check is the conclusion plus the
-// evidence that supports it.
 import type {
   ConfigDiscovery,
   ConfigValidation,
 } from "../../project/cypress-config/index.js";
-// Framework health conditions are decided by a pure assessment inside the gatherer, so this layer
-// imports the *result* type only. Diagnostics depends on the project layer; the project layer
-// knows nothing about diagnostics, so the direction stays acyclic.
 import type { CypressConditionResult } from "../../project/cypress-health/index.js";
 
 /**
@@ -117,6 +119,7 @@ export const FactGroup = {
   PackageManager: "package-manager",
   Assessment: "assessment",
   Configuration: "configuration",
+  /** The selected environment profile, and the references it declares. */
   Environment: "environment",
   Output: "output",
   /** The installed framework's health conditions, already decided. */
@@ -398,10 +401,62 @@ export interface CypressConfigurationFacts {
   readonly validation: ConfigValidation;
 }
 
+/**
+ * The selected environment profile, as far as anything was entitled to conclude.
+ *
+ * A verdict, like `ConfigurationFacts` and the two Cypress groups, and for the same reason: the
+ * configuration was read once and the selection was made once, so what reaches a check is the
+ * conclusion rather than a second resolution. Two checks read it — one asks whether the profile the
+ * command named is usable at all, the other whether the variables that profile references are
+ * present — and both must be describing the same resolution of the same file.
+ *
+ * ## Why there is no separate `selected` member
+ *
+ * `EnvironmentInspection` carries the origin of the choice in every state that has one: whether the
+ * profile came from a flag, from the process environment, or from the file's default. A separate
+ * `selected` field would be a second copy of a fact already inside the verdict — and the two would
+ * eventually disagree about the run where the flag was present but empty, which is exactly the run
+ * worth reporting precisely.
+ *
+ * ## Why `requiredForOperation` is evidence and not a check concern
+ *
+ * The same absence is a non-event for `doctor` and a blocker for a command about to execute tests.
+ * That difference is decided by the caller before the catalogue runs, and it changes a finding's
+ * severity without changing one fact about the project. A check that inferred it would be guessing
+ * which operation it was serving, and would be wrong on whichever one it guessed second.
+ *
+ * Recording it here is also what lets the finding explain its own severity: "no environment is
+ * selected, and this command needs one" is a sentence the reader can check, while a severity
+ * applied silently is one they have to take on trust.
+ *
+ * ## What is deliberately not here
+ *
+ * No values. Not one, for any variable, in any state. The inspection carries *names* and *presence
+ * states*, which is the entire purpose of the presence port: the checks layer can say what is
+ * missing without ever holding what it is missing. Redaction is not applied to this group because
+ * there is nothing to redact, and adding a redaction step would imply otherwise — and imply that a
+ * future change could start putting values here.
+ */
 export interface EnvironmentFacts {
-  /** The profile a command asked for: a flag, or the file's default. Absent when neither named one. */
-  readonly selected?: string;
-  /** Every profile the configuration declares, in file order. Empty when there is no configuration at all. */
+  /** The decided state of the selection, from one resolution of one configuration. */
+  readonly inspection: EnvironmentInspection;
+
+  /**
+   * Whether the operation being checked needs an environment at all.
+   *
+   * Decides the severity of "nothing was selected" and nothing else: informational for a diagnostic
+   * run, blocking for a run that is about to execute. Carried rather than inferred so the verdict is
+   * both correct and reproducible from the evidence alone.
+   */
+  readonly requiredForOperation: boolean;
+
+  /**
+   * Every profile the configuration declares, sorted.
+   *
+   * Read by the sentence for a run with no selection: "declare one of …" is only actionable if the
+   * reader is told what exists. Not a decision input — which profile applies was decided by the
+   * inspection, and a second list here could not disagree with it without contradicting the verdict.
+   */
   readonly declared: readonly string[];
 }
 
@@ -437,6 +492,7 @@ export interface CheckFacts {
   readonly assessment?: ProjectAssessment;
   /** QAT's own configuration, composed into one verdict that distinguishes absent from malformed from unsupported from schema-invalid. */
   readonly configuration?: ConfigurationFacts;
+  /** The selected environment profile and the references it declares, decided once for the two checks that read them. */
   readonly environment?: EnvironmentFacts;
   readonly output?: OutputFacts;
   /** The installed framework's health conditions, decided once for the checks that read them. */
@@ -509,8 +565,10 @@ export interface CheckDefinition {
    *
    * Framework checks use it for their real dependency: a binary cache is keyed by version, so a check
    * that inspects the cache declares the check that establishes the version. The configuration checks
-   * use it the same way: nothing can be validated until something has been located, and nothing can be
-   * located in a file that could not be read.
+   * use it the same way: nothing can be validated until something has been located, and nothing can
+   * be located in a file that could not be read. The environment checks are the third case: a
+   * reference inside a profile that could not be resolved is not a fact about the variable, so
+   * presence is not reported until the profile itself is usable.
    */
   readonly precondition?: CheckId;
   /** What an unfavourable answer means. The same value for every run, whatever condition fired. */
