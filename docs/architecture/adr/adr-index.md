@@ -18,6 +18,7 @@ Newest first.
 
 | # | Title | Status | Date |
 | --- | --- | --- | --- |
+| [ADR-0038](0038-select-one-environment-by-declared-precedence-and-report-why.md) | Select one environment by declared precedence and report why | Accepted | 2026-11-28 |
 | [ADR-0037](0037-project-the-configuration-pipeline-into-a-non-throwing-inspe.md) | Project the configuration pipeline into a non-throwing inspection result | Accepted | 2026-11-27 |
 | [ADR-0036](0036-inspect-the-cypress-configuration-as-data-and-never-import-i.md) | Inspect the Cypress configuration as data and never import it | Accepted | 2026-11-26 |
 | [ADR-0035](0035-verify-the-cypress-binary-by-inspecting-its-cache-before-inv.md) | Bound the binary check's execution surface to `cypress verify` | Accepted | 2026-11-26 |

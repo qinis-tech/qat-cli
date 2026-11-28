@@ -17,13 +17,15 @@
  * The rule for *asynchrony* is that it follows from I/O, not from habit. A member is
  * synchronous only when it performs no I/O — in which case a promise would announce work
  * that never happens, and every caller would begin handling a failure that cannot occur.
- * Four members qualify: `ConfigurationResolver.resolve` (a pure function of a validated
- * document and an absolute root), `RuntimeProbe.readNodeVersion` (a property read of a
- * value already in memory), and the two capability ports at the bottom of this file,
- * `Clock.now` and `IdGenerator.next`, which are pure calls by definition. The first two
- * are the ones that would otherwise be *tempted* into an async signature, so their own
- * documentation states the reasoning; the last two are uncontroversial. Asynchrony is
- * never dropped for convenience, and it is never added to make an interface look uniform.
+ * Five members qualify: `ConfigurationResolver.resolve` (a pure function of a validated
+ * document and an absolute root), `RuntimeProbe.readNodeVersion` (a property read of a value
+ * already in memory), `EnvironmentReader.probe` (a lookup in the in-memory map the runtime
+ * already maintains), and the two capability ports at the bottom of this file, `Clock.now`
+ * and `IdGenerator.next`, which are pure calls by definition. The first three are the ones
+ * that would otherwise be *tempted* into an async signature — each looks as though it ought
+ * to touch the world — so their own documentation states the reasoning; the last two are
+ * uncontroversial. Asynchrony is never dropped for convenience, and it is never added to
+ * make an interface look uniform.
  *
  * Path convention: a **live request** carries absolute paths, resolved once at the
  * composition boundary. **Stored and returned data** carries paths relative to a declared
@@ -47,10 +49,12 @@
  * it. The rule as this file grows is that a group moves out when its *vocabulary* is
  * independent, not when the file gets long.
  *
- * The machine-level ports below stay here for the opposite reason: each is one interface
- * with no vocabulary of its own — they borrow nothing, not even a domain type; `string`,
- * `boolean` and an optional are all they need — so a sibling file for them would be
- * ceremony around four lines.
+ * The machine-level ports below stay here for the opposite reason: each borrows nothing from
+ * another layer, not even a domain type. Two of them define a small closed union of their own
+ * — `CommandOutcome` and `EnvironmentPresence` — but a union declared here is this file's own
+ * vocabulary rather than a borrowed one, which is what keeps a one-interface port from needing
+ * a sibling file to explain itself. The rule is about *where a name comes from*, not about how
+ * many names there are.
  */
 
 // The widened name, because there is now only one. What this shape describes has grown —
@@ -151,7 +155,7 @@ export interface ProjectDiscovery {
    * Checks existence and refuses anything that is not a directory, so an invalid input
    * never reaches `diagnose`, `assess` or `discover`.
    *
-   * _@throws_ {ApplicationError} when the chosen directory does not exist or is not a
+   * __@throws__ {ApplicationError} when the chosen directory does not exist or is not a
    *   directory.
    */
   resolveWorkingDirectory(
@@ -166,8 +170,8 @@ export interface ProjectDiscovery {
    * an unusable format and an unreadable manifest all come back as findings, because the
    * caller asking this question is usually about to display them.
    *
-   * _@param_ root Absolute path to the directory to inspect.
-   * _@throws_ {ApplicationError} only when something outside the project could not be read:
+   * __@param__ root Absolute path to the directory to inspect.
+   * __@throws__ {ApplicationError} only when something outside the project could not be read:
    *   a permission failure, an I/O error.
    */
   diagnose(root: string): Promise<ProjectDiagnosis>;
@@ -186,8 +190,8 @@ export interface ProjectDiscovery {
    * caller's job, which is what keeps a gating policy and a gating message in different
    * places.
    *
-   * _@param_ root Absolute path to the directory to inspect.
-   * _@throws_ {ApplicationError} only when something outside the project could not be read.
+   * __@param__ root Absolute path to the directory to inspect.
+   * __@throws__ {ApplicationError} only when something outside the project could not be read.
    */
   assess(root: string): Promise<ProjectAssessment>;
 
@@ -198,8 +202,8 @@ export interface ProjectDiscovery {
    * `diagnose` to obtain the same findings without an exception, and `assess` to obtain a
    * per-operation verdict.
    *
-   * _@param_ root Absolute path to the directory to inspect.
-   * _@throws_ {ApplicationError} when the directory is not a project QAT can run: no project
+   * __@param__ root Absolute path to the directory to inspect.
+   * __@throws__ {ApplicationError} when the directory is not a project QAT can run: no project
    *   markers, no supported configuration, more than one configuration, a configuration in
    *   an unusable format, or no installed framework.
    */
@@ -255,7 +259,7 @@ export interface FrameworkAdapter {
    * the whole error model rests on — a failing assertion must never arrive here as a
    * rejection.
    *
-   * _@throws_ {ApplicationError} only when the framework could not run at all.
+   * __@throws__ {ApplicationError} only when the framework could not run at all.
    */
   execute(
     request: ExecutionRequest,
@@ -275,7 +279,7 @@ export interface ExecutionService {
    * Resolves a request against the project, drives the adapter, records the result and
    * returns it.
    *
-   * _@throws_ {ApplicationError} for any expected failure: discovery, configuration,
+   * __@throws__ {ApplicationError} for any expected failure: discovery, configuration,
    *   framework unavailability, storage.
    */
   run(
@@ -411,13 +415,13 @@ export interface ExecutionSummary {
  * a failure, because it means the store lost something a caller had just written.
  */
 export interface ExecutionRepository {
-  /** _@throws_ {ApplicationError} when a record with this identifier already exists. */
+  /** __@throws__ {ApplicationError} when a record with this identifier already exists. */
   create(record: ExecutionRecord): Promise<void>;
 
   /**
    * Records how a run ended.
    *
-   * _@throws_ {ApplicationError} when the record does not exist, or has already been
+   * __@throws__ {ApplicationError} when the record does not exist, or has already been
    *   completed — both indicate a second writer or a retry defect, and silently
    *   overwriting would hide it.
    */
@@ -493,7 +497,7 @@ export interface ReportArtifact {
  */
 export interface ReportGenerator {
   readonly format: ReportFormat;
-  /** _@throws_ {ApplicationError} when the report could not be written. */
+  /** __@throws__ {ApplicationError} when the report could not be written. */
   generate(request: ReportRequest): Promise<ReportArtifact>;
 }
 
@@ -545,6 +549,80 @@ export interface ReportGenerator {
  */
 export interface RuntimeProbe {
   readNodeVersion(): string | undefined;
+}
+
+/**
+ * Whether a variable in the host environment is usable — and never what it contains.
+ *
+ * The narrowest port in this file, and the narrowness is the security property. A
+ * `readVariable(name): string | undefined` would be marginally easier to call and would put
+ * every credential QAT can see one `console.log` away from a bug report. An enum with no
+ * value member makes that failure impossible to write rather than merely discouraged, which
+ * is the difference between a code review and a guarantee.
+ *
+ * ## Three states, not two
+ *
+ * `Unset` and `Blank` are different facts and produce different messages. A deployment that
+ * sets `API_URL=` to disable a feature is not one that never mentions it; and content of
+ * spaces fails authentication exactly like a missing value while looking present to the
+ * common `source[name] !== undefined` check. Collapsing the two sends the reader to fix the
+ * wrong thing, which is precisely the mistake this port exists to prevent.
+ *
+ * `Blank` therefore covers the empty string *and* whitespace-only content. This is a
+ * diagnostic judgement, not a value transformation: a caller that needs the literal value
+ * must not use this port at all, because there is nothing here to return.
+ *
+ * ## No `Unknown`
+ *
+ * This port either looks and finds a state, or the machine refuses to answer and it rejects.
+ * A "could not look" member would invite callers to treat an unanswered question as an
+ * answer — the single most expensive habit a diagnostic can acquire. The checks layer does
+ * carry a fourth state for that case, and it is added where the source can genuinely be
+ * unavailable — at the composition boundary — rather than invented here.
+ *
+ * ## Synchronous, on purpose
+ *
+ * `process.env` is an in-memory map the runtime already maintains. A lookup opens no file,
+ * waits for no process and reads no variable that is not already present. A promise here
+ * would announce I/O that does not happen and make every caller handle a failure that cannot
+ * occur — the same argument that makes `RuntimeProbe.readNodeVersion` synchronous, and the
+ * one most likely to be undone by someone who sees `process` and reaches for `async`.
+ *
+ * ## Answer contract
+ *
+ * - **Returns** `Set`, `Blank` or `Unset`. There is no `undefined` result: absence is a
+ *   state, not a missing answer, and a port that returned both would force every caller to
+ *   distinguish two spellings of the same fact.
+ * - **Throws** only for a name that could never be a variable — empty, or containing `=` or a
+ *   control character. That is a programming error in the caller rather than a condition of
+ *   the environment, and it surfaces as the `TypeError` the environment module already
+ *   raises. Never for absence, and never for junk *values*: a variable set to rubbish is
+ *   `Set`, and judging the rubbish is the caller's business.
+ *
+ * ## What an implementation must not do
+ *
+ * - **Never read a child process.** `printenv`, `env` or a shell is a hidden second execution
+ *   inside a read-only diagnostic, and it answers a different question than the one asked.
+ * - **Never load a file.** A `.env` reader here would silently make the check's answer depend
+ *   on a file the project can change, while the run that follows uses only the process
+ *   environment. Two sources, one truth, and the mismatch appears weeks later.
+ * - **Never log.** There is no value to log, and a port that started logging names would put
+ *   the one thing it promises never to hold straight into a diagnostic log.
+ */
+export const EnvironmentPresence = {
+  /** Set to something usable. */
+  Set: "set",
+  /** Set to empty or whitespace-only content. */
+  Blank: "blank",
+  /** Not set at all. */
+  Unset: "unset",
+} as const;
+
+export type EnvironmentPresence =
+  (typeof EnvironmentPresence)[keyof typeof EnvironmentPresence];
+
+export interface EnvironmentReader {
+  probe(name: string): EnvironmentPresence;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -833,11 +911,12 @@ export interface IdGenerator {
  * derive correlated children. Anything that needs a run-scoped logger receives one as a
  * parameter later.
  *
- * Four of these members are *evidence*, not services: `runtime`, `nodeRequirement`,
- * `executables` and `files`. They are exposed because the health checks consume gathered
- * facts rather than dependencies, and the gatherer is a command-level workflow — so the
- * halves of each question have to be reachable from outside without any command resolving
- * them for itself. None is a second source: all come from the assembly, once.
+ * Five of these members are *evidence*, not services: `runtime`, `nodeRequirement`,
+ * `environment`, `executables` and `files`. They are exposed because the health checks
+ * consume gathered facts rather than dependencies, and the gatherer is a command-level
+ * workflow — so the halves of each question have to be reachable from outside without any
+ * command resolving them for itself. None is a second source: all come from the assembly,
+ * once.
  */
 export interface Application {
   readonly logger: Logger;
@@ -882,6 +961,31 @@ export interface Application {
    * reads exactly one such value today; a second would be a second member, not a wider type.
    */
   readonly nodeRequirement: VersionRequirement;
+
+  /**
+   * Judges whether a host environment variable is usable, without reading it.
+   *
+   * A machine fact like `runtime` and `executables`, exposed for the same reason: the
+   * environment profile check is a command-level workflow that decides *which* variables to
+   * ask about from project evidence — the selected profile's declared references — and then
+   * asks this port. Keeping that decision outside and the lookup here is what lets the
+   * project layer own its vocabulary (profiles, references, approval rules) while this file
+   * stays free of it.
+   *
+   * Deliberately the primitive port rather than a profile-shaped one, and deliberately
+   * value-free. A wider interface here would drag project vocabulary into `core`; a value
+   * accessor would let a diagnostic hold a credential it has no use for. The whole reason the
+   * environment check can promise never to print a secret is that nothing in its dependency
+   * graph can obtain one.
+   *
+   * The checks layer's port carries a fourth state, `unknown`, for a source that could not be
+   * consulted. That state is added at the composition boundary — where the possibility
+   * genuinely exists — rather than here, so this port keeps saying exactly what the machine
+   * can answer:
+   *
+   *     probe: (name) => { try { return reader.probe(name); } catch { return "unknown"; } }
+   */
+  readonly environment: EnvironmentReader;
 
   /**
    * Resolves a tool's location on PATH, for the checks that must reason about installed
@@ -953,7 +1057,7 @@ export interface Application {
    * answer: a permission failure, a full disk, a filesystem that cannot create a file
    * atomically.
    *
-   * _@throws_ {ApplicationError} only when the filesystem could not answer or refused to
+   * __@throws__ {ApplicationError} only when the filesystem could not answer or refused to
    *   create the file.
    */
   readonly initialisation: InitialisationService;

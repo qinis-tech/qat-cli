@@ -1,17 +1,17 @@
 /**
  * The catalogue.
  *
- * Fifteen checks, keyed by identifier so a missing entry does not compile, in the order a reader fixes things in. Every
+ * Sixteen checks, keyed by identifier so a missing entry does not compile, in the order a reader fixes things in. Every
  * field the task asks for is a field on an entry, which is what makes "every check has a documented purpose" something a
  * test can hold rather than something a reviewer has to remember.
  *
  * ## Two kinds of check, and the difference is visible in the body
  *
  * Five **forward** a conclusion a lower layer already drew: they find the finding the assessment carries and carry it
- * onward unchanged. Ten **judge** something nothing else looks at — the runtime QAT requires, the runtime a framework
+ * onward unchanged. Eleven **judge** something nothing else looks at — the runtime QAT requires, the runtime a framework
  * requires, the package manager, the Cypress configuration's location and its validity, QAT's own configuration's
- * readability and its validity, the selected environment, the two output directories — and author a `QAT-H` finding of
- * their own.
+ * readability and its validity, the selected environment profile and the variables that profile references, and the two
+ * output directories — and author a `QAT-H` finding of their own.
  *
  * The forwarding checks are deliberately thin. Their value is not the logic; it is that the question a *user* asks is
  * answered where they look for it, with the severity and the remedy the layer that noticed the condition chose.
@@ -46,14 +46,15 @@
  * Both halves of the pair therefore consume one decided verdict, taken from one capture of one file. Neither re-reads the
  * tree, and the detection codes those three conditions produced remain in the diagnosis for every other consumer.
  *
- * ## Why seven checks are not defined in this file
+ * ## Why nine checks are not defined in this file
  *
  * Because their comparisons have real branches, and a branch that lives inside a map literal is a branch nobody tests in
  * isolation. The runtime pair has a floor, a ceiling, gap alternatives, pre-release admission and three unreadable states;
  * the package-manager check has seven conditions that each send a reader somewhere different; the Cypress configuration
  * pair has ten location reasons and six validation gaps; QAT's own configuration pair has six inspection states and eleven
- * codes between them. All seven live in `./rules/*.js` and are registered here, so this file keeps its single job: decide
- * *which* questions exist, in *what* order, under *which* identifier.
+ * codes between them; the environment pair has a selection with three possible origins, a profile that can fail in five
+ * ways and references that can fail in four more. All nine live in `./rules/*.js` and are registered here, so this file
+ * keeps its single job: decide *which* questions exist, in *what* order, under *which* identifier.
  *
  * File names in `./rules/` are not uniform, and the difference is deliberate rather than drift: the two Cypress rules are
  * named `-discovery` and `-validity` because that pair was named together, while QAT's second rule is `-schema` because
@@ -79,12 +80,31 @@
  * QAT's own configuration has exactly the same shape, which is why it gained the same pair: a file that cannot be read has
  * nothing to validate, and a file that can be read may still be rejected field by field.
  *
+ * ## Why the environment is two checks and not one
+ *
+ * The same shape, and the same argument. "Is the selected profile usable?" and "are the variables that profile references
+ * present?" are different questions with different owners: the first is fixed by editing the configuration a reader
+ * committed, the second by exporting a value on the machine that is running. A single identifier would have to carry both
+ * remedies and would report a missing variable as a consequence of a profile the reader had already been told to fix.
+ *
+ * The precondition is what makes the pair honest. An unusable profile has no references worth judging — they belong to a
+ * profile that failed the schema, so their presence is not a fact about the project — and the runner says exactly that by
+ * skipping the second check with a named cause. The alternative, judging references out of a profile we could not parse,
+ * would produce findings about a document we never read.
+ *
  * ## Absence is a pass, and whose decision that is
  *
  * "No configuration file" is a supported state: the documented defaults apply. The doctor says so by passing, exactly as
  * it did when the load outcome was the only thing it could see. Whether a *particular command* can proceed without a
  * configuration is that command's guard, not a health question — the report describes the project, and the preflight
  * refuses on behalf of the operation.
+ *
+ * "No environment selected" is the same kind of state for the same reason: most projects have no environment-specific
+ * settings at all, and the documented behaviour for a run with no selection is to use the defaults. A doctor that failed
+ * — or even warned — on the commonest configuration in the ecosystem would be teaching its readers to skim. Whether the
+ * *invoking command* needs an environment is again decided by that command, which knows what it is about to do; the
+ * environment rule receives that decision as evidence (`requiredForOperation`) rather than inferring it, so the report
+ * never guesses on a command's behalf.
  *
  * That is why there is no informational severity anywhere in this file. The vocabulary here is pass, warn, fail and skip;
  * "we looked and it is fine" is a pass, and inventing a fourth severity to say it more quietly would give the report two
@@ -95,7 +115,6 @@ import {
   CheckCategory,
   CheckId,
   CheckSeverity,
-  HealthCode,
   type DoctorDiagnosticCode,
 } from "../../core/application/checks.js";
 import {
@@ -118,9 +137,11 @@ import {
   type CheckFacts,
   type CheckVerdict,
 } from "./contracts.js";
-import { healthFinding, unwritableFinding } from "./guidance.js";
+import { unwritableFinding } from "./guidance.js";
 import { cypressConfigDiscoveryCheck } from "./rules/cypress-config-discovery.js";
 import { cypressConfigValidityCheck } from "./rules/cypress-config-validity.js";
+import { environmentProfileCheck } from "./rules/environment-profile.js";
+import { environmentVariablesCheck } from "./rules/environment-variables.js";
 import {
   frameworkRuntimeCheck,
   nodeRuntimeCheck,
@@ -428,37 +449,41 @@ const BY_ID: Readonly<Record<CheckId, Omit<CheckDefinition, "id">>> = {
    */
   [CheckId.QatConfigurationValid]: withoutId(qatConfigSchemaCheck),
 
-  [CheckId.EnvironmentResolvable]: {
-    category: CheckCategory.EnvironmentProfiles,
-    title: "Selected environment declared",
-    purpose:
-      "A run told to use an environment that does not exist fails at a point where nothing explains it; the doctor can explain it now.",
-    procedure:
-      "Compares the selected profile with the profiles the configuration declares. Nothing selected is a pass.",
-    // Only the environment facts. The precondition already guarantees a readable configuration, so requiring it again would
-    // declare a dependency this check does not read — and a check that lists a group it never touches makes the declaration
-    // untrustworthy for the ones that do.
-    requires: [FactGroup.Environment],
-    precondition: CheckId.QatConfigurationLoadable,
-    severity: CheckSeverity.Error,
-    scenarios: [
-      "qat.environment-resolvable.none-selected",
-      "qat.environment-resolvable.declared",
-      "qat.environment-resolvable.undeclared",
-    ],
-    evaluate: (facts) => {
-      const { selected, declared } = present(facts.environment);
+  /**
+   * Registered from the rule module because the question outgrew "is the name in the list".
+   *
+   * That comparison was the whole of this check when a selection could only be a string compared against an array. The
+   * conditions its owner actually hits include an empty selection that must not fall through to a default, a
+   * `defaultEnvironment` naming a profile nobody declared, a profile the schema rejected, and paths that escape the
+   * project — each with its own remedy, and each decided once in the environment classifier rather than re-derived here.
+   *
+   * The rule consumes the decided inspection: one resolution of one configuration, and both halves of the pair project
+   * from it. Nothing in this file compares a name against a list, because a second comparison is a second answer.
+   *
+   * The precondition on the configuration check is not decorative either: a file that could not be read declares no
+   * profiles, so there is nothing to resolve against and the runner says so by skipping rather than by reporting an
+   * empty set as a missing environment.
+   */
+  [CheckId.EnvironmentResolvable]: withoutId(environmentProfileCheck),
 
-      if (selected === undefined) return PASS;
-
-      return declared.includes(selected)
-        ? PASS
-        : {
-            verdict: "fail",
-            finding: healthFinding(HealthCode.EnvironmentUndeclared, facts),
-          };
-    },
-  },
+  /**
+   * The second half of the pair, immediately after the first so declaration order satisfies its precondition.
+   *
+   * A separate identifier because it carries a separate remedy: the profile check sends the reader to a file they
+   * committed, and this one sends them to a shell, a CI secret store or a `.env` they have not exported. One identifier
+   * would have to name both and would report a missing variable as a consequence of a profile the reader had already been
+   * told to fix.
+   *
+   * The precondition is the whole reason the pair is honest. References inside a profile that failed the schema belong to
+   * a document that could not be parsed, so their presence is not a fact about the project — the runner skips this check
+   * with a named cause instead of judging variables out of a profile nobody read.
+   *
+   * Severity is `Error` and the *rule* decides when that severity applies: a variable the profile marks required blocks,
+   * while one whose requirement the profile never states is reported as a warning. That looks like the conditional
+   * severity this file argues against, and is not: the check's declared severity governs only the failure it is entitled
+   * to report, and the advisory case is a different verdict it returns rather than a second weight on the same one.
+   */
+  [CheckId.EnvironmentVariablesPresent]: withoutId(environmentVariablesCheck),
 
   [CheckId.ReportsWritable]: {
     category: CheckCategory.OutputPermissions,

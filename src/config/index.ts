@@ -27,14 +27,21 @@
  * pins the published names for exactly that reason — see the note at the bottom of
  * this file.
  *
- * ## Two surfaces are published by name, not by wildcard
+ * ## Three surfaces are published by name, not by wildcard
  *
- * `inspection` and `diagnostics` are listed explicitly below. Not because they
- * are less curated — they have their own `index.ts` and are just as deliberate —
- * but because their vocabulary deliberately *overlaps in concept* with
- * validation's: both speak of statuses, severities and issues. Naming the exports
- * here forces this file to state which of those the root publishes, instead of
- * letting a wildcard drop one of them silently and leaving a caller to guess.
+ * `inspection`, `diagnostics` and `environment` are listed explicitly below. Not
+ * because they are less curated — they have their own `index.ts` and are just as
+ * deliberate — but because their vocabulary deliberately *overlaps in concept*
+ * with validation's: all three speak of statuses, severities and issues. Naming
+ * the exports here forces this file to state which of those the root publishes,
+ * instead of letting a wildcard drop one of them silently and leaving a caller to
+ * guess.
+ *
+ * For `environment` the overlap is not only conceptual, which is why it is worth
+ * being blunt about it: `diagnostics/evidence.ts` and
+ * `environment/diagnostics/evidence.ts` both export `toProjectRelative`. Under a
+ * wildcard that is not an error — one wins, one is dropped, and the loss appears
+ * somewhere else entirely. See the note on that name in the environment section.
  *
  * ## Never import this file from inside the module
  *
@@ -223,7 +230,86 @@ export type {
 } from "./diagnostics/index.js";
 
 /* -------------------------------------------------------------------------- */
-/* Guard                                                                       */
+/* Environment: the selected profile inside a QAT configuration               */
+/* -------------------------------------------------------------------------- */
+
+/**
+ * Selection, inspection, classification and evidence for the environment profile
+ * checks.
+ *
+ * Published by name for two reasons, and the second is concrete rather than
+ * precautionary.
+ *
+ * The first is the same argument the diagnostics section makes: the vocabulary
+ * overlaps configuration's *in concept*. `EnvironmentInspection` and
+ * `ConfigInspection` are different types with a similar shape; both modules speak
+ * of a state, a status, a severity and a set of issues. A wildcard here would let
+ * one side win a name collision silently and leave a caller reasoning about which
+ * of two similarly named things it actually holds.
+ *
+ * The second is that `diagnostics/evidence.ts` and
+ * `environment/diagnostics/evidence.ts` both export `toProjectRelative`. That is
+ * a genuine collision, not a conceptual one, and a wildcard resolves it by
+ * dropping one of them without a word. `toProjectRelative` is therefore *not*
+ * published here.
+ *
+ * A caller that needs the environment version imports it from
+ * `./environment/index.js` and states which module it meant, which is the only
+ * place the ambiguity can be resolved by the person who knows the answer. The
+ * duplication itself is acknowledged debt: two implementations of one idea is one
+ * too many, and the eventual fix is for the environment evidence builder to reuse
+ * the stronger of the two — after which this file publishes the survivor once.
+ *
+ * `APPROVED_VARIABLE_SOURCES` and `SELECTION_PRECEDENCE` are published because
+ * they are policy, and policy quoted in a message must be the policy that was
+ * applied. `MAX_ENVIRONMENT_NAME_LENGTH` and `isUsableName` travel with them for
+ * the same reason a bound and its predicate belong together: a caller that
+ * validated against a restated number is a caller that will eventually accept a
+ * name the selector rejects.
+ */
+export {
+  APPROVED_VARIABLE_SOURCES,
+  buildEnvironmentEvidence,
+  capList,
+  classifyEnvironment,
+  EVIDENCE_LIMITS,
+  inspectEnvironment,
+  isUsableName,
+  MAX_ENVIRONMENT_NAME_LENGTH,
+  OUTSIDE_PROJECT,
+  sanitiseDetail,
+  sanitiseName,
+  sanitiseToken,
+  SELECTION_PRECEDENCE,
+  selectEnvironment,
+} from "./environment/index.js";
+
+export type {
+  ClassifyEnvironmentOptions,
+  EnvironmentDetail,
+  EnvironmentDiagnostic,
+  EnvironmentDiagnosticId,
+  EnvironmentDiagnosticSeverity,
+  EnvironmentDiagnosticStatus,
+  EnvironmentEvidence,
+  EnvironmentEvidenceInput,
+  EnvironmentInspection,
+  EnvironmentName,
+  EnvironmentPresencePort,
+  EnvironmentReason,
+  EnvironmentSelection,
+  InspectEnvironmentDependencies,
+  PathStatus,
+  ProfileIssue,
+  SelectionOrigin,
+  VariablePresence,
+  VariableReference,
+  VariableRequirement,
+  VariableStatus,
+} from "./environment/index.js";
+
+/* -------------------------------------------------------------------------- */
+/* Guard                                                                      */
 /* -------------------------------------------------------------------------- */
 
 /**
@@ -240,4 +326,11 @@ export type {
  * `ConfigurationLoadFailure` must be added to that pinned list now: it is the only
  * *value* exported by name from `./inspect.js`, so a wildcard collision could
  * remove it without changing any other assertion in the suite.
+ *
+ * The environment names are pinned in the same way, and the guard asserts one
+ * thing more than presence: that `toProjectRelative` is **absent** from this
+ * surface. A list that only checks what is published cannot tell a deliberate
+ * omission from a wildcard accident, and `toProjectRelative` is this file's one
+ * deliberate omission. Pinning the absence is what makes the next wildcard added
+ * above fail loudly rather than quietly re-introducing the collision.
  */

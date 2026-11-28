@@ -17,27 +17,48 @@
  * So the prose below names the file it means. This is not pedantry about wording: a remedy that sends a reader to
  * `qat.config.json` is a remedy that fails, and the failure looks like the tool not recognising a file it just read.
  *
- * ## Three owners for configuration prose, and why this one stops at the tree
+ * ## Four owners for configuration prose, and why this one stops at the tree
  *
- * There are now three places a configuration condition can be described, and they are not interchangeable:
+ * There are now four places a configuration condition can be described, and they are not interchangeable:
  *
  * 1. **This catalogue**, for what a *name probe* found about the tree. "Is there a regular file with a supported
  *    configuration name at the root?" — answered by listing directory entries, never by reading one. Its codes are
  *    `DiagnosticCode`, and they are what the diagnosis carries for every consumer of a project description.
  * 2. **`src/project/cypress-config`**, for whether the located Cypress file is usable. It reads bytes, follows links,
- *    checks permissions and, at most once, asks the project's own loader. Its verdicts become `QAT-H018`–`QAT-H029` in the
+ *    checks permissions and, at most once, asks the project's own loader. Its verdicts become `QAT-H` findings in the
  *    doctor's catalogue, where the prose for those conditions lives.
  * 3. **`src/config/diagnostics`**, for QAT's own configuration document: absent, unreadable, malformed, unsupported
- *    version, schema-invalid. `QAT-H030`–`QAT-H037`.
+ *    version, schema-invalid. Also `QAT-H` findings, in the same catalogue and under the same numbering scheme.
+ * 4. **`src/config/environment`**, for the profile QAT's own configuration selects: which profile applies and where that
+ *    choice came from, whether it exists, whether the schema accepted it, and whether the variables it references are
+ *    present. `QAT-H` findings again, for the same reason.
  *
- * The rule that keeps them apart: **a condition that needs bytes does not belong here.** A name probe cannot tell an
- * unreadable file from a readable one, an empty file from a full one, or a symlink that escapes the project from one that
- * does not — and an entry here claiming otherwise would state a fact nothing in this layer can observe.
+ * The rule that keeps them apart is now two rules, because the fourth owner would otherwise look like a near-miss of the
+ * third:
+ *
+ * - **A condition that needs bytes does not belong here.** A name probe cannot tell an unreadable file from a readable
+ *   one, an empty file from a full one, or a symlink that escapes the project from one that does not — and an entry here
+ *   claiming otherwise would state a fact nothing in this layer can observe.
+ * - **A condition that needs the running process does not belong here either.** The environment check is the case that
+ *   forced the second rule: it reads a committed document *and* the host's variables, so its answer depends on the
+ *   machine as much as on the tree. Two sources, one question, and neither of them is a directory listing.
  *
  * What survives in this file is exactly what a probe can see: a missing file, two candidates, an unusable *format* by
  * extension, a directory sitting on a name, and a file one directory away. Those are sufficient to make the
  * detection-time remedy correct, and insufficient to decide validity — which is why the doctor does not ask this layer
  * that question.
+ *
+ * ## Why no `QAT-H` number is written down here
+ *
+ * This header used to say which numeric range each owner occupied — "these are H018 to H029, those are H030 to H037". It
+ * was accurate on the day it was written and became wrong the first time a code was inserted in the middle, which is what
+ * adding a group of checks does. The reader is then holding two contradictory facts: a module that reports H031 and a
+ * paragraph insisting H031 means something else.
+ *
+ * A number in prose is a duplicate of an allocation that lives in the code, and there is no test that can compare the two.
+ * That is the same argument this file makes about the Node floor one section below — a policy restated is a policy that
+ * drifts — applied to the one place it had not been applied. So owners are named by *module* and by *prefix*, which stay
+ * true as codes are added, and the numbers live in exactly one place.
  *
  * ## Severity here answers for the project, not for an operation
  *
@@ -87,6 +108,10 @@
  * Putting identity here and health there was the alternative, and it is worse in a specific way: the same condition would
  * acquire two owners, and the day the two disagreed about what "the package manager" is, neither would be obviously wrong.
  *
+ * The environment check is the same shape and settled the same way, which is why it became the fourth owner above rather
+ * than an entry here: identity of a profile is committed configuration, and whether its references are present is the
+ * host's answer. Both sources, one question, one owner.
+ *
  * ## Why this file keeps a Cypress major while a sibling file deleted a Node major
  *
  * `MINIMUM_CYPRESS_MAJOR` is a fact about a file format. Cypress 10 introduced `cypress.config.*`, so an installation older
@@ -124,9 +149,11 @@ import type { FrameworkDeclaration } from "../../core/domain/index.js";
  * This is also why it survived the removal of the Node floor that used to sit in the checks layer. That number was a support
  * policy restated from `engines.node`; this one is not restated from anything, because nothing declares it.
  *
- * It is exported because it has exactly one reader outside this file: the Cypress-configuration verdict's legacy advisory.
- * A second literal there would be a second answer to "when did the format change", and the two would diverge at the next
- * Cypress major rather than immediately — which is the worst time to discover it.
+ * It is exported because the Cypress-configuration verdict's legacy advisory reads it here rather than restating it. That
+ * docblock deliberately no longer says *how many* readers it has: a count is another restatable claim, and the whole
+ * argument of this file is that restated facts drift. A second literal there would be a second answer to "when did the
+ * format change", and the two would diverge at the next Cypress major rather than immediately — which is the worst time to
+ * discover it.
  */
 export const MINIMUM_CYPRESS_MAJOR = 10;
 
@@ -138,9 +165,9 @@ export const MINIMUM_CYPRESS_MAJOR = 10;
  * nothing in this layer reads one, and a field that looked like it did would invite an entry to describe a condition this
  * layer cannot observe.
  *
- * Deliberately holds nothing about package managers, package-manager versions or installed tooling. Those entries do not
- * exist in this catalogue (see the note above), and adding a field for them would be the first step towards creating them —
- * a field nothing here reads is an invitation for the next person to use it.
+ * Deliberately holds nothing about package managers, package-manager versions, installed tooling or environment
+ * variables. Those entries do not exist in this catalogue (see the notes above), and adding a field for them would be the
+ * first step towards creating them — a field nothing here reads is an invitation for the next person to use it.
  */
 export interface DiagnosticFacts {
   readonly root: string;
@@ -216,6 +243,10 @@ function listOf(values: readonly string[]): string {
  * The file is named in every branch because the alternative reading is now live: "create a configuration file" in a
  * project that already has `qat.config.json` sounds like advice to create a second one of those, which would satisfy the
  * instruction and change nothing about the condition being reported.
+ *
+ * Two extensions are named, not the full supported set. The authority for that set is the filename registry in the Cypress
+ * detection module, which is a list this layer would have to import and could then disagree with; naming the two every
+ * project actually uses keeps the sentence short and stays true however the registry grows.
  */
 function configurationRemedy(facts: DiagnosticFacts): string {
   if (facts.occupiedConfigurationPaths.length > 0) {
@@ -325,7 +356,7 @@ export const GUIDANCE: Readonly<Record<DiagnosticCode, Guidance>> = {
       const installed =
         facts.installationVersion === undefined
           ? ""
-          : ` This project has Cypress ${facts.installationVersion} installed.`;
+          : `This project has Cypress ${facts.installationVersion} installed.`;
 
       return {
         explanation,

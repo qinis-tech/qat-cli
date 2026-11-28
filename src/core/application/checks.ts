@@ -200,6 +200,19 @@ export const CheckId = {
   QatConfigurationValid: "qat.configuration-valid",
   /** Does the environment a command selected exist in the configuration? */
   EnvironmentResolvable: "qat.environment-resolvable",
+  /**
+   * Are the variables the selected environment references actually present?
+   *
+   * The second half of the environment pair, and the only check whose precondition is
+   * `qat.environment-resolvable`. A separate identifier because it carries a separate remedy: the first
+   * sends a reader to a file they committed, the second to a shell, a CI secret store or an `.env` they
+   * have not exported. One identifier would have to name both and would report a missing variable as a
+   * consequence of a profile the reader had already been told to fix.
+   *
+   * Placed immediately after its precondition, because declaration order is the order the report reads
+   * in — causes before consequences — and because the runner resolves skips in a single forward pass.
+   */
+  EnvironmentVariablesPresent: "qat.environment-variables-present",
   /** Can reports be written where the configuration says they go? */
   ReportsWritable: "output.reports-writable",
   /** Can evidence be written where the configuration says they go? */
@@ -549,6 +562,109 @@ export const HealthCode = {
    * change one word. The declared value is not echoed, for the same reason no other configured value is.
    */
   ConfigurationFrameworkUnsupported: "QAT-H037",
+
+  /**
+   * No environment was selected, and this command does not need one.
+   *
+   * Information, attached to a `Passed` outcome — the same arrangement `QAT-H030` makes for a project with no
+   * configuration file, and for the same reason. Most projects have no environment-specific settings at all, and the
+   * documented behaviour for a run with no selection is to use the defaults; a doctor that flagged every such project
+   * would be teaching its readers to skim.
+   */
+  EnvironmentNotSelected: "QAT-H038",
+  /**
+   * No environment was selected, and this command cannot proceed without one.
+   *
+   * A separate code rather than a severity flag on `QAT-H038`, because the two are not different weights of one outcome
+   * — they are a pass and a failure. Whether a command needs an environment is decided by the command, and reaches the
+   * check as evidence rather than being inferred there.
+   */
+  EnvironmentNotSelectedRequired: "QAT-H039",
+  /**
+   * A selection was supplied and it is not a name QAT can use — empty, or containing characters no environment name may
+   * carry.
+   *
+   * Reported rather than replaced. Falling through to the configured default when the flag is present but empty is how
+   * a run ends up against an environment nobody chose, which is the one outcome worth failing on.
+   */
+  EnvironmentSelectionInvalid: "QAT-H040",
+  /**
+   * The configuration's own `defaultEnvironment` names a profile that is not declared.
+   *
+   * Distinct from `QAT-H007`, which is a person naming something on a command line. Here a *file* names something, the
+   * fix is to a committed default rather than to an invocation, and the consequence is larger: a dangling default means
+   * no command gets an environment, not one.
+   */
+  EnvironmentReferenceDangling: "QAT-H041",
+  /**
+   * The selected profile exists and the schema rejected it.
+   *
+   * Field paths only, never values: a profile holds variable references and base URLs, and a rejected base URL is
+   * exactly the kind of value that can carry credentials — which is why the schema refuses them in the first place.
+   */
+  EnvironmentProfileInvalid: "QAT-H042",
+  /**
+   * The profile is valid and a path it declares is not usable.
+   *
+   * Distinct from `QAT-H042` because the profile is fine: the fix is a shape — a relative path that stays inside the
+   * project — not a field correction. The declared values are not echoed, because a path on a developer machine
+   * routinely contains a username.
+   */
+  EnvironmentPathInvalid: "QAT-H043",
+  /**
+   * A variable the profile marks as required is not set.
+   *
+   * Blocking, because the profile stated the need: not meeting a stated requirement is a defect rather than an
+   * uncertainty. The finding names the variable and says in as many words that QAT never reads the value, so a reader
+   * is not left guessing whether exporting a credential is safe.
+   */
+  EnvironmentVariableMissing: "QAT-H044",
+  /**
+   * A referenced variable is not set, and the profile does not say whether it must be.
+   *
+   * Advisory, and deliberately not blocking: the catalogue rule is that a missing variable blocks only when the profile
+   * explicitly requires it. Where nothing states the requirement the honest answer is "not established", which is
+   * reported and is neither a pass nor a failure.
+   */
+  EnvironmentVariableMissingUnconfirmed: "QAT-H045",
+  /**
+   * A variable the profile requires is set to nothing — the empty string, or whitespace only.
+   *
+   * The split from `QAT-H044` is the entire reason the presence vocabulary has three states rather than two. `export
+   * API_TOKEN=` is a deliberate act in some pipelines and an inheritance accident in others, and either way it is not
+   * the same as forgetting: telling a reader "it is not set" when they can see it in their shell costs the diagnostic
+   * its credibility in one sentence.
+   */
+  EnvironmentVariableBlank: "QAT-H046",
+  /**
+   * A referenced variable is set to nothing, and the profile does not say whether it must be.
+   *
+   * Advisory, for the same reason as `QAT-H045`, and kept apart from it because "empty" is evidence a reader can act on
+   * immediately while "missing" may mean the value is supplied by something that has not run yet.
+   */
+  EnvironmentVariableBlankUnconfirmed: "QAT-H047",
+  /**
+   * A reference reads from a source QAT does not approve.
+   *
+   * Blocking, not advisory. A reference whose source QAT will not read is not an environmental condition a reader can
+   * live with — it is a declaration QAT will never honour, and the run that follows fails on a variable that looks
+   * declared.
+   */
+  EnvironmentVariableSourceUnapproved: "QAT-H048",
+  /**
+   * A declared variable name cannot be passed to a child process faithfully.
+   *
+   * Its own code because it is a different act: the variable may well be set and QAT still cannot deliver it. The name
+   * is described rather than quoted, because it fails the portable-name pattern by definition.
+   */
+  EnvironmentVariableNameInvalid: "QAT-H049",
+  /**
+   * Whether a referenced variable is set could not be established.
+   *
+   * Advisory, never a pass — "I could not look" and "it is not set" lead a reader to different places — and never a
+   * failure, because a question we could not answer must not block work we can still perform.
+   */
+  EnvironmentVariableUnverifiable: "QAT-H050",
 } as const;
 
 export type HealthCode = (typeof HealthCode)[keyof typeof HealthCode];

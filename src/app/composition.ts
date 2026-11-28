@@ -24,8 +24,8 @@
  * The same is true of the filesystem helpers a *workflow* uses: detection, the path resolver and the configuration
  * inspector all call stateless functions directly, and none of them needs an assembly decision.
  *
- * What *is* adapted here is only what a port's shape requires. The port has ten members; seven need an adaptation and
- * three need none, and those seven fall into four kinds:
+ * What *is* adapted here is only what a port's shape requires. The port has eleven members; eight need an adaptation and
+ * three need none, and those eight fall into four kinds:
  *
  * | Port member | Implementation | Adaptation |
  * | --- | --- | --- |
@@ -36,6 +36,7 @@
  * | `configuration.resolve(root, loaded)` | `resolveConfiguration({ loaded, projectRoot })` | Reshaped, and the result translated into the port's own vocabulary |
  * | `configuration.inspect(root)` | `inspectConfiguration(root, deps)`, then `toPortInspection` | **Composed and translated** — one memoised read, six states re-expressed in core's vocabulary |
  * | `initialisation.initialise(root)` | `createInitialisationService({ assess, readConfiguration, createFile })` | Composed — three existing operations, assigned directly |
+ * | `environment.probe(name)` | `probeVariablePresence(name, source?)` | Narrowed — the second argument is a test seam, bound once so every probe in a run answers about the same environment |
  * | `runtime.readNodeVersion()` | `createProcessRuntime()` | **None** — the factory *is* the implementation |
  * | `executables.locateExecutable(command)` | `createPathLocator()` | **None** — the factory's method carries the port's name |
  * | `files.inspect` / `resolveRealPath` / `readPrefix` | `createFileInspector()` | **None** — three methods named exactly as the port names them |
@@ -48,9 +49,9 @@
  *
  * The catalogue is static data — a keyed table of definitions, each a pure function of the evidence it declared a need for
  * — so there is nothing for a factory to build and nothing to inject. What assembly supplies is the *evidence*: the
- * running interpreter, the range this build declares, the tool locator, the file inspector and the configuration
- * inspection. Injecting a requirement into a check would make every definition a closure over policy, and then the same
- * catalogue entry would behave differently depending on who constructed it.
+ * running interpreter, the range this build declares, the host's environment, the tool locator, the file inspector and the
+ * configuration inspection. Injecting a requirement into a check would make every definition a closure over policy, and
+ * then the same catalogue entry would behave differently depending on who constructed it.
  *
  * ## Where the supported Node.js range comes from
  *
@@ -67,6 +68,26 @@
  * - Resolved **once per process** and frozen by its builder, so two findings cannot disagree about "supported".
  * - **Not** pushed into the checks: the range reaches them through `RuntimeFacts.required`, so the value a check compares
  *   against is the value the guidance table quotes back.
+ *
+ * ## Where environment evidence comes from
+ *
+ * One machine fact — whether a variable the project's selected profile references is usable — and it arrives as an enum,
+ * never as a value. Three consequences:
+ *
+ * - **The port has no value accessor.** Not as a convention but as a property of the type, so a diagnostic built on it
+ *   cannot print a credential however it is written. That is the whole reason a `probe` exists here rather than callers
+ *   indexing `process.env` themselves.
+ * - **It is bound to the assembly's own environment source**, once. `createApplication` already receives that source so a
+ *   test can supply a fake; constructing the reader per call would let two probes in one run answer about two different
+ *   environments, and binding it here means a test that fakes the environment gets a consistent reader for free.
+ * - **No child process and no file.** `printenv` would be a hidden second execution inside a read-only diagnostic, and a
+ *   `.env` reader would make the answer depend on a file the project can change while the run that follows uses only the
+ *   process environment. Two sources, one truth, and the mismatch appears weeks later.
+ *
+ * What this file does **not** compose is the environment *verdict* — which profile applies, whether it exists, whether the
+ * schema accepted it. That depends on a command's own selection (`--env`) and on whether the command needs an environment
+ * at all, neither of which the assembly knows. It is gathered by the command-level workflow from the inputs exposed here,
+ * exactly as the runtime facts are.
  *
  * ## Where tooling evidence comes from
  *
@@ -108,9 +129,10 @@
  *
  * ## One seam per port, never one per object
  *
- * `executables` is the only test seam for tooling, and `files` the only one for inspection. An option for the
- * implementation as well would let a caller swap the factory *without* swapping the port, which is a configuration with
- * no meaning: the port is what the workflow asks, and the implementation is what it happens to have.
+ * `executables` is the only test seam for tooling, `files` the only one for inspection, and `environmentReader` the only
+ * one for host variables. An option for the implementation as well would let a caller swap the factory *without* swapping
+ * the port, which is a configuration with no meaning: the port is what the workflow asks, and the implementation is what
+ * it happens to have.
  */
 
 import { join } from "node:path";
@@ -142,6 +164,7 @@ import type {
 } from "../core/application/configuration.js";
 import type {
   Application,
+  EnvironmentReader,
   ExecutableLocator,
   FileInspector,
   ProjectDiscovery,
@@ -157,6 +180,7 @@ import {
 } from "../core/compatibility/index.js";
 import {
   createProcessRuntime,
+  probeVariablePresence,
   type EnvironmentSource,
 } from "../core/environment/index.js";
 import { ErrorCode, InvalidArgumentError } from "../core/errors/index.js";
@@ -229,10 +253,18 @@ type ConfigIssue = SchemaInvalidConfig["issues"][number];
 export function createApplication(
   options: ApplicationOptions = {},
 ): Application {
-  const environment = options.environment ?? process.env;
+  /**
+   * The host's variables, as a value.
+   *
+   * Named `environmentSource` rather than `environment` because the *port* on the returned application is called
+   * `environment`, and two things with that name at two levels — one a map of strings, one an enum-returning reader —
+   * is precisely the ambiguity that makes a reader check the wrong layer. This is also the value the rest of the
+   * assembly uses, so a test that supplies a fake environment supplies it exactly once.
+   */
+  const environmentSource = options.environment ?? process.env;
 
   const logger = createLogger({
-    level: resolveLevel(options.logLevel, environment),
+    level: resolveLevel(options.logLevel, environmentSource),
     component: "qat",
     ...(options.logDestination === undefined
       ? {}
@@ -257,6 +289,22 @@ export function createApplication(
    * not necessarily the binary executing this code.
    */
   const runtime: RuntimeProbe = options.runtime ?? createProcessRuntime();
+
+  /**
+   * Judging a host variable, behind its port.
+   *
+   * Constructed once around `environmentSource`, because the factory closes over it: per-call construction would let
+   * two probes in one run answer about two different environments.
+   *
+   * There is deliberately no option to replace this reader. `options.environment` is the seam, and a fake source
+   * already produces a fully working reader over itself — so a second seam would exist only to fake a failure the
+   * implementation cannot produce. Reading a plain record does not throw, which is why `probeVariablePresence` has three
+   * results while the port above it has four: `unknown` belongs to a source that might not be consultable, and this one
+   * always is.
+   */
+  const environment: EnvironmentReader = {
+    probe: (name) => probeVariablePresence(name, environmentSource),
+  };
 
   /**
    * Where a tool lives, behind its port. Constructed once, because the factory closes over the PATH value, the platform
@@ -493,11 +541,17 @@ export function createApplication(
     initialisation,
 
     // Compatibility and inspection evidence, exposed rather than combined: the probe answers "what is running", the
-    // requirement answers "what is required", the locator answers "where is the tool", and the inspector answers "what is
-    // actually on disk". Whoever gathers facts pairs them into the shapes a check reads, because that pairing is a
-    // gathering decision — this file supplies the inputs and takes no view on how a check shapes them.
+    // requirement answers "what is required", the reader answers "is this variable usable", the locator answers "where is
+    // the tool", and the inspector answers "what is actually on disk". Whoever gathers facts pairs them into the shapes a
+    // check reads, because that pairing is a gathering decision — this file supplies the inputs and takes no view on how a
+    // check shapes them.
+    //
+    // `environment` is a member of that list rather than something folded into `configuration`, for the reason the ports
+    // file gives: the profile a project selects is a committed fact, and whether its references are present is the host's
+    // answer. One question with two sources is paired by the gatherer, not by the assembly.
     runtime,
     nodeRequirement,
+    environment,
     executables,
     files,
 

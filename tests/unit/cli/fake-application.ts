@@ -3,7 +3,7 @@
  *
  * Not a test file: the unit suite's include pattern is `**\/*.test.ts`, so this module is imported and never collected.
  *
- * ## Why it is a factory rather than a constant
+ * ## Why a factory rather than a constant
  *
  * The program disposes the application after a command runs, and a test that checks the lifecycle has to observe that.
  * An optional callback records it without a spy, which keeps the fake free of a mocking framework and usable from a
@@ -32,19 +32,19 @@
  *
  * ## Why the evidence is a value and not a trap
  *
- * `runtime`, `nodeRequirement`, `executables` and `files` are the four members the health checks were given, and they are
- * treated differently from the collaborators above — because they are not collaborators. They are *evidence*: a version
- * string, a declared range, a way to find a command and a way to read what is on disk, all of which a doctor run reads as
- * a matter of course.
+ * `runtime`, `nodeRequirement`, `environment`, `executables` and `files` are the five members the health checks were
+ * given, and they are treated differently from the collaborators above — because they are not collaborators. They are
+ * *evidence*: a version string, a declared range, an answer about whether a variable is usable, a way to find a command
+ * and a way to read what is on disk, all of which a doctor run reads as a matter of course.
  *
  * Trapping them would make a legitimate read fail with "runtime is unused in this test", which is worse than useless: it
  * names the wrong problem, and it teaches whoever hits it to loosen the trap. A fixture that states a version, a range, a
- * search result and a path that does not exist admits itself, is visible at the call site, and is overridable when a test
- * needs a different answer.
+ * presence answer, a search result and a path that does not exist admits itself, is visible at the call site, and is
+ * overridable when a test needs a different answer.
  *
  * The defaults are **fixtures, not claims about this machine**. The shipped policy is `engines.node`, and the contract
  * suite is the only place entitled to assert anything about it; a unit test must not depend on the machine it runs on,
- * which is why the defaults are literals rather than `process.versions.node` or the real PATH.
+ * which is why the defaults are literals rather than `process.versions.node`, the real `PATH` or the real environment.
  *
  * ## What to do instead of loosening a trap
  *
@@ -53,11 +53,14 @@
  * initialise one belongs in the end-to-end suite, where the file either appears on disk or does not. A stub that returns
  * a plausible value turns either of those into a test of the stub.
  */
-import type {
-  Application,
-  ExecutableLocator,
-  FileInspector,
-  RuntimeProbe,
+
+import {
+  EnvironmentPresence,
+  type Application,
+  type EnvironmentReader,
+  type ExecutableLocator,
+  type FileInspector,
+  type RuntimeProbe,
 } from "~/core/application/ports.js";
 // The widened name. This fake stands in for an assembly that produces one value of this shape, whatever owns the
 // requirement it describes — so naming the runtime-era alias here would put a deprecated spelling in the fixture every
@@ -106,6 +109,15 @@ export interface FakeApplicationOptions {
   readonly nodeRequirement?: VersionRequirement;
 
   /**
+   * Replaces the presence probe. Supply one to exercise a missing or blank variable.
+   *
+   * The default answers `set` for every name — see the member's own note. This is the seam a test needs when presence
+   * *is* the question under test, and it is the only way to express `unknown`, which a plain map of strings cannot: a
+   * map is always consultable, and "I could not look" only exists for a source that might not be.
+   */
+  readonly environment?: EnvironmentReader;
+
+  /**
    * Replaces the tool locator. Supply one to exercise a missing binary, or a tool that is present under another name.
    *
    * The default answers every command with a synthetic path — "found" — because that is the quiet case: a fake that
@@ -138,7 +150,8 @@ export interface FakeApplicationOptions {
 function unused(
   collaborator: "configuration" | "discovery" | "initialisation" | "repository",
 ): Promise<never> {
-  return Promise.reject(new Error(`${collaborator} is unused in this test`));
+  const message = `${collaborator} is unused in this test`;
+  return Promise.reject(new Error(message));
 }
 
 /**
@@ -151,7 +164,8 @@ function unused(
  * `never` is assignable to the member's declared return type, so the signature stays intact.
  */
 function unusedImmediately(collaborator: "configuration"): never {
-  throw new Error(`${collaborator} is unused in this test`);
+  const message = `${collaborator} is unused in this test`;
+  throw new Error(message);
 }
 
 export function fakeApplication(
@@ -196,6 +210,22 @@ export function fakeApplication(
     // A value rather than a resolver, matching the port: the range is read once at composition and shared. Frozen so
     // that a test which mutated it could not silently change what a later assertion in the same file reads.
     nodeRequirement: options.nodeRequirement ?? FAKE_REQUIREMENT,
+
+    /**
+     * Evidence, like the four around it, and for the same reason: a doctor run asks the selected profile's references
+     * about the host as a matter of course.
+     *
+     * The default answers `set` for every name, which is the quiet case — the same reasoning as the locator's default
+     * below. A fake that reported every variable unset would emit advisory findings nobody asked for, and a test
+     * asserting on a report would be reading the fixture's opinion instead of the code's.
+     *
+     * It answers an enum rather than a value, and that stays true of the fixture as much as of the implementation:
+     * there is no arrangement of this fake that puts a credential within reach of a diagnostic. That is the port's
+     * entire purpose, and a fake that could leak would be the first place it stopped being true.
+     */
+    environment: options.environment ?? {
+      probe: () => EnvironmentPresence.Set,
+    },
 
     // Evidence, so a synthetic answer rather than a trap — see the note at the top of this file. Asynchronous because
     // the real one stats the filesystem, and a fake that resolved synchronously would let a caller forget an `await`
